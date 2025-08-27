@@ -1,31 +1,37 @@
 import Dependencies.*
 
-ThisBuild / organization := "io.github.serhiip"
+inThisBuild(
+  List(
+    organization := "io.github.serhiip",
+    homepage := Some(url("https://github.com/serhiip/constellations")),
+    licenses := List("MIT" -> url("https://opensource.org/licenses/MIT")),
+    developers := List(
+      Developer(
+        id = "serhiip",
+        name = "Serhii P",
+        email = "serhiip@github.com",
+        url = url("https://github.com/serhiip")
+      )
+    )
+  )
+)
+
 ThisBuild / scalaVersion := "3.7.1"
 ThisBuild / semanticdbEnabled := true
 ThisBuild / semanticdbVersion := scalafixSemanticdb.revision
 
-// Publishing metadata for Maven Central
-ThisBuild / homepage := Some(url("https://github.com/serhiip/constellations"))
-ThisBuild / licenses := List(
-  "MIT" -> url("https://opensource.org/licenses/MIT")
-)
-ThisBuild / scmInfo := Some(
-  ScmInfo(
-    url("https://github.com/serhiip/constellations"),
-    "scm:git@github.com:serhiip/constellations.git"
-  )
-)
-ThisBuild / developers := List(
-  Developer(
-    id = "serhiip",
-    name = "Serhii P",
-    email = "serhiip@github.com",
-    url = url("https://github.com/serhiip")
-  )
-)
+// ThisBuild / publishTo := {
+//   val centralSnapshots =
+//     "https://central.sonatype.com/repository/maven-snapshots/"
+//   if (isSnapshot.value) Some("central-snapshots" at centralSnapshots)
+//   else localStaging.value
+// }
 
-ThisBuild / Test / publishArtifact := false
+ThisBuild / versionScheme := Some("early-semver")
+// ThisBuild / Test / publishArtifact := false
+// ThisBuild / pomIncludeRepository := { _ => false }
+ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
+ThisBuild / sonatypeRepository := "https://s01.oss.sonatype.org/service/local"
 ThisBuild / versionScheme := Some("early-semver")
 
 lazy val root = (project in file("."))
