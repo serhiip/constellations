@@ -26,25 +26,26 @@ object Dispatcher:
 
   def apply[F[_]: Tracer: StructuredLogger: Monad](delegate: Dispatcher[F]): Dispatcher[F] = observed(delegate)
 
-  private def observed[F[_]: Monad: Tracer: StructuredLogger](delegate: Dispatcher[F]): Dispatcher[F] = new Dispatcher[F]:
-    def dispatch(call: FunctionCall): F[Dispatcher.Result] =
-      Tracer[F]
-        .span("dispatcher", "dispatch")
-        .logged: logger =>
-          for
-            _      <- logger.trace(s"Dispatching call: ${call.name}")
-            result <- delegate.dispatch(call)
-            _      <- logger.trace(s"Dispatch result: $result")
-          yield result
+  private def observed[F[_]: Monad: Tracer: StructuredLogger](delegate: Dispatcher[F]): Dispatcher[F] =
+    new Dispatcher[F]:
+      def dispatch(call: FunctionCall): F[Dispatcher.Result] =
+        Tracer[F]
+          .span("dispatcher", "dispatch")
+          .logged: logger =>
+            for
+              _      <- logger.trace(s"Dispatching call: ${call.name}")
+              result <- delegate.dispatch(call)
+              _      <- logger.trace(s"Dispatch result: $result")
+            yield result
 
-    def getFunctionDeclarations: F[List[FunctionDeclaration]] =
-      Tracer[F]
-        .span("dispatcher", "get-function-declarations")
-        .logged: logger =>
-          for
-            decls <- delegate.getFunctionDeclarations
-            _     <- logger.trace(s"Function declarations: ${decls.map(_.name).mkString(",")}")
-          yield decls
+      def getFunctionDeclarations: F[List[FunctionDeclaration]] =
+        Tracer[F]
+          .span("dispatcher", "get-function-declarations")
+          .logged: logger =>
+            for
+              decls <- delegate.getFunctionDeclarations
+              _     <- logger.trace(s"Function declarations: ${decls.map(_.name).mkString(",")}")
+            yield decls
 
   def noop[F[_]: cats.Applicative]: Dispatcher[F] = new Dispatcher[F]:
     def dispatch(call: FunctionCall): F[Dispatcher.Result] =
@@ -172,14 +173,18 @@ object Dispatcher:
 
     def getMethodDeclarations(traitSym: Symbol): Expr[List[FunctionDeclaration]] =
       val methods = traitSym.declarations.filter(m =>
-        m.isDefDef && !m.flags.is(Flags.Private) && !m.flags.is(Flags.Protected) && !m.flags.is(Flags.Synthetic) && !m.flags.is(Flags.Artifact) && !m.flags
+        m.isDefDef && !m.flags.is(Flags.Private) && !m.flags.is(Flags.Protected) && !m.flags.is(
+          Flags.Synthetic
+        ) && !m.flags.is(Flags.Artifact) && !m.flags
           .is(
             Flags.CaseAccessor
           ) && !m.flags.is(Flags.StableRealizable)
       )
       Expr.ofList(methods.map(processMethodForDeclaration(traitSym)))
 
-    def processMethodForDispatch(repr: TypeRepr, from: Term)(method: Symbol): (String, Expr[FunctionCall => F[Dispatcher.Result]]) =
+    def processMethodForDispatch(repr: TypeRepr, from: Term)(
+        method: Symbol
+    ): (String, Expr[FunctionCall => F[Dispatcher.Result]]) =
       val qualifiedName: String = s"${repr.typeSymbol.name}_${method.name}"
       qualifiedName -> '{ (call: FunctionCall) =>
         ${
@@ -191,7 +196,11 @@ object Dispatcher:
                 val decoder   =
                   Expr
                     .summon[Decoder[Value, t]]
-                    .getOrElse(report.errorAndAbort(s"No Decoder[Value, ${param.info.show}] found for parameter '${param.name}' in '${method.fullName}'"))
+                    .getOrElse(
+                      report.errorAndAbort(
+                        s"No Decoder[Value, ${param.info.show}] found for parameter '${param.name}' in '${method.fullName}'"
+                      )
+                    )
                 val paramName = Expr(param.name)
                 '{
                   call.args.fields.get($paramName) match
@@ -200,7 +209,11 @@ object Dispatcher:
                       if ${ Expr(param.info <:< TypeRepr.of[Option[Any]]) } then Valid(None)
                       else Invalid(NonEmptyChain(Decoder.Error.MissingField($paramName)))
                 }
-              case _    => report.errorAndAbort(s"Unsupported parameter type in match: ${param.info.show}", Symbol.spliceOwner.pos.get)
+              case _    =>
+                report.errorAndAbort(
+                  s"Unsupported parameter type in match: ${param.info.show}",
+                  Symbol.spliceOwner.pos.get
+                )
           }
 
           val validatedArgsExpr = '{ ${ Expr.ofList(argExprs) }.sequence }
@@ -223,14 +236,18 @@ object Dispatcher:
               .valueOr: errors =>
                 given Show[Decoder.Error] = Decoder.given_Show_Error
                 val errorString           = errors.mkString_(delim = ", ")
-                throw new IllegalArgumentException(s"Failed to decode arguments for method '${${ Expr(qualifiedName) }}': $errorString")
+                throw new IllegalArgumentException(
+                  s"Failed to decode arguments for method '${${ Expr(qualifiedName) }}': $errorString"
+                )
           }
         }
       }
 
     def processMethodsForDispatch(symbol: Symbol, term: Term) =
       val methods = symbol.declarations.filter(m =>
-        m.isDefDef && !m.flags.is(Flags.Private) && !m.flags.is(Flags.Protected) && !m.flags.is(Flags.Synthetic) && !m.flags.is(Flags.Artifact) && !m.flags
+        m.isDefDef && !m.flags.is(Flags.Private) && !m.flags.is(Flags.Protected) && !m.flags.is(
+          Flags.Synthetic
+        ) && !m.flags.is(Flags.Artifact) && !m.flags
           .is(
             Flags.CaseAccessor
           ) && !m.flags.is(Flags.StableRealizable)
@@ -240,7 +257,8 @@ object Dispatcher:
 
     val traitSym = TypeRepr.of[T].typeSymbol
 
-    if !traitSym.flags.is(Flags.Trait) then report.errorAndAbort(s"${traitSym.fullName} is not a trait.", Position.ofMacroExpansion)
+    if !traitSym.flags.is(Flags.Trait) then
+      report.errorAndAbort(s"${traitSym.fullName} is not a trait.", Position.ofMacroExpansion)
 
     val functionDeclarationsExpr = getMethodDeclarations(traitSym)
 
@@ -251,7 +269,10 @@ object Dispatcher:
           val term      = '{ instance }.asTerm
           val tpe       = term.tpe
           val symbol    = tpe.classSymbol.getOrElse(
-            report.errorAndAbort(s"Instance ${term.show} needs to be a class symbol (trait or class instance)", Symbol.spliceOwner.pos.get)
+            report.errorAndAbort(
+              s"Instance ${term.show} needs to be a class symbol (trait or class instance)",
+              Symbol.spliceOwner.pos.get
+            )
           )
           val callables = processMethodsForDispatch(symbol, term)
 
@@ -266,7 +287,9 @@ object Dispatcher:
         }
 
         def getFunctionDeclarations: F[List[FunctionDeclaration]] = ${
-          val app = Expr.summon[cats.Applicative[F]].getOrElse(report.errorAndAbort("No cats.Applicative given found for F", Position.ofMacroExpansion))
+          val app = Expr
+            .summon[cats.Applicative[F]]
+            .getOrElse(report.errorAndAbort("No cats.Applicative given found for F", Position.ofMacroExpansion))
           '{ $app.pure(${ functionDeclarationsExpr }) }
         }
     }

@@ -3,9 +3,9 @@ import Dependencies.*
 inThisBuild(
   List(
     organization := "io.github.serhiip",
-    homepage := Some(url("https://github.com/serhiip/constellations")),
-    licenses := List("MIT" -> url("https://opensource.org/licenses/MIT")),
-    developers := List(
+    homepage     := Some(url("https://github.com/serhiip/constellations")),
+    licenses     := List("MIT" -> url("https://opensource.org/licenses/MIT")),
+    developers   := List(
       Developer(
         id = "serhiip",
         name = "Serhii P",
@@ -16,32 +16,28 @@ inThisBuild(
   )
 )
 
-ThisBuild / scalaVersion := "3.7.1"
+ThisBuild / scalaVersion      := "3.7.1"
 ThisBuild / semanticdbEnabled := true
 ThisBuild / semanticdbVersion := scalafixSemanticdb.revision
 
-// ThisBuild / publishTo := {
-//   val centralSnapshots =
-//     "https://central.sonatype.com/repository/maven-snapshots/"
-//   if (isSnapshot.value) Some("central-snapshots" at centralSnapshots)
-//   else localStaging.value
-// }
-
-ThisBuild / versionScheme := Some("early-semver")
-// ThisBuild / Test / publishArtifact := false
-// ThisBuild / pomIncludeRepository := { _ => false }
+ThisBuild / versionScheme          := Some("early-semver")
 ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
-ThisBuild / sonatypeRepository := "https://s01.oss.sonatype.org/service/local"
-ThisBuild / versionScheme := Some("early-semver")
+ThisBuild / sonatypeRepository     := "https://s01.oss.sonatype.org/service/local"
+ThisBuild / versionScheme          := Some("early-semver")
 
 lazy val root = (project in file("."))
   .settings(
-    name := "constellations",
+    name              := "constellations",
     scalacOptions += "-experimental",
     semanticdbVersion := scalafixSemanticdb.revision,
-    publish / skip := true
+    publish / skip    := true
   )
-  .aggregate(`constellations-core`, `constellations-openrouter`)
+  .aggregate(
+    `constellations-core`,
+    `constellations-openrouter`,
+    `constellations-google-genai`,
+    `constellations-examples`
+  )
 
 lazy val `constellations-core` = (project in file("core"))
   .settings(
@@ -56,3 +52,18 @@ lazy val `constellations-openrouter` = (project in file("openrouter"))
     scalacOptions += "-Xmax-inlines:100"
   )
   .dependsOn(`constellations-core`)
+
+lazy val `constellations-google-genai` = (project in file("google-genai"))
+  .settings(
+    name := "constellations-google-genai",
+    libraryDependencies ++= Dependencies.constellationsGoogleGenai
+  )
+  .dependsOn(`constellations-core`)
+
+lazy val `constellations-examples` = (project in file("examples"))
+  .settings(
+    name           := "constellations-examples",
+    libraryDependencies ++= Dependencies.logging ++ Dependencies.logback,
+    publish / skip := true
+  )
+  .dependsOn(`constellations-core`, `constellations-google-genai`)

@@ -32,15 +32,26 @@ object Stateful:
   private object State:
     given Monoid[State] with
       override def combine(x: State, y: State): State =
-        State(iteration = x.iteration + y.iteration, steps = Chain.concat(x.steps, y.steps), shouldInterrupt = x.shouldInterrupt || y.shouldInterrupt)
+        State(
+          iteration = x.iteration + y.iteration,
+          steps = Chain.concat(x.steps, y.steps),
+          shouldInterrupt = x.shouldInterrupt || y.shouldInterrupt
+        )
       override def empty: State                       = State(0, Chain.empty, false)
 
-final class Stateful[F[_]: Clock: Monad, T](config: Stateful.Config, responseHandling: Handling[F, T], invoker: Invoker[F, T])
-    extends Executor[F, Stateful.Interruption.type, String]:
+final class Stateful[F[_]: Clock: Monad, T](
+    config: Stateful.Config,
+    responseHandling: Handling[F, T],
+    invoker: Invoker[F, T]
+) extends Executor[F, Stateful.Interruption.type, String]:
 
   import Stateful.*
 
-  override def execute(callDispatcher: Dispatcher[F], history: Memory[F, ?], query: String): F[Either[Interruption.type, String]] =
+  override def execute(
+      callDispatcher: Dispatcher[F],
+      history: Memory[F, ?],
+      query: String
+  ): F[Either[Interruption.type, String]] =
     for
       now      <- Clock[F].offsetDateTimeUtc
       queryStep = Executor.Step.UserQuery(query, now)
@@ -67,11 +78,15 @@ final class Stateful[F[_]: Clock: Monad, T](config: Stateful.Config, responseHan
     def getIteration: Ctx[Int]              = inspect(_.iteration)
     def getSteps: Ctx[Chain[Executor.Step]] = inspect(_.steps)
     def ask: Ctx[NEC[Message]]              = RWST.ask
-    def allContent: Ctx[NEC[Message]]       = (ask, getSteps).mapN((initial, accumulated) => initial.appendChain(accumulated.map(messageFromStep)))
+    def allContent: Ctx[NEC[Message]]       =
+      (ask, getSteps).mapN((initial, accumulated) => initial.appendChain(accumulated.map(messageFromStep)))
     def interrupt: Ctx[Unit]                = modify(s => s.copy(shouldInterrupt = true))
     def shouldInterrupt: Ctx[Boolean]       = inspect(_.shouldInterrupt)
 
-  private def persistentLoop(callDispatcher: Dispatcher[F], history: Memory[F, ?]): Ctx[Either[Interruption.type, String]] =
+  private def persistentLoop(
+      callDispatcher: Dispatcher[F],
+      history: Memory[F, ?]
+  ): Ctx[Either[Interruption.type, String]] =
     Ctx.shouldInterrupt.ifM(Ctx.pure(Interruption.asLeft), eval(callDispatcher, history))
 
   private def eval(callDispatcher: Dispatcher[F], history: Memory[F, ?]) =
@@ -82,8 +97,9 @@ final class Stateful[F[_]: Clock: Monad, T](config: Stateful.Config, responseHan
       calls     <- Ctx.liftF(responseHandling.getFunctinoCalls(response))
       _         <- Chain.fromSeq(calls).traverse(handleCall(callDispatcher, history))
       iteration <- Ctx.getIteration
-      reply     <- if calls.nonEmpty && iteration < config.functionCallLimit then Ctx.increment >> persistentLoop(callDispatcher, history)
-                   else Ctx.liftF(responseHandling.getTextFromResponse(response).map(_.asRight))
+      reply     <- if (calls.nonEmpty && iteration < config.functionCallLimit) then {
+                     Ctx.increment >> persistentLoop(callDispatcher, history)
+                   } else Ctx.liftF(responseHandling.getTextFromResponse(response).map(_.asRight))
     yield reply
 
   private def handleCall(callDispatcher: Dispatcher[F], history: Memory[F, ?])(call: FunctionCall) =
@@ -94,7 +110,8 @@ final class Stateful[F[_]: Clock: Monad, T](config: Stateful.Config, responseHan
       _        <- result match
                     case Dispatcher.Result.Response(result) =>
                       val withCallId = result.copy(functionCallId = call.callId)
-                      Ctx.liftF(Clock[F].offsetDateTimeUtc.map(Executor.Step.Response.apply.curried(withCallId))) >>= persist.curried(history)
+                      Ctx.liftF(Clock[F].offsetDateTimeUtc.map(Executor.Step.Response.apply.curried(withCallId))) >>= persist
+                        .curried(history)
                     case Dispatcher.Result.HumanInTheLoop   => Ctx.interrupt
     yield ()
 
