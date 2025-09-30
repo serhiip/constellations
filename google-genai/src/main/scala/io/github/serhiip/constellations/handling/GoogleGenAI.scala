@@ -8,6 +8,8 @@ import com.google.genai.types.{FinishReason$Known as GKnown, GenerateContentResp
 import scala.jdk.CollectionConverters.*
 import scala.jdk.OptionConverters.*
 import cats.MonadThrow
+import io.circe.parser.parse
+import io.github.serhiip.constellations.common.Codecs.given
 
 object GoogleGenAI:
 
@@ -30,3 +32,14 @@ object GoogleGenAI:
         case GKnown.MAX_TOKENS => FinishReason.Length.pure[F]
         case GKnown.SAFETY     => FinishReason.ContentFilter.pure[F]
         case other             => RuntimeException(s"Unknown finish reason: $other").raiseError[F, FinishReason]
+
+    override def structuredOutput(response: GenerateContentResponse): F[Struct] =
+      val txt = response.text()
+      parse(txt) match
+        case Left(err)   =>
+          RuntimeException(s"Failed to parse structured output JSON: ${err.getMessage}").raiseError[F, Struct]
+        case Right(json) =>
+          json.as[Struct] match
+            case Left(decErr) =>
+              RuntimeException(s"Failed to decode structured output: ${decErr.getMessage}").raiseError[F, Struct]
+            case Right(s)     => s.pure[F]
