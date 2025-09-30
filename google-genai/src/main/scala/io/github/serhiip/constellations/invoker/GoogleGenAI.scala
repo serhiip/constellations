@@ -60,6 +60,7 @@ object GoogleGenAI:
             .orElse(config.responseSchema)
             .foreach(s => b.responseSchema(GSchema.fromJson(s.asJson.noSpaces)))
         )
+        .tap(b => responseSchema.orElse(config.responseSchema).foreach(_ => b.responseMimeType("application/json")))
         .tap(b =>
           config.systemPrompt.foreach(sys =>
             b.systemInstruction(Content.builder().role("system").parts(Part.fromText(sys)).build())
