@@ -25,25 +25,28 @@ object Executor:
     case Call(call: FunctionCall, at: OffsetDateTime)
     case Response(result: FunctionResponse, at: OffsetDateTime)
 
-  def apply[F[_]: Tracer: StructuredLogger: Monad, E, T](delegate: Executor[F, E, T]): Executor[F, E, T] = observed(delegate)
+  def apply[F[_]: Tracer: StructuredLogger: Monad, E, T](delegate: Executor[F, E, T]): Executor[F, E, T] = observed(
+    delegate
+  )
 
-  private def observed[F[_]: Monad: Tracer: StructuredLogger, E, T](delegate: Executor[F, E, T]): Executor[F, E, T] = new Executor[F, E, T]:
-    def execute(dispatcher: Dispatcher[F], memory: Memory[F, ?], query: String): F[Either[E, T]] =
-      Tracer[F]
-        .span("executor", "execute")
-        .logged: logger =>
-          for
-            _      <- logger.trace(s"Executing query $query")
-            result <- delegate.execute(dispatcher, memory, query)
-            _      <- logger.trace(s"Result is $result")
-          yield result
+  private def observed[F[_]: Monad: Tracer: StructuredLogger, E, T](delegate: Executor[F, E, T]): Executor[F, E, T] =
+    new Executor[F, E, T]:
+      def execute(dispatcher: Dispatcher[F], memory: Memory[F, ?], query: String): F[Either[E, T]] =
+        Tracer[F]
+          .span("executor", "execute")
+          .logged: logger =>
+            for
+              _      <- logger.trace(s"Executing query $query")
+              result <- delegate.execute(dispatcher, memory, query)
+              _      <- logger.trace(s"Result is $result")
+            yield result
 
-    def resume(dispatcher: Dispatcher[F], memory: Memory[F, ?]): F[Either[E, T]] =
-      Tracer[F]
-        .span("executor", "resume")
-        .logged: logger =>
-          for
-            _      <- logger.trace(s"Continuing the query")
-            result <- delegate.resume(dispatcher, memory)
-            _      <- logger.trace(s"Result of resuming is $result")
-          yield result
+      def resume(dispatcher: Dispatcher[F], memory: Memory[F, ?]): F[Either[E, T]] =
+        Tracer[F]
+          .span("executor", "resume")
+          .logged: logger =>
+            for
+              _      <- logger.trace(s"Continuing the query")
+              result <- delegate.resume(dispatcher, memory)
+              _      <- logger.trace(s"Result of resuming is $result")
+            yield result

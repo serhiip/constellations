@@ -31,7 +31,8 @@ object GoogleGenAI:
       temperature: Option[Float] = None,
       maxTokens: Option[Int] = None,
       topP: Option[Float] = None,
-      systemPrompt: Option[String] = None
+      systemPrompt: Option[String] = None,
+      responseSchema: Option[Schema] = None
   )
 
   def chatCompletion[F[_]](
@@ -40,7 +41,7 @@ object GoogleGenAI:
       functionDeclarations: List[FunctionDeclaration] = List.empty
   ): Invoker[F, GenerateContentResponse] = new:
 
-    def generate(history: NEC[Message]) =
+    def generate(history: NEC[Message], responseSchema: Option[Schema]) =
       val messages = history.map(messageToContent)
 
       val maybeTools =
@@ -54,6 +55,11 @@ object GoogleGenAI:
         .tap(b => config.topP.foreach(b.topP(_)))
         .tap(b => config.maxTokens.foreach(b.maxOutputTokens(_)))
         .tap(b => maybeTools.foreach(tools => b.tools(tools.asJava)))
+        .tap(b =>
+          responseSchema
+            .orElse(config.responseSchema)
+            .foreach(s => b.responseSchema(GSchema.fromJson(s.asJson.noSpaces)))
+        )
         .tap(b =>
           config.systemPrompt.foreach(sys =>
             b.systemInstruction(Content.builder().role("system").parts(Part.fromText(sys)).build())

@@ -41,7 +41,7 @@ object OpenRouter:
       modelNameOverride: Option[F[String]] = None
   ): Invoker[F, ChatCompletionResponse] = new:
 
-    override def generate(history: NEC[Message]): F[ChatCompletionResponse] =
+    override def generate(history: NEC[Message], responseSchema: Option[Schema]): F[ChatCompletionResponse] =
       val messages = history.toChain.toList.map(messageToChatMessage)
 
       val tools =
@@ -82,7 +82,8 @@ object OpenRouter:
         case _        => MessageHandler.default
 
       message match
-        case Message.User(content)       => ChatMessage(role = "user", content = Some(messageHandler.convertUserMessage(content)))
+        case Message.User(content)       =>
+          ChatMessage(role = "user", content = Some(messageHandler.convertUserMessage(content)))
         case Message.Assistant(content)  => ChatMessage(role = "assistant", content = Some(Json.fromString(content)))
         case Message.System(content)     => ChatMessage(role = "system", content = Some(Json.fromString(content)))
         case Message.Tool(content)       =>
@@ -99,7 +100,7 @@ object OpenRouter:
 
   def completion[F[_]](client: Client[F], config: Config): Invoker[F, CompletionResponse] = new:
 
-    override def generate(history: NEC[Message]): F[CompletionResponse] =
+    override def generate(history: NEC[Message], responseSchema: Option[Schema]): F[CompletionResponse] =
       val prompt  = history.toChain.toList.map(messageToText).mkString("\n")
       val request = CompletionRequest(
         model = config.model,
@@ -127,7 +128,7 @@ protected object MessageHandler:
   private def convertContentPartToJson(contentPart: ContentPart): Json = contentPart match
     case ContentPart.Text(text)           => Json.obj("type" -> Json.fromString("text"), "text" -> Json.fromString(text))
     case ContentPart.Image(base64Encoded) =>
-      val dataUrl      = s"data:image/jpeg;base64,$base64Encoded"
+      val dataUrl = s"data:image/jpeg;base64,$base64Encoded"
       Json.obj(
         "type"      -> Json.fromString("image_url"),
         "image_url" -> Json.obj("url" -> Json.fromString(dataUrl))
