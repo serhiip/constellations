@@ -2,6 +2,23 @@
 
 A Scala 3 library for building AI-powered applications with function calling capabilities. Constellations provides a type-safe, observable framework for integrating AI models with your Scala applications.
 
+## Quick Start
+
+```sbt
+libraryDependencies ++= Seq(
+  "io.github.serhiip" %% "constellations-core" % "<version>",
+  "io.github.serhiip" %% "constellations-openrouter" % "<version>",
+  "io.github.serhiip" %% "constellations-google-genai" % "<version>"
+)
+```
+
+> [!NOTE]
+>
+> For Snapshots you will need to add the following resolver
+> ```sbt
+> resolvers += ("Maven snapshots" at "https://central.sonatype.com/repository/maven-snapshots/")
+> ```
+
 ## Overview
 
 Constellations enables you to:
