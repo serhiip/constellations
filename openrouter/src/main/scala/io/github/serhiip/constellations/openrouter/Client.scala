@@ -246,8 +246,8 @@ object Client:
       idleConnectionTime: FiniteDuration = 60.seconds,
       retryMaxWait: FiniteDuration = 30.seconds,
       retryMaxAttempts: Int = 5,
-      logHeaders: Boolean = true,
-      logBody: Boolean = true,
+      logHeaders: Boolean = false,
+      logBody: Boolean = false,
       appUrl: Option[String] = None,
       appTitle: Option[String] = None
   )
