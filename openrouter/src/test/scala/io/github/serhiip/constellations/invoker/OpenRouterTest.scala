@@ -68,8 +68,8 @@ class OpenRouterTest extends CatsEffectSuite:
               ).some,
               topProvider = ModelTopProvider(
                 isModerated = false,
-                contextLength = 128000,
-                maxCompletionTokens = 128000
+                contextLength = Some(128000),
+                maxCompletionTokens = Some(128000)
               ).some,
               perRequestLimits = none
             )

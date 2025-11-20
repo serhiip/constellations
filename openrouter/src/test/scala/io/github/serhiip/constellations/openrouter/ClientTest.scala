@@ -4,6 +4,7 @@ import cats.effect.{IO, Resource}
 import cats.syntax.all.*
 
 import io.circe.Json
+import io.circe.parser.*
 import munit.CatsEffectSuite
 import org.http4s.*
 import org.http4s.circe.*
@@ -65,8 +66,13 @@ final class ClientTest extends CatsEffectSuite:
           name = "Claude 3.7 Sonnet",
           created = 1741818122L.some,
           description = "State-of-the-art general model".some,
-          architecture = ModelArchitecture(inputModalities = List("text", "image"), outputModalities = List("text"), tokenizer = "GPT".some).some,
-          topProvider = ModelTopProvider(isModerated = true, contextLength = 128000, maxCompletionTokens = 16384).some,
+          architecture = ModelArchitecture(
+            inputModalities = List("text", "image"),
+            outputModalities = List("text"),
+            tokenizer = "GPT".some
+          ).some,
+          topProvider =
+            ModelTopProvider(isModerated = true, contextLength = Some(128000), maxCompletionTokens = Some(16384)).some,
           pricing = ModelPricing(
             prompt = "0.0000007",
             completion = "0.0000007",
@@ -163,7 +169,8 @@ final class ClientTest extends CatsEffectSuite:
       choices = List(
         ChatCompletionChoice(
           index = 0,
-          message = ChatMessage(role = "assistant", content = Json.fromString("I can see an image in the message.").some),
+          message =
+            ChatMessage(role = "assistant", content = Json.fromString("I can see an image in the message.").some),
           finishReason = "stop".some
         )
       ),
@@ -324,7 +331,9 @@ final class ClientTest extends CatsEffectSuite:
       choices = List(
         ChatCompletionChoice(
           index = 0,
-          message = ChatMessage.assistant("Based on the search results, I found 'Ulysses' by James Joyce in the Project Gutenberg library."),
+          message = ChatMessage.assistant(
+            "Based on the search results, I found 'Ulysses' by James Joyce in the Project Gutenberg library."
+          ),
           finishReason = "stop".some
         )
       ),
@@ -390,4 +399,136 @@ final class ClientTest extends CatsEffectSuite:
     client.createChatCompletion(request).map { response =>
       assertEquals(response, expectedResponse)
     }
+  }
+
+  test("listModels should decode real OpenRouter API response with all fields") {
+    val jsonString = """{
+      "id" : "openai/o3-deep-research",
+      "canonical_slug" : "openai/o3-deep-research-2025-06-26",
+      "hugging_face_id" : "",
+      "name" : "OpenAI: o3 Deep Research",
+      "created" : 1760129661,
+      "description" : "o3-deep-research is OpenAI's advanced model for deep research, designed to tackle complex, multi-step research tasks.\n\nNote: This model always uses the 'web_search' tool which adds additional cost.",
+      "context_length" : 200000,
+      "architecture" : {
+        "modality" : "text+image->text",
+        "input_modalities" : [
+          "image",
+          "text",
+          "file"
+        ],
+        "output_modalities" : [
+          "text"
+        ],
+        "tokenizer" : "GPT",
+        "instruct_type" : null
+      },
+      "pricing" : {
+        "prompt" : "0.00001",
+        "completion" : "0.00004",
+        "request" : "0",
+        "image" : "0.00765",
+        "web_search" : "0.01",
+        "internal_reasoning" : "0",
+        "input_cache_read" : "0.0000025"
+      },
+      "top_provider" : {
+        "context_length" : 200000,
+        "max_completion_tokens" : 100000,
+        "is_moderated" : true
+      },
+      "per_request_limits" : null,
+      "supported_parameters" : [
+        "frequency_penalty",
+        "include_reasoning",
+        "logit_bias",
+        "logprobs",
+        "max_tokens",
+        "presence_penalty",
+        "reasoning",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_logprobs",
+        "top_p"
+      ],
+      "temperature" : null,
+      "top_p" : null,
+      "frequency_penalty" : null
+    }"""
+
+    val modelsResponseJson = s"""{"data": [$jsonString]}"""
+
+    val decoded = parse(modelsResponseJson).flatMap(_.as[ModelsResponse])
+
+    decoded match
+      case Right(response) =>
+        assertEquals(response.data.size, 1)
+        val model = response.data.head
+        assertEquals(model.id, "openai/o3-deep-research")
+        assertEquals(model.name, "OpenAI: o3 Deep Research")
+        assertEquals(model.canonicalSlug, Some("openai/o3-deep-research-2025-06-26"))
+        assertEquals(model.huggingFaceId, Some(""))
+        assertEquals(model.created, Some(1760129661L))
+        assertEquals(model.contextLength, Some(200000))
+        assertEquals(model.temperature, None)
+        assertEquals(model.topP, None)
+        assertEquals(model.frequencyPenalty, None)
+
+        model.architecture match
+          case Some(arch) =>
+            assertEquals(arch.modality, Some("text+image->text"))
+            assertEquals(arch.inputModalities, List("image", "text", "file"))
+            assertEquals(arch.outputModalities, List("text"))
+            assertEquals(arch.tokenizer, Some("GPT"))
+            assertEquals(arch.instructType, None)
+          case None       => fail("architecture should be present")
+
+        model.pricing match
+          case Some(pricing) =>
+            assertEquals(pricing.prompt, "0.00001")
+            assertEquals(pricing.completion, "0.00004")
+            assertEquals(pricing.request, Some("0"))
+            assertEquals(pricing.image, Some("0.00765"))
+            assertEquals(pricing.webSearch, Some("0.01"))
+            assertEquals(pricing.internalReasoning, Some("0"))
+            assertEquals(pricing.inputCacheRead, Some("0.0000025"))
+          case None          => fail("pricing should be present")
+
+        model.topProvider match
+          case Some(provider) =>
+            assertEquals(provider.contextLength, Some(200000))
+            assertEquals(provider.maxCompletionTokens, Some(100000))
+            assertEquals(provider.isModerated, true)
+          case None           => fail("topProvider should be present")
+
+        assertEquals(model.perRequestLimits, None)
+        assertEquals(
+          model.supportedParameters,
+          Some(
+            List(
+              "frequency_penalty",
+              "include_reasoning",
+              "logit_bias",
+              "logprobs",
+              "max_tokens",
+              "presence_penalty",
+              "reasoning",
+              "response_format",
+              "seed",
+              "stop",
+              "structured_outputs",
+              "temperature",
+              "tool_choice",
+              "tools",
+              "top_logprobs",
+              "top_p"
+            )
+          )
+        )
+      case Left(error)     => fail(s"Failed to decode JSON: ${error.getMessage}")
   }
