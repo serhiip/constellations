@@ -4,8 +4,9 @@ import scala.concurrent.duration.*
 
 import cats.effect.std.Supervisor
 import cats.effect.syntax.resource.*
-import cats.effect.{Async, Resource}
+import cats.effect.{Async, Clock, Concurrent, Resource}
 import cats.syntax.all.*
+import cats.{Functor, Semigroupal}
 import cats.~>
 
 import org.typelevel.ci.CIString
@@ -14,6 +15,7 @@ import org.typelevel.otel4s.Attribute
 import org.typelevel.otel4s.metrics.{Counter, Meter}
 import org.typelevel.otel4s.trace.{SpanContext, StatusCode, Tracer}
 
+import io.github.serhiip.constellations.common.Observability
 import io.github.serhiip.constellations.common.Observability.*
 import fs2.io.net.Network
 import io.circe.derivation.Configuration
@@ -23,8 +25,14 @@ import org.http4s.Method.*
 import org.http4s.circe.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.client.Client as HTTPClient
+import org.http4s.client.middleware.{Metrics as Http4sMetrics, Retry, RetryPolicy}
 import org.http4s.dsl.io.*
+import org.http4s.ember.client.EmberClientBuilder
 import org.http4s.headers.{Authorization, Referer, `Content-Type`}
+import org.http4s.metrics.{MetricsOps, TerminationType}
+import org.http4s.metrics.TerminationType.{Abnormal, Canceled, Timeout}
+import org.http4s.client.middleware.Logger as Http4sLogger
+import org.typelevel.otel4s.metrics.BucketBoundaries
 
 private given Configuration = Configuration.default.withSnakeCaseMemberNames
 
@@ -400,41 +408,37 @@ object Client:
 
               _  = span.addLink(linkTo, enrichedAttrs*)
               _ <- span.addAttributes(enrichedAttrs*)
-              _ <- meters.traverse_(_.totalCostCounter.add(result.totalCost, enrichedAttrs*))
-              _ <- meters.traverse_(_.usageCounter.add(result.usage, enrichedAttrs*))
-              _ <- result.cacheDiscount
-                     .traverse(discount => meters.traverse_(_.cacheDiscountCounter.add(discount, enrichedAttrs*)))
-              _ <- meters.traverse_(_.upstreamInferenceCostCounter.add(result.upstreamInferenceCost, enrichedAttrs*))
-              _ <- meters.traverse_(_.latencyCounter.add(result.latency.toLong, enrichedAttrs*))
-              _ <- result.moderationLatency.traverse(latency =>
-                     meters.traverse_(_.moderationLatencyCounter.add(latency.toLong, enrichedAttrs*))
-                   )
-              _ <- meters.traverse_(_.generationTimeCounter.add(result.generationTime.toLong, enrichedAttrs*))
-              _ <- meters.traverse_(_.tokensPromptCounter.add(result.tokensPrompt.toLong, enrichedAttrs*))
-              _ <- meters.traverse_(_.tokensCompletionCounter.add(result.tokensCompletion.toLong, enrichedAttrs*))
-              _ <- meters.traverse_(_.nativeTokensPromptCounter.add(result.nativeTokensPrompt.toLong, enrichedAttrs*))
-              _ <- meters.traverse_(
-                     _.nativeTokensCompletionCounter.add(result.nativeTokensCompletion.toLong, enrichedAttrs*)
-                   )
-              _ <- meters.traverse_(
-                     _.nativeTokensReasoningCounter.add(result.nativeTokensReasoning.toLong, enrichedAttrs*)
-                   )
-              _ <- meters.traverse_(_.nativeTokensCachedCounter.add(result.nativeTokensCached.toLong, enrichedAttrs*))
-              _ <- result.numMediaPrompt
-                     .traverse(count => meters.traverse_(_.numMediaPromptCounter.add(count.toLong, enrichedAttrs*)))
-              _ <- result.numMediaCompletion
-                     .traverse(count => meters.traverse_(_.numMediaCompletionCounter.add(count.toLong, enrichedAttrs*)))
-              _ <- result.numSearchResults
-                     .traverse(count => meters.traverse_(_.numSearchResultsCounter.add(count.toLong, enrichedAttrs*)))
+              _ <- meters.traverse_(m => recordGenerationStatsMetrics(m, result, enrichedAttrs))
             yield result
+
+      private def recordGenerationStatsMetrics(
+          m: Meters[F],
+          result: GenerationStats,
+          attributes: Seq[Attribute[?]]
+      ): F[Unit] =
+        for
+          _ <- m.totalCostCounter.add(result.totalCost, attributes*)
+          _ <- m.usageCounter.add(result.usage, attributes*)
+          _ <- result.cacheDiscount.traverse(d => m.cacheDiscountCounter.add(d, attributes*))
+          _ <- m.upstreamInferenceCostCounter.add(result.upstreamInferenceCost, attributes*)
+          _ <- m.latencyCounter.add(result.latency.toLong, attributes*)
+          _ <- result.moderationLatency.traverse(l => m.moderationLatencyCounter.add(l.toLong, attributes*))
+          _ <- m.generationTimeCounter.add(result.generationTime.toLong, attributes*)
+          _ <- m.tokensPromptCounter.add(result.tokensPrompt.toLong, attributes*)
+          _ <- m.tokensCompletionCounter.add(result.tokensCompletion.toLong, attributes*)
+          _ <- m.nativeTokensPromptCounter.add(result.nativeTokensPrompt.toLong, attributes*)
+          _ <- m.nativeTokensCompletionCounter.add(result.nativeTokensCompletion.toLong, attributes*)
+          _ <- m.nativeTokensReasoningCounter.add(result.nativeTokensReasoning.toLong, attributes*)
+          _ <- m.nativeTokensCachedCounter.add(result.nativeTokensCached.toLong, attributes*)
+          _ <- result.numMediaPrompt.traverse(c => m.numMediaPromptCounter.add(c.toLong, attributes*))
+          _ <- result.numMediaCompletion.traverse(c => m.numMediaCompletionCounter.add(c.toLong, attributes*))
+          _ <- result.numSearchResults.traverse(c => m.numSearchResultsCounter.add(c.toLong, attributes*))
+        yield ()
 
   private def create[F[_]: Async: StructuredLogger](client: HTTPClient[F], apiKey: String, config: Config): Client[F] =
     new:
       private val baseHeaders =
-        val authHeaders    = Headers(
-          Authorization(Credentials.Token(AuthScheme.Bearer, apiKey)),
-          `Content-Type`(MediaType.application.json)
-        )
+        val authHeaders    = Headers(Authorization(Credentials.Token(AuthScheme.Bearer, apiKey)), `Content-Type`(MediaType.application.json))
         val refererHeaders = Headers(config.appUrl.map(url => Referer(Uri.unsafeFromString(url))).toList)
         val titleHeaders   = Headers(config.appTitle.map(title => Header.Raw(CIString("X-Title"), title)).toList)
 
@@ -479,37 +483,100 @@ object Client:
           )
           .map(_.data)
 
+  private def createHttpClient[F[_]: Async: Network](config: Config): Resource[F, HTTPClient[F]] =
+    EmberClientBuilder
+      .default[F]
+      .withTimeout(config.timeout)
+      .withIdleConnectionTime(config.idleConnectionTime)
+      .build
+
+  private def configureClient[F[_]: Async](client: HTTPClient[F], config: Config): HTTPClient[F] =
+    val retryPolicy = RetryPolicy[F](
+      backoff = RetryPolicy.exponentialBackoff(maxWait = config.retryMaxWait, maxRetry = config.retryMaxAttempts),
+      retriable = {
+        case (GET -> Root / "api" / "v1" / "generation", Right(Response(Status.NotFound, _, _, _, _))) => true
+        case (_, result)                                                                               => result.isLeft
+      }
+    )
+    val retryClient = Retry[F](retryPolicy)(client)
+    Http4sLogger.colored[F](logHeaders = config.logHeaders, logBody = config.logBody)(retryClient)
+
   def resource[F[_]: Async: Network: StructuredLogger](
       apiKey: String,
       config: Config = Client.Config()
   ): Resource[F, Client[F]] =
-    import org.http4s.ember.client.EmberClientBuilder
-    import org.http4s.client.middleware.{Retry, RetryPolicy}
-    import org.http4s.client.middleware.Logger
+    createHttpClient(config).map(client => apply(configureClient(client, config), apiKey, config))
 
-    for client <- EmberClientBuilder
-                    .default[F]
-                    .withTimeout(config.timeout)
-                    .withIdleConnectionTime(config.idleConnectionTime)
-                    .build
-                    .map: client =>
-                      val retryPolicy  = RetryPolicy[F](
-                        backoff = RetryPolicy
-                          .exponentialBackoff(maxWait = config.retryMaxWait, maxRetry = config.retryMaxAttempts),
-                        retriable = {
-                          case (
-                                GET -> Root / "api" / "v1" / "generation",
-                                Right(Response(Status.NotFound, _, _, _, _))
-                              ) =>
-                            true
-                          case (_, result) => result.isLeft
-                        }
-                      )
-                      val retryClient  = Retry[F](retryPolicy)(client)
-                      val loggedClient =
-                        Logger.colored[F](logHeaders = config.logHeaders, logBody = config.logBody)(retryClient)
-                      apply(loggedClient, apiKey, config)
-    yield client
+  def instrumentHttp4sClient[F[_]: Functor: Semigroupal: Concurrent: Clock: Meter](
+      name: String,
+      delegate: HTTPClient[F],
+      excludeValues: String => Boolean = Function.const(false),
+      histogramBoundaries: Option[BucketBoundaries] = None
+  ): F[HTTPClient[F]] =
+    val clientNameA           = Attribute("name", name)
+    val classifierA           = Attribute("classifier", (_: String))
+    val methodA               = (m: Method) => Attribute("method", m.name)
+    val statusA               = (s: Status) => Attribute("status", s.code.toLong)
+    val statusResonA          = (s: Status) => Attribute("reason", s.reason)
+    val prefix                = Observability.Metrics.name("client")
+    def metricName(n: String) = s"$prefix/$n"
+    val boundaries            = histogramBoundaries.getOrElse(BucketBoundaries(Range(start = 0, end = 600, step = 50).map(_ * 1e09)*))
+
+    (
+      Meter[F]
+        .upDownCounter[Long](metricName("active_requests"))
+        .withDescription("The count of active requests in particular client")
+        .create,
+      Meter[F]
+        .histogram[Long](metricName("call_duration"))
+        .withDescription("The time to fully consume the response, including the body")
+        .withExplicitBucketBoundaries(boundaries)
+        .withUnit("ns")
+        .create,
+      Meter[F]
+        .histogram[Long](metricName("header_time"))
+        .withDescription("The time to receive the response headers")
+        .withExplicitBucketBoundaries(boundaries)
+        .withUnit("ns")
+        .create,
+      Meter[F]
+        .histogram[Long](metricName("abnormal_terminations"))
+        .withDescription("The time before request was abnormally terminated")
+        .withUnit("ns")
+        .withExplicitBucketBoundaries(boundaries)
+        .create
+    ).mapN: (activeRequests, totalTime, headerTime, abnormal) =>
+      val metricsOps = new MetricsOps[F]:
+        override def recordAbnormalTermination(elapsed: Long, terminationType: TerminationType, classifier: Option[String]): F[Unit] =
+          val termination = terminationType match
+            case Abnormal(rootCause)              => s"abnormal: ${rootCause.getMessage}"
+            case Canceled                         => "cancelled"
+            case TerminationType.Error(rootCause) => s"error: ${rootCause.getMessage()}"
+            case Timeout                          => "timeout"
+
+          abnormal.record(elapsed, Attribute("type", termination) :: clientNameA :: classifier.map(classifierA).toList)
+
+        override def increaseActiveRequests(classifier: Option[String]): F[Unit] =
+          activeRequests.inc(clientNameA :: classifier.map(classifierA).toList)
+
+        override def decreaseActiveRequests(classifier: Option[String]): F[Unit] =
+          activeRequests.dec(clientNameA :: classifier.map(classifierA).toList)
+
+        override def recordTotalTime(
+            method: Method,
+            status: Status,
+            elapsed: Long,
+            classifier: Option[String]
+        ): F[Unit] =
+          totalTime.record(
+            elapsed,
+            statusResonA(status) :: statusA(status) :: methodA(method) :: clientNameA :: classifier.map(classifierA).toList
+          )
+
+        override def recordHeadersTime(method: Method, elapsed: Long, classifier: Option[String]): F[Unit] =
+          headerTime.record(elapsed, methodA(method) :: clientNameA :: classifier.map(classifierA).toList)
+
+      Http4sMetrics(metricsOps, MetricsOps.classifierFMethodWithOptionallyExcludedPath(exclude = excludeValues))(delegate)
 
   def resourceObserved[F[_]: Async: Network: LoggerFactory: Tracer: Meter](
       apiKey: String,
@@ -524,25 +591,18 @@ object Client:
       totalCostCounter              <- Meter[F].counter[Double](Metrics.name("generation_total_cost")).create.toResource
       usageCounter                  <- Meter[F].counter[Double](Metrics.name("generation_usage")).create.toResource
       cacheDiscountCounter          <- Meter[F].counter[Double](Metrics.name("generation_cache_discount")).create.toResource
-      upstreamInferenceCostCounter  <-
-        Meter[F].counter[Double](Metrics.name("generation_upstream_inference_cost")).create.toResource
+      upstreamInferenceCostCounter  <- Meter[F].counter[Double](Metrics.name("generation_upstream_inference_cost")).create.toResource
       latencyCounter                <- Meter[F].counter[Long](Metrics.name("generation_latency")).create.toResource
-      moderationLatencyCounter      <-
-        Meter[F].counter[Long](Metrics.name("generation_moderation_latency")).create.toResource
+      moderationLatencyCounter      <- Meter[F].counter[Long](Metrics.name("generation_moderation_latency")).create.toResource
       generationTimeCounter         <- Meter[F].counter[Long](Metrics.name("generation_time")).create.toResource
       tokensPromptCounter           <- Meter[F].counter[Long](Metrics.name("generation_tokens_prompt")).create.toResource
       tokensCompletionCounter       <- Meter[F].counter[Long](Metrics.name("generation_tokens_completion")).create.toResource
-      nativeTokensPromptCounter     <-
-        Meter[F].counter[Long](Metrics.name("generation_native_tokens_prompt")).create.toResource
-      nativeTokensCompletionCounter <-
-        Meter[F].counter[Long](Metrics.name("generation_native_tokens_completion")).create.toResource
-      nativeTokensReasoningCounter  <-
-        Meter[F].counter[Long](Metrics.name("generation_native_tokens_reasoning")).create.toResource
-      nativeTokensCachedCounter     <-
-        Meter[F].counter[Long](Metrics.name("generation_native_tokens_cached")).create.toResource
+      nativeTokensPromptCounter     <- Meter[F].counter[Long](Metrics.name("generation_native_tokens_prompt")).create.toResource
+      nativeTokensCompletionCounter <- Meter[F].counter[Long](Metrics.name("generation_native_tokens_completion")).create.toResource
+      nativeTokensReasoningCounter  <- Meter[F].counter[Long](Metrics.name("generation_native_tokens_reasoning")).create.toResource
+      nativeTokensCachedCounter     <- Meter[F].counter[Long](Metrics.name("generation_native_tokens_cached")).create.toResource
       numMediaPromptCounter         <- Meter[F].counter[Long](Metrics.name("generation_num_media_prompt")).create.toResource
-      numMediaCompletionCounter     <-
-        Meter[F].counter[Long](Metrics.name("generation_num_media_completion")).create.toResource
+      numMediaCompletionCounter     <- Meter[F].counter[Long](Metrics.name("generation_num_media_completion")).create.toResource
       numSearchResultsCounter       <- Meter[F].counter[Long](Metrics.name("generation_num_search_results")).create.toResource
       requestTokenCounter           <- Meter[F].counter[Long](Metrics.name("request_token_count")).create.toResource
       responseTokenCounter          <- Meter[F].counter[Long](Metrics.name("response_token_count")).create.toResource
@@ -570,18 +630,17 @@ object Client:
                  numSearchResultsCounter = numSearchResultsCounter
                )
 
-      baseClient <- resource(apiKey, config)
+      httpClient <- createHttpClient(config)
+
+      instrumentedClient <- instrumentHttp4sClient("openrouter", httpClient).toResource
+
+      clientWithMiddleware = configureClient(instrumentedClient, config)
+
+      baseClient = create(clientWithMiddleware, apiKey, config)
     yield observed(baseClient, statsSupervisor, meters.some)
 
   def mapK[F[_], G[_]](client: Client[F])(f: F ~> G): Client[G] = new Client[G]:
-    def createChatCompletion(request: ChatCompletionRequest): G[ChatCompletionResponse] =
-      f(client.createChatCompletion(request))
-
-    def createCompletion(request: CompletionRequest): G[CompletionResponse] =
-      f(client.createCompletion(request))
-
-    def listModels(): G[ModelsResponse] =
-      f(client.listModels())
-
-    def getGenerationStats(generationId: String): G[GenerationStats] =
-      f(client.getGenerationStats(generationId))
+    def createChatCompletion(request: ChatCompletionRequest): G[ChatCompletionResponse] = f(client.createChatCompletion(request))
+    def createCompletion(request: CompletionRequest): G[CompletionResponse]             = f(client.createCompletion(request))
+    def listModels(): G[ModelsResponse]                                                 = f(client.listModels())
+    def getGenerationStats(generationId: String): G[GenerationStats]                    = f(client.getGenerationStats(generationId))
