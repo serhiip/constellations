@@ -6,7 +6,7 @@ import cats.effect.std.Supervisor
 import cats.effect.syntax.resource.*
 import cats.effect.{Async, Clock, Concurrent, Resource}
 import cats.syntax.all.*
-import cats.{Functor, Semigroupal}
+import cats.{Functor, Semigroupal, Show}
 import cats.~>
 
 import org.typelevel.ci.CIString
@@ -307,6 +307,24 @@ object Client:
       numSearchResultsCounter: Counter[F, Long]
   )
 
+  enum Error extends RuntimeException:
+    case BadRequest(message: String, errorDetails: ErrorDetails)
+    case Unauthorized(message: String, errorDetails: ErrorDetails)
+    case TooManyRequests(message: String, errorDetails: ErrorDetails)
+    case InternalServerError(message: String, errorDetails: ErrorDetails)
+    case UnknownError(statusCode: Int, message: String, errorDetails: ErrorDetails)
+
+    override def getMessage(): String = this.show
+
+  object Error:
+    given Show[Error] = Show.show {
+      case BadRequest(msg, details)           => s"Bad Request: $msg (code: ${details.code})"
+      case Unauthorized(msg, details)         => s"Unauthorized: $msg (code: ${details.code})"
+      case TooManyRequests(msg, details)      => s"Too Many Requests: $msg (code: ${details.code})"
+      case InternalServerError(msg, details)  => s"Internal Server Error: $msg (code: ${details.code})"
+      case UnknownError(status, msg, details) => s"Unknown Error (status $status): $msg (code: ${details.code})"
+    }
+
   def apply[F[_]: Async: StructuredLogger](client: HTTPClient[F], apiKey: String, config: Config): Client[F] =
     create(client, apiKey, config)
 
@@ -315,7 +333,7 @@ object Client:
       statsSupervisor: Supervisor[F],
       meters: Option[Meters[F]] = none
   ): Client[F] =
-    new Client[F]:
+    new:
       def createChatCompletion(request: ChatCompletionRequest): F[ChatCompletionResponse] =
         Tracer[F]
           .span("openrouter-client", "create-chat-completion")
@@ -326,8 +344,10 @@ object Client:
             for
               _      <- logger.trace(s"Creating chat completion for model ${request.model}")
               _      <- meters.traverse_(_.requestCounter.inc(attrs*))
-              result <-
-                delegate.createChatCompletion(request).onError(_ => meters.traverse_(_.errorCounter.inc(attrs*)))
+              result <- delegate.createChatCompletion(request).onError {
+                          case e: Client.Error => recordClientError(attrs, e)
+                          case _               => meters.traverse_(_.errorCounter.inc(attrs*))
+                        }
               _      <- statsSupervisor.supervise(getGenerationStats(result.id))
               _      <- meters.traverse_(_.requestTokenCounter.add(result.usage.promptTokens.toLong, attrs*))
               _      <- meters.traverse_(_.responseTokenCounter.add(result.usage.completionTokens.toLong, attrs*))
@@ -347,7 +367,10 @@ object Client:
             for
               _      <- logger.trace(s"Creating completion for model ${request.model}")
               _      <- meters.traverse_(_.requestCounter.inc(attrs*))
-              result <- delegate.createCompletion(request).onError(_ => meters.traverse_(_.errorCounter.inc(attrs*)))
+              result <- delegate.createCompletion(request).onError {
+                          case e: Client.Error => recordClientError(attrs, e)
+                          case _               => meters.traverse_(_.errorCounter.inc(attrs*))
+                        }
               _      <- statsSupervisor.supervise(getGenerationStats(result.id))
               _      <- meters.traverse_(_.requestTokenCounter.add(result.usage.promptTokens.toLong, attrs*))
               _      <- meters.traverse_(_.responseTokenCounter.add(result.usage.completionTokens.toLong, attrs*))
@@ -365,7 +388,10 @@ object Client:
             for
               _      <- logger.trace("Listing available models")
               _      <- meters.traverse_(_.requestCounter.inc(attrs*))
-              result <- delegate.listModels().onError(_ => meters.traverse_(_.errorCounter.inc(attrs*)))
+              result <- delegate.listModels().onError {
+                          case e: Client.Error => recordClientErrorListModels(attrs, e)
+                          case _               => meters.traverse_(_.errorCounter.inc(attrs*))
+                        }
               _      <- logger.trace(s"Found ${result.data.size} models")
             yield result
 
@@ -435,6 +461,29 @@ object Client:
           _ <- result.numSearchResults.traverse(c => m.numSearchResultsCounter.add(c.toLong, attributes*))
         yield ()
 
+      private def recordClientError(attrs: Seq[Attribute[?]], error: Client.Error): F[Unit] =
+        val errorCodeAttr = Attribute(
+          "error_code",
+          error match
+            case Client.Error.BadRequest(_, details)          => details.code.toString
+            case Client.Error.Unauthorized(_, details)        => details.code.toString
+            case Client.Error.TooManyRequests(_, details)     => details.code.toString
+            case Client.Error.InternalServerError(_, details) => details.code.toString
+            case Client.Error.UnknownError(_, _, details)     => details.code.toString
+        )
+        meters.traverse_(_.errorCounter.inc(attrs :+ errorCodeAttr))
+
+      private def recordClientErrorListModels(attrs: Seq[Attribute[?]], error: Client.Error): F[Unit] =
+        val errorCodeAttr = Attribute(
+          "error_code",
+          error match
+            case Client.Error.BadRequest(_, details)          => details.code.toString
+            case Client.Error.InternalServerError(_, details) => details.code.toString
+            case Client.Error.UnknownError(_, _, details)     => details.code.toString
+            case _                                            => "unknown"
+        )
+        meters.traverse_(_.errorCounter.inc(attrs :+ errorCodeAttr))
+
   private def create[F[_]: Async: StructuredLogger](client: HTTPClient[F], apiKey: String, config: Config): Client[F] =
     new:
       private val baseHeaders =
@@ -444,19 +493,18 @@ object Client:
 
         authHeaders ++ refererHeaders ++ titleHeaders
 
-      private def handleError[A](operation: String): Response[F] => F[Throwable] = response =>
-        response.as[ErrorResponse].flatMap { errorResponse =>
-          Logger[F].error(
-            s"OpenRouter API error during $operation: code=${errorResponse.error.code}, message=${errorResponse.error.message}, metadata=${errorResponse.error.metadata
-                .map(_.mkString(", "))
-                .getOrElse("no metadata")}"
-          ) >>
-            new Exception(
-              s"OpenRouter API error: ${errorResponse.error.message} (code: ${errorResponse.error.code}) ${errorResponse.error.metadata
-                  .map(_.mkString(", "))
-                  .getOrElse("no metadata")}"
-            ).pure[F]
-        }
+      private def handleError[A](operation: String)(response: Response[F]): F[Throwable] =
+        for
+          errorResponse <- response.as[ErrorResponse]
+          domainError    = response.status match
+                             case Status.BadRequest          => Error.BadRequest(errorResponse.error.message, errorResponse.error)
+                             case Status.Unauthorized        => Error.Unauthorized(errorResponse.error.message, errorResponse.error)
+                             case Status.TooManyRequests     => Error.TooManyRequests(errorResponse.error.message, errorResponse.error)
+                             case Status.InternalServerError => Error.InternalServerError(errorResponse.error.message, errorResponse.error)
+                             case status                     => Error.UnknownError(status.code, errorResponse.error.message, errorResponse.error)
+          metadata       = errorResponse.error.metadata.map(_.mkString(", ")).getOrElse("empty")
+          _             <- Logger[F].error(domainError)(s"OpenRouter API error during $operation: metadata=$metadata")
+        yield domainError
 
       def createChatCompletion(request: ChatCompletionRequest): F[ChatCompletionResponse] =
         val uri = config.baseUri / "v1" / "chat" / "completions"

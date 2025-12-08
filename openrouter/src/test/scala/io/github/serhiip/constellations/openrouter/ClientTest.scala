@@ -205,13 +205,12 @@ final class ClientTest extends CatsEffectSuite:
       messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
     )
 
-    val errorResponse = ErrorResponse(
-      error = ErrorDetails(
-        code = 400,
-        message = "Bad Request: Invalid model",
-        metadata = Some(Map("provider_name" -> Json.fromString("openai")))
-      )
+    val errorDetails = ErrorDetails(
+      code = 400,
+      message = "Bad Request: Invalid model",
+      metadata = Some(Map("provider_name" -> Json.fromString("openai")))
     )
+    val errorResponse = ErrorResponse(error = errorDetails)
 
     val stubClient = createStubClient(Response[IO](Status.BadRequest).withEntity(errorResponse))
     val client     = createTestClient(stubClient)
@@ -219,7 +218,8 @@ final class ClientTest extends CatsEffectSuite:
     client.createChatCompletion(request).attempt.map { result =>
       assert(result.isLeft)
       result.left.map { error =>
-        assert(error.getMessage.contains("OpenRouter API error: Bad Request: Invalid model (code: 400)"))
+        assertEquals(error, Client.Error.BadRequest("Bad Request: Invalid model", errorDetails))
+        assert(error.getMessage.contains("Bad Request: Bad Request: Invalid model (code: 400)"))
       }
     }
   }
@@ -230,13 +230,12 @@ final class ClientTest extends CatsEffectSuite:
       messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
     )
 
-    val errorResponse = ErrorResponse(
-      error = ErrorDetails(
-        code = 401,
-        message = "Invalid API key",
-        metadata = None
-      )
+    val errorDetails = ErrorDetails(
+      code = 401,
+      message = "Invalid API key",
+      metadata = None
     )
+    val errorResponse = ErrorResponse(error = errorDetails)
 
     val stubClient = createStubClient(Response[IO](Status.Unauthorized).withEntity(errorResponse))
     val client     = createTestClient(stubClient)
@@ -244,7 +243,133 @@ final class ClientTest extends CatsEffectSuite:
     client.createChatCompletion(request).attempt.map { result =>
       assert(result.isLeft)
       result.left.map { error =>
-        assert(error.getMessage.contains("OpenRouter API error: Invalid API key (code: 401)"))
+        assertEquals(error, Client.Error.Unauthorized("Invalid API key", errorDetails))
+        assert(error.getMessage.contains("Unauthorized: Invalid API key (code: 401)"))
+      }
+    }
+  }
+
+  test("should raise BadRequest domain error for 400 status") {
+    val request = ChatCompletionRequest(
+      model = "test-model",
+      messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
+    )
+
+    val errorDetails = ErrorDetails(
+      code = 400,
+      message = "Invalid model parameter",
+      metadata = Some(Map("field" -> Json.fromString("model")))
+    )
+    val errorResponse = ErrorResponse(error = errorDetails)
+
+    val stubClient = createStubClient(Response[IO](Status.BadRequest).withEntity(errorResponse))
+    val client     = createTestClient(stubClient)
+
+    client.createChatCompletion(request).attempt.map { result =>
+      assert(result.isLeft)
+      result.left.map { error =>
+        assertEquals(error, Client.Error.BadRequest("Invalid model parameter", errorDetails))
+        assert(error.getMessage.contains("Bad Request: Invalid model parameter (code: 400)"))
+      }
+    }
+  }
+
+  test("should raise Unauthorized domain error for 401 status") {
+    val request = ChatCompletionRequest(
+      model = "test-model",
+      messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
+    )
+
+    val errorDetails = ErrorDetails(
+      code = 401,
+      message = "Invalid API key",
+      metadata = None
+    )
+    val errorResponse = ErrorResponse(error = errorDetails)
+
+    val stubClient = createStubClient(Response[IO](Status.Unauthorized).withEntity(errorResponse))
+    val client     = createTestClient(stubClient)
+
+    client.createChatCompletion(request).attempt.map { result =>
+      assert(result.isLeft)
+      result.left.map { error =>
+        assertEquals(error, Client.Error.Unauthorized("Invalid API key", errorDetails))
+        assert(error.getMessage.contains("Unauthorized: Invalid API key (code: 401)"))
+      }
+    }
+  }
+
+  test("should raise TooManyRequests domain error for 429 status") {
+    val request = ChatCompletionRequest(
+      model = "test-model",
+      messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
+    )
+
+    val errorDetails = ErrorDetails(
+      code = 429,
+      message = "Rate limit exceeded",
+      metadata = Some(Map("retry_after" -> Json.fromInt(60)))
+    )
+    val errorResponse = ErrorResponse(error = errorDetails)
+
+    val stubClient = createStubClient(Response[IO](Status.TooManyRequests).withEntity(errorResponse))
+    val client     = createTestClient(stubClient)
+
+    client.createChatCompletion(request).attempt.map { result =>
+      assert(result.isLeft)
+      result.left.map { error =>
+        assertEquals(error, Client.Error.TooManyRequests("Rate limit exceeded", errorDetails))
+        assert(error.getMessage.contains("Too Many Requests: Rate limit exceeded (code: 429)"))
+      }
+    }
+  }
+
+  test("should raise InternalServerError domain error for 500 status") {
+    val request = ChatCompletionRequest(
+      model = "test-model",
+      messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
+    )
+
+    val errorDetails = ErrorDetails(
+      code = 500,
+      message = "Internal server error",
+      metadata = None
+    )
+    val errorResponse = ErrorResponse(error = errorDetails)
+
+    val stubClient = createStubClient(Response[IO](Status.InternalServerError).withEntity(errorResponse))
+    val client     = createTestClient(stubClient)
+
+    client.createChatCompletion(request).attempt.map { result =>
+      assert(result.isLeft)
+      result.left.map { error =>
+        assertEquals(error, Client.Error.InternalServerError("Internal server error", errorDetails))
+        assert(error.getMessage.contains("Internal Server Error: Internal server error (code: 500)"))
+      }
+    }
+  }
+
+  test("should raise UnknownError domain error for other status codes") {
+    val request = ChatCompletionRequest(
+      model = "test-model",
+      messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
+    )
+
+    val errorDetails = ErrorDetails(
+      code = 503,
+      message = "Service unavailable",
+      metadata = Some(Map("retry_after" -> Json.fromInt(300)))
+    )
+    val errorResponse = ErrorResponse(error = errorDetails)
+
+    val stubClient = createStubClient(Response[IO](Status.ServiceUnavailable).withEntity(errorResponse))
+    val client     = createTestClient(stubClient)
+
+    client.createChatCompletion(request).attempt.map { result =>
+      assert(result.isLeft)
+      result.left.map { error =>
+        assertEquals(error, Client.Error.UnknownError(503, "Service unavailable", errorDetails))
+        assert(error.getMessage.contains("Unknown Error (status 503): Service unavailable (code: 503)"))
       }
     }
   }
