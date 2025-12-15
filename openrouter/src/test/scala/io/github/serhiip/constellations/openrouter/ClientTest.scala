@@ -10,8 +10,6 @@ import org.http4s.*
 import org.http4s.circe.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.client.Client as HTTPClient
-import org.typelevel.log4cats.noop.NoOpLogger
-import org.typelevel.log4cats.StructuredLogger
 
 final class ClientTest extends CatsEffectSuite:
 
@@ -22,7 +20,6 @@ final class ClientTest extends CatsEffectSuite:
     HTTPClient[F] { _ => Resource.pure(response) }
 
   private def createTestClient(stubClient: HTTPClient[IO]): Client[IO] =
-    given StructuredLogger[IO] = NoOpLogger[IO]
     Client.apply[IO](stubClient, testApiKey, testConfig)
 
   private val sampleUsage = ChatCompletionUsage(promptTokens = 50, completionTokens = 15, totalTokens = 65)
@@ -71,8 +68,7 @@ final class ClientTest extends CatsEffectSuite:
             outputModalities = List("text"),
             tokenizer = "GPT".some
           ).some,
-          topProvider =
-            ModelTopProvider(isModerated = true, contextLength = Some(128000), maxCompletionTokens = Some(16384)).some,
+          topProvider = ModelTopProvider(isModerated = true, contextLength = Some(128000), maxCompletionTokens = Some(16384)).some,
           pricing = ModelPricing(
             prompt = "0.0000007",
             completion = "0.0000007",
@@ -169,8 +165,7 @@ final class ClientTest extends CatsEffectSuite:
       choices = List(
         ChatCompletionChoice(
           index = 0,
-          message =
-            ChatMessage(role = "assistant", content = Json.fromString("I can see an image in the message.").some),
+          message = ChatMessage(role = "assistant", content = Json.fromString("I can see an image in the message.").some),
           finishReason = "stop".some
         )
       ),
@@ -205,7 +200,7 @@ final class ClientTest extends CatsEffectSuite:
       messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
     )
 
-    val errorDetails = ErrorDetails(
+    val errorDetails  = ErrorDetails(
       code = 400,
       message = "Bad Request: Invalid model",
       metadata = Some(Map("provider_name" -> Json.fromString("openai")))
@@ -230,7 +225,7 @@ final class ClientTest extends CatsEffectSuite:
       messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
     )
 
-    val errorDetails = ErrorDetails(
+    val errorDetails  = ErrorDetails(
       code = 401,
       message = "Invalid API key",
       metadata = None
@@ -255,7 +250,7 @@ final class ClientTest extends CatsEffectSuite:
       messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
     )
 
-    val errorDetails = ErrorDetails(
+    val errorDetails  = ErrorDetails(
       code = 400,
       message = "Invalid model parameter",
       metadata = Some(Map("field" -> Json.fromString("model")))
@@ -280,7 +275,7 @@ final class ClientTest extends CatsEffectSuite:
       messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
     )
 
-    val errorDetails = ErrorDetails(
+    val errorDetails  = ErrorDetails(
       code = 401,
       message = "Invalid API key",
       metadata = None
@@ -305,7 +300,7 @@ final class ClientTest extends CatsEffectSuite:
       messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
     )
 
-    val errorDetails = ErrorDetails(
+    val errorDetails  = ErrorDetails(
       code = 429,
       message = "Rate limit exceeded",
       metadata = Some(Map("retry_after" -> Json.fromInt(60)))
@@ -330,7 +325,7 @@ final class ClientTest extends CatsEffectSuite:
       messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
     )
 
-    val errorDetails = ErrorDetails(
+    val errorDetails  = ErrorDetails(
       code = 500,
       message = "Internal server error",
       metadata = None
@@ -355,7 +350,7 @@ final class ClientTest extends CatsEffectSuite:
       messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
     )
 
-    val errorDetails = ErrorDetails(
+    val errorDetails  = ErrorDetails(
       code = 503,
       message = "Service unavailable",
       metadata = Some(Map("retry_after" -> Json.fromInt(300)))
@@ -512,9 +507,8 @@ final class ClientTest extends CatsEffectSuite:
       usage = sampleUsage
     )
 
-    val stubClient             = createStubClient(Response[IO](Status.Ok).withEntity(expectedResponse))
-    given StructuredLogger[IO] = NoOpLogger[IO]
-    val client                 = Client.apply[IO](stubClient, testApiKey, configWithAttribution)
+    val stubClient = createStubClient(Response[IO](Status.Ok).withEntity(expectedResponse))
+    val client     = Client.apply[IO](stubClient, testApiKey, configWithAttribution)
 
     val request = ChatCompletionRequest(
       model = "gpt-4o",

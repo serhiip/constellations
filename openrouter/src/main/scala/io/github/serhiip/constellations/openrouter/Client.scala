@@ -10,7 +10,6 @@ import cats.{Functor, Semigroupal, Show}
 import cats.~>
 
 import org.typelevel.ci.CIString
-import org.typelevel.log4cats.{Logger, LoggerFactory, StructuredLogger}
 import org.typelevel.otel4s.Attribute
 import org.typelevel.otel4s.metrics.{Counter, Meter}
 import org.typelevel.otel4s.trace.{SpanContext, StatusCode, Tracer}
@@ -325,10 +324,10 @@ object Client:
       case UnknownError(status, msg, details) => s"Unknown Error (status $status): $msg (code: ${details.code})"
     }
 
-  def apply[F[_]: Async: StructuredLogger](client: HTTPClient[F], apiKey: String, config: Config): Client[F] =
+  def apply[F[_]: Async](client: HTTPClient[F], apiKey: String, config: Config): Client[F] =
     create(client, apiKey, config)
 
-  def observed[F[_]: Async: Tracer: StructuredLogger](
+  def observed[F[_]: Async: Tracer](
       delegate: Client[F],
       statsSupervisor: Supervisor[F],
       meters: Option[Meters[F]] = none
@@ -337,12 +336,11 @@ object Client:
       def createChatCompletion(request: ChatCompletionRequest): F[ChatCompletionResponse] =
         Tracer[F]
           .span("openrouter-client", "create-chat-completion")
-          .logged: logger =>
+          .surround:
             val modelAttr     = Attribute("model", request.model)
             val operationAttr = Attribute("operation", "chat-completion")
             val attrs         = List(modelAttr, operationAttr)
             for
-              _      <- logger.trace(s"Creating chat completion for model ${request.model}")
               _      <- meters.traverse_(_.requestCounter.inc(attrs*))
               result <- delegate.createChatCompletion(request).onError {
                           case e: Client.Error => recordClientError(attrs, e)
@@ -351,21 +349,16 @@ object Client:
               _      <- statsSupervisor.supervise(getGenerationStats(result.id))
               _      <- meters.traverse_(_.requestTokenCounter.add(result.usage.promptTokens.toLong, attrs*))
               _      <- meters.traverse_(_.responseTokenCounter.add(result.usage.completionTokens.toLong, attrs*))
-              _      <-
-                logger.trace(
-                  s"Chat completion created with ${result.choices.size} choices, used ${result.usage.totalTokens} tokens"
-                )
             yield result
 
       def createCompletion(request: CompletionRequest): F[CompletionResponse] =
         Tracer[F]
           .span("openrouter-client", "create-completion")
-          .logged: logger =>
+          .surround:
             val modelAttr     = Attribute("model", request.model)
             val operationAttr = Attribute("operation", "completion")
             val attrs         = List(modelAttr, operationAttr)
             for
-              _      <- logger.trace(s"Creating completion for model ${request.model}")
               _      <- meters.traverse_(_.requestCounter.inc(attrs*))
               result <- delegate.createCompletion(request).onError {
                           case e: Client.Error => recordClientError(attrs, e)
@@ -374,25 +367,20 @@ object Client:
               _      <- statsSupervisor.supervise(getGenerationStats(result.id))
               _      <- meters.traverse_(_.requestTokenCounter.add(result.usage.promptTokens.toLong, attrs*))
               _      <- meters.traverse_(_.responseTokenCounter.add(result.usage.completionTokens.toLong, attrs*))
-              _      <- logger.trace(
-                          s"Completion created with ${result.choices.size} choices, used ${result.usage.totalTokens} tokens"
-                        )
             yield result
 
       def listModels(): F[ModelsResponse] =
         Tracer[F]
           .span("openrouter-client", "list-models")
-          .logged: logger =>
+          .surround:
             val operationAttr = Attribute("operation", "list-models")
             val attrs         = List(operationAttr)
             for
-              _      <- logger.trace("Listing available models")
               _      <- meters.traverse_(_.requestCounter.inc(attrs*))
               result <- delegate.listModels().onError {
                           case e: Client.Error => recordClientErrorListModels(attrs, e)
                           case _               => meters.traverse_(_.errorCounter.inc(attrs*))
                         }
-              _      <- logger.trace(s"Found ${result.data.size} models")
             yield result
 
       def getGenerationStats(generationId: String): F[GenerationStats] =
@@ -404,22 +392,19 @@ object Client:
       def getGenerationStatsLinked(generationId: String, linkTo: SpanContext): F[GenerationStats] =
         Tracer[F]
           .span("openrouter-client", "get-generation-stats")
-          .logged: logger =>
+          .surround:
             val operationAttr = Attribute("operation", "get-generation-stats")
             val attrs         = List(operationAttr)
             for
-              _            <- logger.trace(s"Getting generation stats for id $generationId")
               _            <- meters.traverse_(_.requestCounter.inc(attrs*))
               span         <- Tracer[F].currentSpanOrNoop
               result       <- delegate
                                 .getGenerationStats(generationId)
                                 .onError(t =>
                                   meters.traverse_(_.errorCounter.inc(attrs*)) >> span
-                                    .setStatus(StatusCode.Error, t.getMessage) >> logger
-                                    .warn(t)("Error while fetching generation stats") >> span.recordException(t)
+                                    .setStatus(StatusCode.Error, t.getMessage) >> span.recordException(t)
                                 )
               _            <- span.setStatus(StatusCode.Ok)
-              _            <- logger.trace(s"Generation stats retrieved for model ${result.model}")
               enrichedAttrs = attrs ++ List(
                                 Attribute("model", result.model),
                                 Attribute("origin", result.origin),
@@ -484,7 +469,7 @@ object Client:
         )
         meters.traverse_(_.errorCounter.inc(attrs :+ errorCodeAttr))
 
-  private def create[F[_]: Async: StructuredLogger](client: HTTPClient[F], apiKey: String, config: Config): Client[F] =
+  private def create[F[_]: Async](client: HTTPClient[F], apiKey: String, config: Config): Client[F] =
     new:
       private val baseHeaders =
         val authHeaders    = Headers(Authorization(Credentials.Token(AuthScheme.Bearer, apiKey)), `Content-Type`(MediaType.application.json))
@@ -493,7 +478,7 @@ object Client:
 
         authHeaders ++ refererHeaders ++ titleHeaders
 
-      private def handleError[A](operation: String)(response: Response[F]): F[Throwable] =
+      private def handleError[A](response: Response[F]): F[Throwable] =
         for
           errorResponse <- response.as[ErrorResponse]
           domainError    = response.status match
@@ -502,32 +487,30 @@ object Client:
                              case Status.TooManyRequests     => Error.TooManyRequests(errorResponse.error.message, errorResponse.error)
                              case Status.InternalServerError => Error.InternalServerError(errorResponse.error.message, errorResponse.error)
                              case status                     => Error.UnknownError(status.code, errorResponse.error.message, errorResponse.error)
-          metadata       = errorResponse.error.metadata.map(_.mkString(", ")).getOrElse("empty")
-          _             <- Logger[F].error(domainError)(s"OpenRouter API error during $operation: metadata=$metadata")
         yield domainError
 
       def createChatCompletion(request: ChatCompletionRequest): F[ChatCompletionResponse] =
         val uri = config.baseUri / "v1" / "chat" / "completions"
         client.expectOr[ChatCompletionResponse](Request[F](POST, uri).withHeaders(baseHeaders).withEntity(request))(
-          handleError("chat completion")
+          handleError
         )
 
       def createCompletion(request: CompletionRequest): F[CompletionResponse] =
         val uri = config.baseUri / "v1" / "completions"
         client.expectOr[CompletionResponse](Request[F](POST, uri).withHeaders(baseHeaders).withEntity(request))(
-          handleError("completion")
+          handleError
         )
 
       def listModels(): F[ModelsResponse] =
         client.expectOr[ModelsResponse](Request[F](GET, config.baseUri / "v1" / "models").withHeaders(baseHeaders))(
-          handleError("list models")
+          handleError
         )
 
       def getGenerationStats(generationId: String): F[GenerationStats] =
         val uri = config.baseUri / "v1" / "generation" +? ("id" -> generationId)
         client
           .expectOr[GenerationStatsResponse](Request[F](GET, uri).withHeaders(baseHeaders))(
-            handleError("get generation stats")
+            handleError
           )
           .map(_.data)
 
@@ -549,7 +532,7 @@ object Client:
     val retryClient = Retry[F](retryPolicy)(client)
     Http4sLogger.colored[F](logHeaders = config.logHeaders, logBody = config.logBody)(retryClient)
 
-  def resource[F[_]: Async: Network: StructuredLogger](
+  def resource[F[_]: Async: Network](
       apiKey: String,
       config: Config = Client.Config()
   ): Resource[F, Client[F]] =
@@ -626,13 +609,12 @@ object Client:
 
       Http4sMetrics(metricsOps, MetricsOps.classifierFMethodWithOptionallyExcludedPath(exclude = excludeValues))(delegate)
 
-  def resourceObserved[F[_]: Async: Network: LoggerFactory: Tracer: Meter](
+  def resourceObserved[F[_]: Async: Network: Tracer: Meter](
       apiKey: String,
       config: Config = Client.Config()
   ): Resource[F, Client[F]] =
     for
-      given StructuredLogger[F] <- LoggerFactory[F].create.toResource
-      statsSupervisor           <- Supervisor[F]
+      statsSupervisor <- Supervisor[F]
 
       openRouterRequestCounter      <- Meter[F].counter[Long](Metrics.name("openrouter_request_count")).create.toResource
       openRouterErrorCounter        <- Meter[F].counter[Long](Metrics.name("openrouter_error_count")).create.toResource
