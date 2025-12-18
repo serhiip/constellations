@@ -1,20 +1,13 @@
 package io.github.serhiip.constellations.executor
 
-import java.time.OffsetDateTime
-
-import cats.Monad
 import cats.data.{Chain, NonEmptyChain as NEC, RWST}
 import cats.effect.Clock
 import cats.kernel.Monoid
-import cats.syntax.apply.*
-import cats.syntax.either.*
-import cats.syntax.flatMap.*
-import cats.syntax.functor.*
-import cats.syntax.traverse.*
-
+import cats.syntax.all.*
 import io.github.serhiip.constellations.*
 import io.github.serhiip.constellations.common.*
-//import io.github.serhiip.constellations.dispatcher.*
+import cats.Parallel
+import cats.Monad
 
 object Stateful:
 
@@ -22,11 +15,12 @@ object Stateful:
 
   case object Interruption
 
-  def apply[F[_]: Clock: Monad, T](
+  def apply[F[_]: Clock: Parallel: Monad, T](
       config: Config,
       responseHandling: Handling[F, T],
-      invoker: Invoker[F, T]
-  ): Stateful[F, T] = new Stateful[F, T](config, responseHandling, invoker)
+      invoker: Invoker[F, T],
+      files: Files[F]
+  ): Stateful[F, T] = new Stateful[F, T](config, responseHandling, invoker, files)
 
   private case class State(iteration: Int, steps: Chain[Executor.Step], shouldInterrupt: Boolean)
   private object State:
@@ -39,19 +33,16 @@ object Stateful:
         )
       override def empty: State                       = State(0, Chain.empty, false)
 
-final class Stateful[F[_]: Clock: Monad, T](
+final class Stateful[F[_]: Clock: Parallel: Monad, T](
     config: Stateful.Config,
     responseHandling: Handling[F, T],
-    invoker: Invoker[F, T]
+    invoker: Invoker[F, T],
+    files: Files[F]
 ) extends Executor[F, Stateful.Interruption.type, String]:
 
   import Stateful.*
 
-  override def execute(
-      callDispatcher: Dispatcher[F],
-      history: Memory[F, ?],
-      query: String
-  ): F[Either[Interruption.type, String]] =
+  override def execute(callDispatcher: Dispatcher[F], history: Memory[F, ?], query: String): F[Either[Interruption.type, String]] =
     for
       now      <- Clock[F].offsetDateTimeUtc
       queryStep = Executor.Step.UserQuery(query, now)
@@ -62,26 +53,12 @@ final class Stateful[F[_]: Clock: Monad, T](
   override def resume(callDispatcher: Dispatcher[F], history: Memory[F, ?]): F[Either[Interruption.type, String]] =
     for
       previousSteps <- history.retrieve
-      converted      = previousSteps.map(messageFromStep)
+      converted     <- previousSteps.traverse(messageFromStep)
       allSteps       = NEC.fromChain(converted).get // TODO: handle empty history in resume
       result        <- persistentLoop(callDispatcher, history).runEmptyA(allSteps)
       finishedAt    <- Clock[F].offsetDateTimeUtc
       _             <- result.traverse(response => history.record(Executor.Step.ModelResponse(response, finishedAt)))
     yield result
-
-  private type Ctx[T] = RWST[F, NEC[Message], Chain[FinishReason], State, T]
-  private object Ctx:
-    export RWST.*
-    def liftF[T](it: F[T]): Ctx[T]          = RWST.liftF(it)
-    def add(e: Executor.Step): Ctx[Unit]    = modify(s => s.copy(steps = s.steps.append(e)))
-    def increment: Ctx[Unit]                = modify(s => s.copy(iteration = s.iteration + 1))
-    def getIteration: Ctx[Int]              = inspect(_.iteration)
-    def getSteps: Ctx[Chain[Executor.Step]] = inspect(_.steps)
-    def ask: Ctx[NEC[Message]]              = RWST.ask
-    def allContent: Ctx[NEC[Message]]       =
-      (ask, getSteps).mapN((initial, accumulated) => initial.appendChain(accumulated.map(messageFromStep)))
-    def interrupt: Ctx[Unit]                = modify(s => s.copy(shouldInterrupt = true))
-    def shouldInterrupt: Ctx[Boolean]       = inspect(_.shouldInterrupt)
 
   private def persistentLoop(
       callDispatcher: Dispatcher[F],
@@ -104,22 +81,47 @@ final class Stateful[F[_]: Clock: Monad, T](
 
   private def handleCall(callDispatcher: Dispatcher[F], history: Memory[F, ?])(call: FunctionCall) =
     for
-      callStep <- Ctx.liftF(Clock[F].offsetDateTimeUtc.map(Executor.Step.Call.apply.curried(call)))
-      _        <- persist(history, callStep)
-      result   <- Ctx.liftF(callDispatcher.dispatch(call))
-      _        <- result match
-                    case Dispatcher.Result.Response(result) =>
-                      val withCallId = result.copy(functionCallId = call.callId)
-                      Ctx.liftF(Clock[F].offsetDateTimeUtc.map(Executor.Step.Response.apply.curried(withCallId))) >>= persist
-                        .curried(history)
-                    case Dispatcher.Result.HumanInTheLoop   => Ctx.interrupt
+      now     <- Ctx.liftF(Clock[F].offsetDateTimeUtc)
+      callStep = Executor.Step.Call(call, now)
+      _       <- persist(history, callStep)
+      result  <- Ctx.liftF(callDispatcher.dispatch(call))
+      _       <- result match
+                   case Dispatcher.Result.Response(result) =>
+                     for
+                       now <- Ctx.liftF(Clock[F].offsetDateTimeUtc)
+                       _   <- persist(history, Executor.Step.Response(result = result.copy(functionCallId = call.callId), at = now))
+                     yield ()
+                   case Dispatcher.Result.HumanInTheLoop   => Ctx.interrupt
     yield ()
 
   private def persist(history: Memory[F, ?], step: Executor.Step) = Ctx.add(step) >> Ctx.liftF(history.record(step))
 
-  private def messageFromStep(in: Executor.Step): Message = in match
-    case Executor.Step.UserQuery(text, at)     => Message.User(ContentPart.Text(text) :: Nil)
-    case Executor.Step.ModelResponse(text, at) => Message.Assistant(text)
-    case Executor.Step.Call(call, at)          => Message.Tool(call)
-    case Executor.Step.Response(result, at)    => Message.ToolResult(result)
-    case Executor.Step.UserReply(text, at, _)  => Message.System(text)
+  private def messageFromStep(in: Executor.Step): F[Message] = in match
+    case Executor.Step.UserQuery(text, at, assets) =>
+      assets
+        .parTraverse(files.readFileAsBase64)
+        .map { base64Encoded =>
+          Message.User(ContentPart.Text(text) :: base64Encoded.map(ContentPart.Image.apply))
+        }
+    case Executor.Step.ModelResponse(text, at)     => Message.Assistant(text).pure[F]
+    case Executor.Step.Call(call, at)              => Message.Tool(call).pure[F]
+    case Executor.Step.Response(result, at)        => Message.ToolResult(result).pure[F]
+    case Executor.Step.UserReply(text, at, _)      => Message.System(text).pure[F]
+
+  private type Ctx[T] = RWST[F, NEC[Message], Chain[FinishReason], State, T]
+  private object Ctx:
+    export RWST.*
+    def liftF[T](it: F[T]): Ctx[T]          = RWST.liftF(it)
+    def add(e: Executor.Step): Ctx[Unit]    = modify(s => s.copy(steps = s.steps.append(e)))
+    def increment: Ctx[Unit]                = modify(s => s.copy(iteration = s.iteration + 1))
+    def getIteration: Ctx[Int]              = inspect(_.iteration)
+    def getSteps: Ctx[Chain[Executor.Step]] = inspect(_.steps)
+    def ask: Ctx[NEC[Message]]              = RWST.ask
+    def allContent: Ctx[NEC[Message]]       =
+      for
+        initial     <- ask
+        accumulated <- getSteps
+        converted   <- liftF(accumulated.traverse(messageFromStep))
+      yield initial.appendChain(converted)
+    def interrupt: Ctx[Unit]                = modify(s => s.copy(shouldInterrupt = true))
+    def shouldInterrupt: Ctx[Boolean]       = inspect(_.shouldInterrupt)

@@ -6,7 +6,7 @@ import scala.quoted.*
 import cats.data.NonEmptyChain
 import cats.data.Validated.{Invalid, Valid}
 import cats.syntax.all.*
-import cats.{Monad, Show}
+import cats.{Monad, Show, ~>}
 
 import org.typelevel.log4cats.StructuredLogger
 import org.typelevel.otel4s.trace.Tracer
@@ -18,6 +18,8 @@ import io.github.serhiip.constellations.dispatcher.*
 trait Dispatcher[F[_]]:
   def dispatch(call: FunctionCall): F[Dispatcher.Result]
   def getFunctionDeclarations: F[List[FunctionDeclaration]]
+
+  def mapK[G[_]](f: F ~> G): Dispatcher[G]
 
 object Dispatcher:
   enum Result:
@@ -47,11 +49,15 @@ object Dispatcher:
               _     <- logger.trace(s"Function declarations: ${decls.map(_.name).mkString(",")}")
             yield decls
 
+      override def mapK[G[_]](f: F ~> G): Dispatcher[G] = Dispatcher.mapK(this)(f)
+
   def noop[F[_]: cats.Applicative]: Dispatcher[F] = new Dispatcher[F]:
     def dispatch(call: FunctionCall): F[Dispatcher.Result] =
       throw new UnsupportedOperationException(s"Noop dispatcher does not support dispatching calls: ${call.name}")
 
     def getFunctionDeclarations: F[List[FunctionDeclaration]] = List.empty.pure[F]
+
+    override def mapK[G[_]](f: F ~> G): Dispatcher[G] = Dispatcher.mapK(this)(f)
 
   @experimental
   inline def generate[F[_], T[_[_]]]: T[F] => Dispatcher[F] = ${ macroImpl[F, T] }
@@ -292,4 +298,11 @@ object Dispatcher:
             .getOrElse(report.errorAndAbort("No cats.Applicative given found for F", Position.ofMacroExpansion))
           '{ $app.pure(${ functionDeclarationsExpr }) }
         }
+
+        override def mapK[G[_]](f: F ~> G): Dispatcher[G] = Dispatcher.mapK(this)(f)
     }
+
+  def mapK[F[_], G[_]](dispatcher: Dispatcher[F])(f: F ~> G): Dispatcher[G] = new Dispatcher[G]:
+    override def dispatch(call: FunctionCall): G[Dispatcher.Result]      = f(dispatcher.dispatch(call))
+    override def getFunctionDeclarations: G[List[FunctionDeclaration]] = f(dispatcher.getFunctionDeclarations)
+    override def mapK[H[_]](g: G ~> H): Dispatcher[H]                   = Dispatcher.mapK(this)(g)

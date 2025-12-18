@@ -9,6 +9,7 @@ object Dependencies {
   val catsRetryVersion       = "4.0.0"
   val log4catsCoreVersion    = "2.7.1"
   val log4catsSlf4jVersion   = "2.7.1"
+  val fs2Version             = "3.11.0"
 
   val catsEffect = Seq(
     "org.typelevel"    %% "cats-effect"        % catsEffectVersion,
@@ -16,6 +17,11 @@ object Dependencies {
     "org.typelevel"    %% "cats-effect-std"    % catsEffectVersion,
     "org.typelevel"    %% "cats-mtl"           % "1.5.0",
     "com.github.cb372" %% "cats-retry"         % catsRetryVersion
+  )
+
+  val fs2 = Seq(
+    "co.fs2" %% "fs2-core" % fs2Version,
+    "co.fs2" %% "fs2-io"   % fs2Version
   )
 
   val otel4sCore = Seq("org.typelevel" %% "otel4s-core" % otel4sVersion)
@@ -49,16 +55,21 @@ object Dependencies {
   )
 
   val testing = Seq(
-    "org.typelevel" %% "munit-cats-effect" % munitCatsEffectVersion % Test,
-    "org.scalameta" %% "munit"             % "1.0.0"                % Test
+    "org.typelevel"   %% "munit-cats-effect" % munitCatsEffectVersion % Test,
+    "org.scalameta"   %% "munit"             % "1.0.0"                % Test,
+    "com.google.jimfs" % "jimfs"             % "1.3.0"                % Test
   )
 
   val googleGenai = Seq(
     "com.google.genai" % "google-genai" % "1.18.0"
   )
 
+  val googleCloudNio = Seq(
+    "com.google.cloud" % "google-cloud-nio" % "0.127.34"
+  )
+
   val constellationsCore =
-    catsEffect ++ otel4s ++ logging ++ circe ++ testing ++ otel4sCore
+    catsEffect ++ fs2 ++ otel4s ++ logging ++ circe ++ testing ++ otel4sCore
 
   val constellationsOpenRouter = http4s ++ circe ++ testing
 

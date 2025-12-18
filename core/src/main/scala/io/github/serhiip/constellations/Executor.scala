@@ -12,6 +12,7 @@ import org.typelevel.otel4s.trace.Tracer
 
 import io.github.serhiip.constellations.common.*
 import io.github.serhiip.constellations.common.Observability.*
+import java.net.URI
 
 trait Executor[F[_], E, T]:
   def execute(dispatcher: Dispatcher[F], memory: Memory[F, ?], query: String): F[Either[E, T]]
@@ -19,7 +20,7 @@ trait Executor[F[_], E, T]:
 
 object Executor:
   enum Step:
-    case UserQuery(text: String, at: OffsetDateTime)
+    case UserQuery(text: String, at: OffsetDateTime, assets: List[URI] = List.empty)
     case UserReply(text: String, at: OffsetDateTime, parent: UUID)
     case ModelResponse(text: String, at: OffsetDateTime)
     case Call(call: FunctionCall, at: OffsetDateTime)

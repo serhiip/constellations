@@ -1,6 +1,7 @@
 package io.github.serhiip.constellations
 
 import java.util.UUID
+import java.net.URI
 
 import cats.effect.{IO, IOApp}
 import cats.effect.std.{Console, Env}
@@ -12,6 +13,7 @@ import org.typelevel.otel4s.trace.Tracer.Implicits.noop
 import io.github.serhiip.constellations.common.*
 import io.github.serhiip.constellations.executor.Stateful
 import io.github.serhiip.constellations.google.Client
+import fs2.io.file.{Files as Fs2Files}
 import io.github.serhiip.constellations.handling.GoogleGenAI as HandlingGoogle
 import com.google.genai.types.GenerateContentResponse
 import io.github.serhiip.constellations.invoker.GoogleGenAI
@@ -83,10 +85,12 @@ object GoogleGenAIExample extends IOApp.Simple:
                                    decls
                                  )
                       handling = HandlingGoogle[IO]
+                      files   <- Files[IO](URI.create("file:///tmp/"))
                       executor = Stateful[IO, GenerateContentResponse](
                                    Stateful.Config(functionCallLimit = 5),
                                    handling,
-                                   Invoker[IO, GenerateContentResponse](invoker)
+                                   Invoker[IO, GenerateContentResponse](invoker),
+                                   files
                                  )
                       memory  <- Memory.inMemory[IO, UUID]
                       _       <- IO.println("Type 'exit' to quit.\n")

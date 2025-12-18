@@ -63,7 +63,7 @@ lazy val `constellations-google-genai` = (project in file("google-genai"))
 lazy val `constellations-examples` = (project in file("examples"))
   .settings(
     name           := "constellations-examples",
-    libraryDependencies ++= Dependencies.logging ++ Dependencies.logback,
+    libraryDependencies ++= Dependencies.logging ++ Dependencies.logback ++ Dependencies.googleCloudNio,
     publish / skip := true
   )
   .dependsOn(`constellations-core`, `constellations-google-genai`)
