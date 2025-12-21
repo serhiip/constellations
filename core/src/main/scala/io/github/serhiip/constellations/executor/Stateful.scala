@@ -1,5 +1,7 @@
 package io.github.serhiip.constellations.executor
 
+import java.net.URI
+
 import cats.data.{Chain, NonEmptyChain as NEC, RWST}
 import cats.effect.Clock
 import cats.kernel.Monoid

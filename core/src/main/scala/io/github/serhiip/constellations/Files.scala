@@ -13,6 +13,7 @@ import fs2.io.file.{Files as Fs2Files, Path}
 
 trait Files[F[_]]:
   def readFileAsBase64(uri: URI): F[String]
+  def writeStream(target: URI, bytes: fs2.Stream[F, Byte]): F[Unit]
 
 object Files:
   def apply[F[_]: Async: Fs2Files](baseUri: URI): F[Files[F]] =
@@ -36,5 +37,17 @@ object Files:
                        .string
         yield content
 
+      override def writeStream(target: URI, bytes: fs2.Stream[F, Byte]): F[Unit] =
+        for
+          nioPath <- Async[F].delay(provider.getPath(target))
+          exists  <- Async[F].delay(java.nio.file.Files.exists(nioPath))
+          _       <- if exists then Async[F].raiseError(new java.io.IOException(s"File '$target' already exists"))
+                     else Async[F].unit
+          _       <- bytes.through(Fs2Files[F].writeAll(Path.fromNioPath(nioPath))).compile.drain
+        yield ()
+
   def mapK[F[_], G[_]](files: Files[F])(f: F ~> G): Files[G] = new Files[G]:
     override def readFileAsBase64(uri: URI): G[String] = f(files.readFileAsBase64(uri))
+    override def writeStream(target: URI, bytes: fs2.Stream[G, Byte]): G[Unit] =
+      // writeStream cannot be mapped without an inverse FunctionK (G ~> F)
+      ???

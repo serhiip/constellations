@@ -35,3 +35,26 @@ class FilesTest extends CatsEffectSuite:
       result <- files.readFileAsBase64(path.toUri)
     yield assertEquals(result, expectedBase64)
   }
+
+  test("Files.writeStream should correctly write stream to file") {
+    val path    = fs().getPath("/streamed.txt")
+    val content = "stream content"
+    val bytes   = fs2.Stream.emits(content.getBytes).covary[IO]
+
+    for
+      files  <- Files[IO](fs().getPath("/").toUri)
+      _      <- files.writeStream(path.toUri, bytes)
+      result <- IO(JFiles.readString(path))
+    yield assertEquals(result, content)
+  }
+
+  test("Files.writeStream should fail if target file already exists") {
+    val path  = fs().getPath("/collision.txt")
+    val bytes = fs2.Stream.emits("new content".getBytes).covary[IO]
+
+    for
+      _      <- IO(JFiles.writeString(path, "existing content"))
+      files  <- Files[IO](fs().getPath("/").toUri)
+      result <- files.writeStream(path.toUri, bytes).attempt
+    yield assert(result.isLeft)
+  }
