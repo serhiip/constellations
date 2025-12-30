@@ -44,10 +44,15 @@ final class Stateful[F[_]: Clock: Parallel: Monad, T](
 
   import Stateful.*
 
-  override def execute(callDispatcher: Dispatcher[F], history: Memory[F, ?], query: String): F[Either[Interruption.type, String]] =
+  override def execute(
+      callDispatcher: Dispatcher[F],
+      history: Memory[F, ?],
+      query: String,
+      assets: List[URI]
+  ): F[Either[Interruption.type, String]] =
     for
       now      <- Clock[F].offsetDateTimeUtc
-      queryStep = Executor.Step.UserQuery(query, now)
+      queryStep = Executor.Step.UserQuery(query, now, assets)
       _        <- history.record(queryStep)
       result   <- resume(callDispatcher, history)
     yield result
