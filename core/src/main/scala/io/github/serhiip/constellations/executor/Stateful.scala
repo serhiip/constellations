@@ -78,6 +78,7 @@ final class Stateful[F[_]: Clock: Parallel: Monad, T](
       content   <- Ctx.allContent
       response  <- Ctx.liftF(invoker.generate(content))
       _         <- Ctx.tellF(responseHandling.finishReason(response).map(Chain.one))
+      _         <- Ctx.liftF(persistImages(response))
       calls     <- Ctx.liftF(responseHandling.getFunctinoCalls(response))
       _         <- Chain.fromSeq(calls).traverse(handleCall(callDispatcher, history))
       iteration <- Ctx.getIteration
@@ -85,6 +86,17 @@ final class Stateful[F[_]: Clock: Parallel: Monad, T](
                      Ctx.increment >> persistentLoop(callDispatcher, history)
                    } else Ctx.liftF(responseHandling.getTextFromResponse(response).map(_.asRight))
     yield reply
+
+  private def persistImages(response: T) =
+    for
+      images <- responseHandling.getImages(response)
+      now    <- Clock[F].offsetDateTimeUtc
+      _      <- images.zipWithIndex.parTraverse { (image, idx) =>
+                  val fileName = s"generated-image-${now.toInstant.toEpochMilli}-$idx.${image.extension}"
+                  val uri      = files.resolve(fileName)
+                  files.writeStream(uri, image.bytes)
+                }
+    yield ()
 
   private def handleCall(callDispatcher: Dispatcher[F], history: Memory[F, ?])(call: FunctionCall) =
     for

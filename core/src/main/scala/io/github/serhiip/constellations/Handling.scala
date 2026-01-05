@@ -15,6 +15,7 @@ trait Handling[F[_], T]:
   def getFunctinoCalls(response: T): F[List[FunctionCall]]
   def finishReason(response: T): F[FinishReason]
   def structuredOutput(response: T): F[Struct]
+  def getImages(response: T): F[List[GeneratedImage[F]]]
 
 object Handling:
   def apply[F[_]: Tracer: StructuredLogger: Monad, T](delegate: Handling[F, T]): Handling[F, T] = observed(delegate)
@@ -59,4 +60,14 @@ object Handling:
               _      <- logger.trace("Determining finish reason")
               result <- delegate.finishReason(response)
               _      <- logger.trace(s"Finish reason: $result")
+            yield result
+
+      override def getImages(response: T): F[List[GeneratedImage[F]]] =
+        Tracer[F]
+          .span("handling", "get-images")
+          .logged: logger =>
+            for
+              _      <- logger.trace("Extracting images from response")
+              result <- delegate.getImages(response)
+              _      <- logger.trace(s"Extracted ${result.size} images")
             yield result

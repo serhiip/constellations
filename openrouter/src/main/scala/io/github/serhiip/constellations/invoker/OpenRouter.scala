@@ -31,7 +31,8 @@ object OpenRouter:
       topP: Option[Double] = None,
       presencePenalty: Option[Double] = None,
       frequencyPenalty: Option[Double] = None,
-      systemPrompt: Option[String] = None
+      systemPrompt: Option[String] = None,
+      modalities: Option[List[String]] = None
   )
 
   def chatCompletion[F[_]: Monad](
@@ -70,7 +71,8 @@ object OpenRouter:
                     presencePenalty = config.presencePenalty,
                     frequencyPenalty = config.frequencyPenalty,
                     tools = tools,
-                    toolChoice = tools.map(_ => Json.fromString("auto"))
+                    toolChoice = tools.map(_ => Json.fromString("auto")),
+                    modalities = config.modalities
                   )
         result <- client.createChatCompletion(request)
       yield result

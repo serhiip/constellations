@@ -43,3 +43,6 @@ object GoogleGenAI:
             case Left(decErr) =>
               RuntimeException(s"Failed to decode structured output: ${decErr.getMessage}").raiseError[F, Struct]
             case Right(s)     => s.pure[F]
+
+    override def getImages(response: GenerateContentResponse): F[List[GeneratedImage[F]]] =
+      List.empty[GeneratedImage[F]].pure[F]

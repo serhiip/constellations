@@ -71,7 +71,8 @@ case class ChatMessage(
     content: Option[Json] = None,
     toolCalls: Option[List[ToolCall]] = None,
     toolCallId: Option[String] = None,
-    name: Option[String] = None
+    name: Option[String] = None,
+    images: Option[List[ImageUrlContent]] = None
 ) derives Codec
 
 object ChatMessage:
@@ -110,7 +111,8 @@ case class ChatCompletionRequest(
     frequencyPenalty: Option[Double] = None,
     logitBias: Option[Map[String, Double]] = None,
     tools: Option[List[Tool]] = None,
-    toolChoice: Option[Json] = None
+    toolChoice: Option[Json] = None,
+    modalities: Option[List[String]] = None
 ) derives Codec
 
 case class ChatCompletionChoice(index: Int, message: ChatMessage, finishReason: Option[String]) derives Codec
