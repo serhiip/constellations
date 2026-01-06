@@ -14,8 +14,8 @@ import io.github.serhiip.constellations.common.Codecs.given
 object GoogleGenAI:
 
   def apply[F[_]: MonadThrow]: Handling[F, GenerateContentResponse] = new:
-    override def getTextFromResponse(response: GenerateContentResponse): F[String] =
-      response.text().pure[F]
+    override def getTextFromResponse(response: GenerateContentResponse): F[Option[String]] =
+      Option(response.text()).pure[F]
 
     override def getFunctinoCalls(response: GenerateContentResponse): F[List[FunctionCall]] =
       response.functionCalls().asScala.toList.traverse { call =>

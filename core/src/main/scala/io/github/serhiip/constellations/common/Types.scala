@@ -20,7 +20,7 @@ enum ContentPart:
 
 enum Message:
   case User(content: List[ContentPart])
-  case Assistant(content: String)
+  case Assistant(content: Option[String], images: List[ContentPart.Image] = List.empty)
   case System(content: String)
   case Tool(content: FunctionCall)
   case ToolResult(content: FunctionResponse)

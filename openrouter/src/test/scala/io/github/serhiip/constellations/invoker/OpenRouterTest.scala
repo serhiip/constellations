@@ -11,7 +11,8 @@ import munit.CatsEffectSuite
 
 class OpenRouterTest extends CatsEffectSuite:
 
-  private class StubClient(chatRequestRef: Ref[IO, Option[ChatCompletionRequest]], completionRequestRef: Ref[IO, Option[CompletionRequest]]) extends Client[IO]:
+  private class StubClient(chatRequestRef: Ref[IO, Option[ChatCompletionRequest]], completionRequestRef: Ref[IO, Option[CompletionRequest]])
+      extends Client[IO]:
 
     def createChatCompletion(request: ChatCompletionRequest): IO[ChatCompletionResponse] =
       chatRequestRef.set(request.some) *>
@@ -191,7 +192,7 @@ class OpenRouterTest extends CatsEffectSuite:
                                   List(
                                     Message.System("You are a helpful assistant"),
                                     Message.User(List(ContentPart.Text("Hello"))),
-                                    Message.Assistant("Hi there! How can I help you?"),
+                                    Message.Assistant("Hi there! How can I help you?".some, List.empty),
                                     Message.User(List(ContentPart.Text("What's 2+2?")))
                                   )
                                 )
@@ -265,7 +266,10 @@ class OpenRouterTest extends CatsEffectSuite:
       assertEquals(request.messages(2).name, Some("calculator"))
       assert(request.messages(2).toolCallId.isDefined)
       // The content should be the JSON representation of calculatorResult
-      assertEquals(request.messages(2).content, Some(Json.obj("result" -> Json.fromDoubleOrNull(5.0), "operation" -> Json.fromString("addition"))))
+      assertEquals(
+        request.messages(2).content,
+        Some(Json.obj("result" -> Json.fromDoubleOrNull(5.0), "operation" -> Json.fromString("addition")))
+      )
   }
 
   test("completion should concatenate messages into single prompt") {
@@ -282,7 +286,7 @@ class OpenRouterTest extends CatsEffectSuite:
                                   List(
                                     Message.System("You are a helpful assistant"),
                                     Message.User(List(ContentPart.Text("Hello"))),
-                                    Message.Assistant("Hi there!"),
+                                    Message.Assistant("Hi there!".some, List.empty),
                                     Message.User(List(ContentPart.Text("What's 2+2?")))
                                   )
                                 )

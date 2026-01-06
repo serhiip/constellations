@@ -14,6 +14,8 @@ import io.github.serhiip.constellations.openrouter.{
   Client,
   CompletionRequest,
   CompletionResponse,
+  ImageUrl,
+  ImageUrlContent,
   Tool,
   ToolCall,
   ToolCallFunction,
@@ -21,6 +23,7 @@ import io.github.serhiip.constellations.openrouter.{
 }
 import io.circe.Json
 import io.circe.syntax.*
+import java.util.UUID
 
 object OpenRouter:
 
@@ -84,13 +87,19 @@ object OpenRouter:
         case _        => MessageHandler.default
 
       message match
-        case Message.User(content)       =>
-          ChatMessage(role = "user", content = Some(messageHandler.convertUserMessage(content)))
-        case Message.Assistant(content)  => ChatMessage(role = "assistant", content = Some(Json.fromString(content)))
-        case Message.System(content)     => ChatMessage(role = "system", content = Some(Json.fromString(content)))
-        case Message.Tool(content)       =>
+        case Message.User(content)              => ChatMessage(role = "user", content = Some(messageHandler.convertUserMessage(content)))
+        case Message.Assistant(content, images) =>
+          ChatMessage(
+            role = "assistant",
+            content = content.map(Json.fromString),
+            images = Option.when(images.nonEmpty)(
+              images.map(img => ImageUrlContent(imageUrl = ImageUrl(s"data:image/jpeg;base64,${img.base64Encoded}")))
+            )
+          )
+        case Message.System(content)            => ChatMessage(role = "system", content = Some(Json.fromString(content)))
+        case Message.Tool(content)              =>
           val toolCall = ToolCall(
-            id = content.callId.getOrElse(java.util.UUID.randomUUID().toString),
+            id = content.callId.getOrElse(UUID.randomUUID().toString),
             `type` = "function",
             function = ToolCallFunction(
               name = content.name,
@@ -98,12 +107,12 @@ object OpenRouter:
             )
           )
           ChatMessage(role = "assistant", toolCalls = Some(List(toolCall)))
-        case Message.ToolResult(content) => messageHandler.convertToolResultMessage(content)
+        case Message.ToolResult(content)        => messageHandler.convertToolResultMessage(content)
 
   def completion[F[_]](client: Client[F], config: Config): Invoker[F, CompletionResponse] = new:
 
     override def generate(history: NEC[Message], responseSchema: Option[Schema]): F[CompletionResponse] =
-      val prompt  = history.toChain.toList.map(messageToText).mkString("\n")
+      val prompt  = history.toChain.toList.flatMap(messageToText(_).toList).mkString("\n")
       val request = CompletionRequest(
         model = config.model,
         prompt = prompt,
@@ -115,12 +124,12 @@ object OpenRouter:
       )
       client.createCompletion(request)
 
-    private def messageToText(message: Message): String = message match
-      case Message.User(content)       => content.collect { case ContentPart.Text(text) => text }.mkString(" ")
-      case Message.Assistant(content)  => content
-      case Message.System(content)     => content
-      case Message.Tool(content)       => content.toString
-      case Message.ToolResult(content) => content.toString
+    private def messageToText(message: Message): Option[String] = message match
+      case Message.User(content)              => content.collect { case ContentPart.Text(text) => text }.mkString(" ").some
+      case Message.Assistant(content, images) => content
+      case Message.System(content)            => content.some
+      case Message.Tool(content)              => content.toString.some
+      case Message.ToolResult(content)        => content.toString.some
 
 protected trait MessageHandler:
   def convertUserMessage(content: List[ContentPart]): Json

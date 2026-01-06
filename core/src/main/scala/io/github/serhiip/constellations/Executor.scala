@@ -22,7 +22,7 @@ object Executor:
   enum Step:
     case UserQuery(text: String, at: OffsetDateTime, assets: List[URI] = List.empty)
     case UserReply(text: String, at: OffsetDateTime, parent: UUID)
-    case ModelResponse(text: String, at: OffsetDateTime)
+    case ModelResponse(text: Option[String], at: OffsetDateTime, assets: List[URI] = List.empty)
     case Call(call: FunctionCall, at: OffsetDateTime)
     case Response(result: FunctionResponse, at: OffsetDateTime)
 

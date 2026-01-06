@@ -53,12 +53,10 @@ object OpenRouter:
         case Some(ChatCompletionChoice(_, ChatMessage(_, None, _, _, _, _), _))          => Struct.empty.pure[F]
         case None                                                                        => Struct.empty.pure[F]
 
-    override def getTextFromResponse(response: ChatCompletionResponse): F[String] =
+    override def getTextFromResponse(response: ChatCompletionResponse): F[Option[String]] =
       response.choices.headOption match
-        case Some(ChatCompletionChoice(_, ChatMessage(_, Some(content), _, _, _, _), _)) =>
-          (content.asString.getOrElse(content.toString)).pure[F]
-        case Some(ChatCompletionChoice(_, ChatMessage(_, None, _, _, _, _), _))          => "No content in response".pure[F]
-        case None                                                                        => "No choices in response".pure[F]
+        case Some(ChatCompletionChoice(_, ChatMessage(_, Some(content), _, _, _, _), _)) => content.asString.filterNot(_.isBlank).pure[F]
+        case _                                                                           => none[String].pure[F]
 
     override def getFunctinoCalls(response: ChatCompletionResponse): F[List[FunctionCall]] =
       response.choices.headOption match

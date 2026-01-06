@@ -114,7 +114,7 @@ object GoogleGenAIExample extends IOApp.Simple:
                 executor
                   .execute(dispatcher, memory, line)
                   .flatMap {
-                    case Right(text) => IO.println(s"AI: $text")
+                    case Right(resp) => IO.println(s"AI: ${resp.text.getOrElse("no response")}")
                     case Left(_)     => IO.println("AI: [interrupted]")
                   } >> replLoop(dispatcher, executor, memory)
     yield ()

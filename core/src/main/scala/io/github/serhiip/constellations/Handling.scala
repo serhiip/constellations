@@ -11,7 +11,7 @@ import io.github.serhiip.constellations.common.*
 import io.github.serhiip.constellations.common.Observability.*
 
 trait Handling[F[_], T]:
-  def getTextFromResponse(response: T): F[String]
+  def getTextFromResponse(response: T): F[Option[String]]
   def getFunctinoCalls(response: T): F[List[FunctionCall]]
   def finishReason(response: T): F[FinishReason]
   def structuredOutput(response: T): F[Struct]
@@ -32,14 +32,14 @@ object Handling:
               _      <- logger.trace(s"Structured output: $result")
             yield result
 
-      override def getTextFromResponse(response: T): F[String] =
+      override def getTextFromResponse(response: T): F[Option[String]] =
         Tracer[F]
           .span("handling", "get-text-from-response")
           .logged: logger =>
             for
               _      <- logger.trace("Extracting text from response")
               result <- delegate.getTextFromResponse(response)
-              _      <- logger.trace(s"Text length: ${result.length}")
+              _      <- logger.trace(s"Text length: ${result.map(_.length).getOrElse(0)}")
             yield result
 
       override def getFunctinoCalls(response: T): F[List[FunctionCall]] =

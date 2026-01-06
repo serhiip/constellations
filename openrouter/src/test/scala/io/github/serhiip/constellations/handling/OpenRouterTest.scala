@@ -35,7 +35,7 @@ class OpenRouterTest extends CatsEffectSuite:
       reason <- handling.finishReason(response)
       calls  <- handling.getFunctinoCalls(response)
     yield
-      assertEquals(text, "Hello, world!")
+      assertEquals(text, Some("Hello, world!"))
       assertEquals(reason, FinishReason.Stop)
       assertEquals(calls, List.empty[FunctionCall])
   }
@@ -62,7 +62,7 @@ class OpenRouterTest extends CatsEffectSuite:
     )
 
     handling.getTextFromResponse(response).map { text =>
-      assertEquals(text, "No content in response")
+      assertEquals(text, None)
     }
   }
 
@@ -83,7 +83,7 @@ class OpenRouterTest extends CatsEffectSuite:
       reason <- handling.finishReason(response)
       calls  <- handling.getFunctinoCalls(response)
     yield
-      assertEquals(text, "No choices in response")
+      assertEquals(text, None)
       assertEquals(reason, FinishReason.Error)
       assertEquals(calls, List.empty[FunctionCall])
   }

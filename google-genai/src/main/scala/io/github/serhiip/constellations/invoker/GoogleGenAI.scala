@@ -62,28 +62,30 @@ object GoogleGenAI:
         )
         .tap(b => responseSchema.orElse(config.responseSchema).foreach(_ => b.responseMimeType("application/json")))
         .tap(b =>
-          config.systemPrompt.foreach(sys =>
-            b.systemInstruction(Content.builder().role("system").parts(Part.fromText(sys)).build())
-          )
+          config.systemPrompt.foreach(sys => b.systemInstruction(Content.builder().role("system").parts(Part.fromText(sys)).build()))
         )
         .build()
 
       client.generate(config.model, messages, genCfg.some)
 
     private def messageToContent(message: Message): Content = message match
-      case Message.User(parts)     =>
+      case Message.User(parts)             =>
         val p = parts.map {
           case ContentPart.Text(t)           => Part.fromText(t)
           case ContentPart.Image(base64Data) => Part.fromBytes(Base64.getDecoder.decode(base64Data), "image/jpeg")
         }
         Content.builder().role("user").parts(p.map(_.toBuilder().build()).asJava).build()
-      case Message.Assistant(text) => Content.builder().role("model").parts(Part.fromText(text)).build()
-      case Message.System(text)    => Content.builder().role("system").parts(Part.fromText(text)).build()
-      case Message.Tool(fc)        =>
+      case Message.Assistant(text, images) =>
+        val p = text.map(Part.fromText).toList ::: images.map { img =>
+          Part.fromBytes(Base64.getDecoder.decode(img.base64Encoded), "image/jpeg")
+        }
+        Content.builder().role("model").parts(p.map(_.toBuilder().build()).asJava).build()
+      case Message.System(text)            => Content.builder().role("system").parts(Part.fromText(text)).build()
+      case Message.Tool(fc)                =>
         val args = fc.args.fields.view.mapValues(valueToJava).toMap.asJava
         val part = Part.fromFunctionCall(fc.name, args)
         Content.builder().role("user").parts(part).build()
-      case Message.ToolResult(fr)  =>
+      case Message.ToolResult(fr)          =>
         val args = fr.response.fields.view.mapValues(valueToJava).toMap.asJava
         val part = Part.fromFunctionResponse(fr.name, args)
         Content.builder().role("tool").parts(part).build()

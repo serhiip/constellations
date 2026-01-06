@@ -40,7 +40,7 @@ final class Stateful[F[_]: Clock: Parallel: Monad, T](
     responseHandling: Handling[F, T],
     invoker: Invoker[F, T],
     files: Files[F]
-) extends Executor[F, Stateful.Interruption.type, String]:
+) extends Executor[F, Stateful.Interruption.type, Executor.Step.ModelResponse]:
 
   import Stateful.*
 
@@ -49,7 +49,7 @@ final class Stateful[F[_]: Clock: Parallel: Monad, T](
       history: Memory[F, ?],
       query: String,
       assets: List[URI]
-  ): F[Either[Interruption.type, String]] =
+  ): F[Either[Interruption.type, Executor.Step.ModelResponse]] =
     for
       now      <- Clock[F].offsetDateTimeUtc
       queryStep = Executor.Step.UserQuery(query, now, assets)
@@ -57,46 +57,53 @@ final class Stateful[F[_]: Clock: Parallel: Monad, T](
       result   <- resume(callDispatcher, history)
     yield result
 
-  override def resume(callDispatcher: Dispatcher[F], history: Memory[F, ?]): F[Either[Interruption.type, String]] =
+  override def resume(callDispatcher: Dispatcher[F], history: Memory[F, ?]): F[Either[Interruption.type, Executor.Step.ModelResponse]] =
     for
-      previousSteps <- history.retrieve
-      converted     <- previousSteps.traverse(messageFromStep)
-      allSteps       = NEC.fromChain(converted).get // TODO: handle empty history in resume
-      result        <- persistentLoop(callDispatcher, history).runEmptyA(allSteps)
-      finishedAt    <- Clock[F].offsetDateTimeUtc
-      _             <- result.traverse(response => history.record(Executor.Step.ModelResponse(response, finishedAt)))
+      previousSteps     <- history.retrieve
+      converted         <- previousSteps.traverse(messageFromStep)
+      allSteps           = NEC.fromChain(converted).get // TODO: handle empty history in resume
+      runResult         <- persistentLoop(callDispatcher, history).runEmpty(allSteps)
+      (_, state, result) = runResult
+      _                 <- result.traverse(history.record)
     yield result
 
   private def persistentLoop(
       callDispatcher: Dispatcher[F],
       history: Memory[F, ?]
-  ): Ctx[Either[Interruption.type, String]] =
+  ): Ctx[Either[Interruption.type, Executor.Step.ModelResponse]] =
     Ctx.shouldInterrupt.ifM(Ctx.pure(Interruption.asLeft), eval(callDispatcher, history))
 
-  private def eval(callDispatcher: Dispatcher[F], history: Memory[F, ?]) =
+  private def eval(callDispatcher: Dispatcher[F], history: Memory[F, ?]): Ctx[Either[Interruption.type, Executor.Step.ModelResponse]] =
     for
       content   <- Ctx.allContent
       response  <- Ctx.liftF(invoker.generate(content))
       _         <- Ctx.tellF(responseHandling.finishReason(response).map(Chain.one))
-      _         <- Ctx.liftF(persistImages(response))
+      uris      <- Ctx.liftF(persistImages(response))
       calls     <- Ctx.liftF(responseHandling.getFunctinoCalls(response))
       _         <- Chain.fromSeq(calls).traverse(handleCall(callDispatcher, history))
       iteration <- Ctx.getIteration
       reply     <- if (calls.nonEmpty && iteration < config.functionCallLimit) then {
                      Ctx.increment >> persistentLoop(callDispatcher, history)
-                   } else Ctx.liftF(responseHandling.getTextFromResponse(response).map(_.asRight))
+                   } else {
+                     for
+                       text <- Ctx.liftF(responseHandling.getTextFromResponse(response))
+                       now  <- Ctx.liftF(Clock[F].offsetDateTimeUtc)
+                     yield Executor.Step.ModelResponse(text, now, uris).asRight
+                   }
     yield reply
 
-  private def persistImages(response: T) =
+  private def persistImages(response: T): F[List[URI]] =
     for
       images <- responseHandling.getImages(response)
       now    <- Clock[F].offsetDateTimeUtc
-      _      <- images.zipWithIndex.parTraverse { (image, idx) =>
+      uris   <- images.zipWithIndex.parTraverse { (image, idx) =>
                   val fileName = s"generated-image-${now.toInstant.toEpochMilli}-$idx.${image.extension}"
-                  val uri      = files.resolve(fileName)
-                  files.writeStream(uri, image.bytes)
+                  for
+                    uri <- files.resolve(fileName)
+                    _   <- files.writeStream(uri, image.bytes)
+                  yield uri
                 }
-    yield ()
+    yield uris
 
   private def handleCall(callDispatcher: Dispatcher[F], history: Memory[F, ?])(call: FunctionCall) =
     for
@@ -116,16 +123,21 @@ final class Stateful[F[_]: Clock: Parallel: Monad, T](
   private def persist(history: Memory[F, ?], step: Executor.Step) = Ctx.add(step) >> Ctx.liftF(history.record(step))
 
   private def messageFromStep(in: Executor.Step): F[Message] = in match
-    case Executor.Step.UserQuery(text, at, assets) =>
+    case Executor.Step.UserQuery(text, at, assets)     =>
       assets
         .parTraverse(files.readFileAsBase64)
         .map { base64Encoded =>
           Message.User(ContentPart.Text(text) :: base64Encoded.map(ContentPart.Image.apply))
         }
-    case Executor.Step.ModelResponse(text, at)     => Message.Assistant(text).pure[F]
-    case Executor.Step.Call(call, at)              => Message.Tool(call).pure[F]
-    case Executor.Step.Response(result, at)        => Message.ToolResult(result).pure[F]
-    case Executor.Step.UserReply(text, at, _)      => Message.System(text).pure[F]
+    case Executor.Step.ModelResponse(text, at, assets) =>
+      assets
+        .parTraverse(files.readFileAsBase64)
+        .map { base64Images =>
+          Message.Assistant(text, base64Images.map(ContentPart.Image.apply))
+        }
+    case Executor.Step.Call(call, at)                  => Message.Tool(call).pure[F]
+    case Executor.Step.Response(result, at)            => Message.ToolResult(result).pure[F]
+    case Executor.Step.UserReply(text, at, _)          => Message.System(text).pure[F]
 
   private type Ctx[T] = RWST[F, NEC[Message], Chain[FinishReason], State, T]
   private object Ctx:
