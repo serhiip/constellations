@@ -81,20 +81,39 @@ object OpenRouter:
       yield result
 
     private def messageToChatMessage(message: Message): ChatMessage =
-      val gemini         = "google/gemini-.*".r
-      val messageHandler = config.model match
-        case gemini() => MessageHandler.gemini
-        case _        => MessageHandler.default
-
       message match
-        case Message.User(content)              => ChatMessage(role = "user", content = Some(messageHandler.convertUserMessage(content)))
+        case Message.User(content)              =>
+          val textParts  = content.collect { case ContentPart.Text(text) => text }
+          val imageParts = content.collect { case ContentPart.Image(base64) => base64 }
+
+          val images = Option.when(imageParts.nonEmpty)(
+            imageParts.map { base64 =>
+              ImageUrlContent(imageUrl = ImageUrl(s"data:image/png;base64,$base64"))
+            }
+          )
+
+          val textJson = textParts.mkString(" ").some.filter(_.nonEmpty).map(Json.fromString)
+
+          ChatMessage(role = "user", content = textJson, images = images)
         case Message.Assistant(content, images) =>
+          val imageParts = images.map { img =>
+            Json.obj(
+              "type"      -> Json.fromString("image_url"),
+              "image_url" -> Json.obj("url" -> Json.fromString(s"data:image/jpeg;base64,${img.base64Encoded}"))
+            )
+          }
+
+          val textPart = content.map { text =>
+            Json.obj("type" -> Json.fromString("text"), "text" -> Json.fromString(text))
+          }
+
+          val contentJson =
+            if images.nonEmpty then Some(Json.arr((textPart.toList ++ imageParts)*))
+            else content.map(Json.fromString)
+
           ChatMessage(
             role = "assistant",
-            content = content.map(Json.fromString),
-            images = Option.when(images.nonEmpty)(
-              images.map(img => ImageUrlContent(imageUrl = ImageUrl(s"data:image/jpeg;base64,${img.base64Encoded}")))
-            )
+            content = contentJson
           )
         case Message.System(content)            => ChatMessage(role = "system", content = Some(Json.fromString(content)))
         case Message.Tool(content)              =>
@@ -107,7 +126,7 @@ object OpenRouter:
             )
           )
           ChatMessage(role = "assistant", toolCalls = Some(List(toolCall)))
-        case Message.ToolResult(content)        => messageHandler.convertToolResultMessage(content)
+        case Message.ToolResult(content)        => MessageHandler.default.convertToolResultMessage(content)
 
   def completion[F[_]](client: Client[F], config: Config): Invoker[F, CompletionResponse] = new:
 
@@ -132,36 +151,22 @@ object OpenRouter:
       case Message.ToolResult(content)        => content.toString.some
 
 protected trait MessageHandler:
-  def convertUserMessage(content: List[ContentPart]): Json
   def convertToolResultMessage(content: FunctionResponse): ChatMessage
 
 protected object MessageHandler:
-  private def convertContentPartToJson(contentPart: ContentPart): Json = contentPart match
+  def convertContentPartToJson(contentPart: ContentPart): Json = contentPart match
     case ContentPart.Text(text)           => Json.obj("type" -> Json.fromString("text"), "text" -> Json.fromString(text))
     case ContentPart.Image(base64Encoded) =>
-      val dataUrl = s"data:image/jpeg;base64,$base64Encoded"
+      val dataUrl = s"data:image/png;base64,$base64Encoded"
       Json.obj(
         "type"      -> Json.fromString("image_url"),
         "image_url" -> Json.obj("url" -> Json.fromString(dataUrl))
       )
 
-  def gemini: MessageHandler = new:
-    def convertUserMessage(content: List[ContentPart]): Json =
-      content match
-        case List(ContentPart.Text(text)) => Json.fromString(text)
-        case _                            => Json.arr(content.map(convertContentPartToJson)*)
-
-    def convertToolResultMessage(content: FunctionResponse): ChatMessage =
-      ChatMessage(
-        role = "tool",
-        content = Some(Json.fromString(content.response.asJson.noSpaces)),
-        toolCallId = content.functionCallId
-      )
+  def userContent(parts: List[ContentPart]): Json =
+    Json.arr(parts.map(convertContentPartToJson)*)
 
   def default: MessageHandler = new:
-    def convertUserMessage(content: List[ContentPart]): Json =
-      Json.arr(content.map(convertContentPartToJson)*)
-
     def convertToolResultMessage(content: FunctionResponse): ChatMessage =
       ChatMessage(
         role = "tool",

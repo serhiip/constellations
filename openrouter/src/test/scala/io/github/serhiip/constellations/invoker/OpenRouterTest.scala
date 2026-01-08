@@ -127,18 +127,15 @@ class OpenRouterTest extends CatsEffectSuite:
       capturedRequest      <- chatRequestRef.get
     yield
       assert(capturedRequest.isDefined)
-      val request      = capturedRequest.get
+      val request = capturedRequest.get
       assertEquals(request.model, "gpt-4o")
       assertEquals(request.temperature, 0.7.some)
       assertEquals(request.maxTokens, 100.some)
       assertEquals(request.messages.length, 1)
-      val message      = request.messages.head
+      val message = request.messages.head
       assertEquals(message.role, "user")
-      val contentArray = message.content.get.asArray.get
-      assertEquals(contentArray.length, 1)
-      val textPart     = contentArray(0).asObject.get
-      assertEquals(textPart("type").get.asString.get, "text")
-      assertEquals(textPart("text").get.asString.get, "Hello, how are you?")
+      assertEquals(message.content.flatMap(_.asString), Some("Hello, how are you?"))
+      assertEquals(message.images, None)
       assertEquals(response.model, "gpt-4o")
   }
 
@@ -163,19 +160,14 @@ class OpenRouterTest extends CatsEffectSuite:
       capturedRequest      <- chatRequestRef.get
     yield
       assert(capturedRequest.isDefined)
-      val request      = capturedRequest.get
+      val request = capturedRequest.get
       assertEquals(request.messages.length, 1)
-      val message      = request.messages.head
+      val message = request.messages.head
       assertEquals(message.role, "user")
-      val contentArray = message.content.get.asArray.get
-      assertEquals(contentArray.length, 2)
-      val textPart     = contentArray(0).asObject.get
-      assertEquals(textPart("type").get.asString.get, "text")
-      assertEquals(textPart("text").get.asString.get, "What's in this image?")
-      val imagePart    = contentArray(1).asObject.get
-      assertEquals(imagePart("type").get.asString.get, "image_url")
-      val imageUrl     = imagePart("image_url").get.asObject.get
-      assertEquals(imageUrl("url").get.asString.get, "data:image/jpeg;base64,base64encodedimage")
+      assertEquals(message.content.flatMap(_.asString), Some("What's in this image?"))
+      val imgs    = message.images.get
+      assertEquals(imgs.length, 1)
+      assertEquals(imgs.head.imageUrl.url, "data:image/png;base64,base64encodedimage")
   }
 
   test("chatCompletion should handle multiple message types") {
@@ -201,24 +193,16 @@ class OpenRouterTest extends CatsEffectSuite:
       capturedRequest      <- chatRequestRef.get
     yield
       assert(capturedRequest.isDefined)
-      val request           = capturedRequest.get
+      val request = capturedRequest.get
       assertEquals(request.messages.length, 4)
       assertEquals(request.messages(0).role, "system")
       assertEquals(request.messages(0).content, Some(Json.fromString("You are a helpful assistant")))
       assertEquals(request.messages(1).role, "user")
-      val userContentArray1 = request.messages(1).content.get.asArray.get
-      assertEquals(userContentArray1.length, 1)
-      val textPart1         = userContentArray1(0).asObject.get
-      assertEquals(textPart1("type").get.asString.get, "text")
-      assertEquals(textPart1("text").get.asString.get, "Hello")
+      assertEquals(request.messages(1).content.flatMap(_.asString), Some("Hello"))
       assertEquals(request.messages(2).role, "assistant")
       assertEquals(request.messages(2).content, Some(Json.fromString("Hi there! How can I help you?")))
       assertEquals(request.messages(3).role, "user")
-      val userContentArray2 = request.messages(3).content.get.asArray.get
-      assertEquals(userContentArray2.length, 1)
-      val textPart2         = userContentArray2(0).asObject.get
-      assertEquals(textPart2("type").get.asString.get, "text")
-      assertEquals(textPart2("text").get.asString.get, "What's 2+2?")
+      assertEquals(request.messages(3).content.flatMap(_.asString), Some("What's 2+2?"))
   }
 
   test("chatCompletion should handle tool messages") {
@@ -368,12 +352,12 @@ class OpenRouterTest extends CatsEffectSuite:
       capturedRequest      <- chatRequestRef.get
     yield
       assert(capturedRequest.isDefined)
-      val request      = capturedRequest.get
+      val request = capturedRequest.get
       assertEquals(request.messages.length, 1)
-      val message      = request.messages.head
+      val message = request.messages.head
       assertEquals(message.role, "user")
-      val contentArray = message.content.get.asArray.get
-      assertEquals(contentArray.length, 0)
+      assertEquals(message.content, None)
+      assertEquals(message.images, None)
   }
 
   test("chatCompletion should include function declarations as tools in request") {
@@ -537,18 +521,15 @@ class OpenRouterTest extends CatsEffectSuite:
       capturedRequest      <- chatRequestRef.get
     yield
       assert(capturedRequest.isDefined)
-      val request      = capturedRequest.get
+      val request   = capturedRequest.get
       assertEquals(request.messages.length, 1)
-      val message      = request.messages.head
+      val message   = request.messages.head
       assertEquals(message.role, "user")
-      // For Gemini with multimodal content, should still use array format
-      val contentArray = message.content.get.asArray.get
-      assertEquals(contentArray.length, 2)
-      val textPart     = contentArray(0).asObject.get
-      assertEquals(textPart("type").get.asString.get, "text")
-      assertEquals(textPart("text").get.asString.get, "What's in this image?")
-      val imagePart    = contentArray(1).asObject.get
-      assertEquals(imagePart("type").get.asString.get, "image_url")
+      assertEquals(message.content.flatMap(_.asString), Some("What's in this image?"))
+      val images    = message.images.get
+      assertEquals(images.length, 1)
+      val imagePart = images.head
+      assertEquals(imagePart.imageUrl.url, "data:image/png;base64,base64encodedimage")
   }
 
   test("GeminiMessageHandler should format tool results without name field") {
@@ -591,17 +572,15 @@ class OpenRouterTest extends CatsEffectSuite:
       // Check tool result message (index 2)
       val toolResultMessage = request.messages(2)
       assertEquals(toolResultMessage.role, "tool")
-      assertEquals(toolResultMessage.name, None) // Gemini should not have name field
-      assert(toolResultMessage.toolCallId.isDefined)
-      assertEquals(toolResultMessage.toolCallId.get, "call-123")
-      // Content should be a JSON string for Gemini
-      val contentString = toolResultMessage.content.get.asString.get
-      assert(contentString.contains("result"))
-      assert(contentString.contains("5.0"))
+      assertEquals(toolResultMessage.name, Some("calculator"))
+      assertEquals(toolResultMessage.toolCallId, "call-123".some)
+      val contentObj        = toolResultMessage.content.flatMap(_.asObject)
+      assert(contentObj.isDefined)
+      assertEquals(contentObj.get("result").get.asNumber.get.toDouble, 5.0)
   }
 
   // Tests for Default message handling
-  test("DefaultMessageHandler should convert single text content to array") {
+  test("DefaultMessageHandler should convert single text content to string") {
     for
       chatRequestRef       <- Ref.of[IO, Option[ChatCompletionRequest]](none)
       completionRequestRef <- Ref.of[IO, Option[CompletionRequest]](none)
@@ -615,17 +594,12 @@ class OpenRouterTest extends CatsEffectSuite:
       capturedRequest      <- chatRequestRef.get
     yield
       assert(capturedRequest.isDefined)
-      val request      = capturedRequest.get
+      val request = capturedRequest.get
       assertEquals(request.model, "gpt-4o")
       assertEquals(request.messages.length, 1)
-      val message      = request.messages.head
+      val message = request.messages.head
       assertEquals(message.role, "user")
-      // For default models, single text content should be an array
-      val contentArray = message.content.get.asArray.get
-      assertEquals(contentArray.length, 1)
-      val textPart     = contentArray(0).asObject.get
-      assertEquals(textPart("type").get.asString.get, "text")
-      assertEquals(textPart("text").get.asString.get, "Hello, GPT!")
+      assertEquals(message.content.flatMap(_.asString), Some("Hello, GPT!"))
   }
 
   test("DefaultMessageHandler should format tool results with name field") {
@@ -697,60 +671,34 @@ class OpenRouterTest extends CatsEffectSuite:
       capturedRequest      <- chatRequestRef.get
     yield
       assert(capturedRequest.isDefined)
-      val request      = capturedRequest.get
+      val request = capturedRequest.get
       assertEquals(request.messages.length, 1)
-      val message      = request.messages.head
+      val message = request.messages.head
       assertEquals(message.role, "user")
-      // Multiple text parts should always be an array
-      val contentArray = message.content.get.asArray.get
-      assertEquals(contentArray.length, 2)
-      val firstPart    = contentArray(0).asObject.get
-      assertEquals(firstPart("type").get.asString.get, "text")
-      assertEquals(firstPart("text").get.asString.get, "First part")
-      val secondPart   = contentArray(1).asObject.get
-      assertEquals(secondPart("type").get.asString.get, "text")
-      assertEquals(secondPart("text").get.asString.get, "Second part")
+      assertEquals(message.content.flatMap(_.asString), Some("First part Second part"))
+      assertEquals(message.images, None)
   }
 
   // Unit tests for message handlers in isolation
-  test("MessageHandler.gemini.convertUserMessage should handle single text content") {
-    val content = List(ContentPart.Text("Hello, Gemini!"))
-    val result  = MessageHandler.gemini.convertUserMessage(content)
-    assertEquals(result, Json.fromString("Hello, Gemini!"))
+  test("MessageHandler.userContent should handle single text content as array") {
+    val content = List(ContentPart.Text("Hello!"))
+    val result  = MessageHandler.userContent(content)
+    val array   = result.asArray.get
+    assertEquals(array.length, 1)
+    assertEquals(array(0).asObject.get("type").get.asString.get, "text")
+    assertEquals(array(0).asObject.get("text").get.asString.get, "Hello!")
   }
 
-  test("MessageHandler.gemini.convertUserMessage should handle multimodal content") {
+  test("MessageHandler.userContent should handle multimodal content") {
     val content = List(
       ContentPart.Text("What's in this image?"),
       ContentPart.Image("base64encodedimage")
     )
-    val result  = MessageHandler.gemini.convertUserMessage(content)
+    val result  = MessageHandler.userContent(content)
     val array   = result.asArray.get
     assertEquals(array.length, 2)
     assertEquals(array(0).asObject.get("type").get.asString.get, "text")
     assertEquals(array(1).asObject.get("type").get.asString.get, "image_url")
-  }
-
-  test("MessageHandler.default.convertUserMessage should always return array") {
-    val content = List(ContentPart.Text("Hello, GPT!"))
-    val result  = MessageHandler.default.convertUserMessage(content)
-    val array   = result.asArray.get
-    assertEquals(array.length, 1)
-    assertEquals(array(0).asObject.get("type").get.asString.get, "text")
-    assertEquals(array(0).asObject.get("text").get.asString.get, "Hello, GPT!")
-  }
-
-  test("MessageHandler.gemini.convertToolResultMessage should not include name field") {
-    val content = FunctionResponse(
-      name = "calculator",
-      response = Struct(Map("result" -> Value.number(5.0))),
-      functionCallId = "call-123".some
-    )
-    val result  = MessageHandler.gemini.convertToolResultMessage(content)
-    assertEquals(result.role, "tool")
-    assertEquals(result.name, None)
-    assertEquals(result.toolCallId, "call-123".some)
-    assert(result.content.get.asString.get.contains("result"), "Content should contain 'result'")
   }
 
   test("MessageHandler.default.convertToolResultMessage should include name field") {
