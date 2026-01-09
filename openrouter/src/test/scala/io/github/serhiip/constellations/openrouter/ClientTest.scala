@@ -3,13 +3,15 @@ package io.github.serhiip.constellations.openrouter
 import cats.effect.{IO, Resource}
 import cats.syntax.all.*
 
-import io.circe.Json
+import io.circe.{Encoder, Json}
 import io.circe.parser.*
 import munit.CatsEffectSuite
 import org.http4s.*
 import org.http4s.circe.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.client.Client as HTTPClient
+import org.typelevel.log4cats.noop.NoOpLogger
+import org.typelevel.log4cats.StructuredLogger
 
 final class ClientTest extends CatsEffectSuite:
 
@@ -20,6 +22,7 @@ final class ClientTest extends CatsEffectSuite:
     HTTPClient[F] { _ => Resource.pure(response) }
 
   private def createTestClient(stubClient: HTTPClient[IO]): Client[IO] =
+    given StructuredLogger[IO] = NoOpLogger[IO]
     Client.apply[IO](stubClient, testApiKey, testConfig)
 
   private val sampleUsage = ChatCompletionUsage(promptTokens = 50, completionTokens = 15, totalTokens = 65)
@@ -414,6 +417,33 @@ final class ClientTest extends CatsEffectSuite:
       assertEquals(response.choices.head.finishReason, "tool_calls".some)
     }
   }
+  test("ChatCompletionRequest encoder should drop null fields") {
+    val req = ChatCompletionRequest(
+      model = "m",
+      messages = List(ChatMessage.user("hi")),
+      temperature = None,
+      maxTokens = None,
+      topP = None,
+      stream = false,
+      presencePenalty = None,
+      frequencyPenalty = None,
+      logitBias = None,
+      tools = None,
+      toolChoice = None,
+      modalities = None
+    )
+
+    val json = implicitly[Encoder[ChatCompletionRequest]].apply(req)
+    assertEquals(json.hcursor.downField("temperature").focus, None)
+    assertEquals(json.hcursor.downField("max_tokens").focus, None)
+    assertEquals(json.hcursor.downField("top_p").focus, None)
+    assertEquals(json.hcursor.downField("presence_penalty").focus, None)
+    assertEquals(json.hcursor.downField("frequency_penalty").focus, None)
+    assertEquals(json.hcursor.downField("logit_bias").focus, None)
+    assertEquals(json.hcursor.downField("tools").focus, None)
+    assertEquals(json.hcursor.downField("tool_choice").focus, None)
+    assertEquals(json.hcursor.downField("modalities").focus, None)
+  }
 
   test("createChatCompletion should handle tool results") {
     val toolResultMessage = ChatMessage.tool(
@@ -507,8 +537,9 @@ final class ClientTest extends CatsEffectSuite:
       usage = sampleUsage
     )
 
-    val stubClient = createStubClient(Response[IO](Status.Ok).withEntity(expectedResponse))
-    val client     = Client.apply[IO](stubClient, testApiKey, configWithAttribution)
+    val stubClient             = createStubClient(Response[IO](Status.Ok).withEntity(expectedResponse))
+    given StructuredLogger[IO] = NoOpLogger[IO]
+    val client                 = Client.apply[IO](stubClient, testApiKey, configWithAttribution)
 
     val request = ChatCompletionRequest(
       model = "gpt-4o",
