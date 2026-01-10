@@ -263,8 +263,7 @@ object Dispatcher:
 
     val traitSym = TypeRepr.of[T].typeSymbol
 
-    if !traitSym.flags.is(Flags.Trait) then
-      report.errorAndAbort(s"${traitSym.fullName} is not a trait.", Position.ofMacroExpansion)
+    if !traitSym.flags.is(Flags.Trait) then report.errorAndAbort(s"${traitSym.fullName} is not a trait.", Position.ofMacroExpansion)
 
     val functionDeclarationsExpr = getMethodDeclarations(traitSym)
 
@@ -303,6 +302,6 @@ object Dispatcher:
     }
 
   def mapK[F[_], G[_]](dispatcher: Dispatcher[F])(f: F ~> G): Dispatcher[G] = new Dispatcher[G]:
-    override def dispatch(call: FunctionCall): G[Dispatcher.Result]      = f(dispatcher.dispatch(call))
+    override def dispatch(call: FunctionCall): G[Dispatcher.Result]    = f(dispatcher.dispatch(call))
     override def getFunctionDeclarations: G[List[FunctionDeclaration]] = f(dispatcher.getFunctionDeclarations)
-    override def mapK[H[_]](g: G ~> H): Dispatcher[H]                   = Dispatcher.mapK(this)(g)
+    override def mapK[H[_]](g: G ~> H): Dispatcher[H]                  = Dispatcher.mapK(this)(g)

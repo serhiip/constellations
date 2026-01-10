@@ -372,6 +372,66 @@ final class ClientTest extends CatsEffectSuite:
     }
   }
 
+  test("should treat success status with error payload as domain error") {
+    val request = ChatCompletionRequest(
+      model = "test-model",
+      messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
+    )
+
+    val errorPayload = Json.obj(
+      "error"   -> Json.obj("message" -> Json.fromString("Internal Server Error"), "code" -> Json.fromInt(500)),
+      "user_id" -> Json.fromString("test")
+    )
+
+    val stubClient = createStubClient(Response[IO](Status.Ok).withEntity(errorPayload))
+    val client     = createTestClient(stubClient)
+
+    client.createChatCompletion(request).attempt.map { result =>
+      assert(result.isLeft)
+      result.left.map { error =>
+        val expectedDetails = ErrorDetails(code = 500, message = "Internal Server Error", metadata = None)
+        assertEquals(error, Client.Error.InternalServerError("Internal Server Error", expectedDetails))
+      }
+    }
+  }
+
+  test("should classify error payloads using status and code precedence") {
+    val request = ChatCompletionRequest(
+      model = "test-model",
+      messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
+    )
+
+    final case class ErrCase(status: Status, code: Int, message: String, expected: ErrorDetails => Client.Error)
+
+    val cases = List(
+      ErrCase(Status.Ok, 400, "Bad Request", details => Client.Error.BadRequest(details.message, details)),
+      ErrCase(Status.Ok, 401, "Unauthorized", details => Client.Error.Unauthorized(details.message, details)),
+      ErrCase(Status.Ok, 429, "Too Many Requests", details => Client.Error.TooManyRequests(details.message, details)),
+      ErrCase(Status.Ok, 500, "Internal Server Error", details => Client.Error.InternalServerError(details.message, details)),
+      ErrCase(Status.Ok, 418, "I'm a teapot", details => Client.Error.UnknownError(Status.Ok.code, details.message, details)),
+      ErrCase(Status.ServiceUnavailable, 429, "Retry later", details => Client.Error.TooManyRequests(details.message, details)),
+      ErrCase(Status.BadRequest, 503, "Bad request despite code", details => Client.Error.BadRequest(details.message, details)),
+      ErrCase(Status.Unauthorized, 500, "Unauthorized takes precedence", details => Client.Error.Unauthorized(details.message, details))
+    )
+
+    cases.traverse_ { errCase =>
+      val errorPayload = Json.obj(
+        "error" -> Json.obj("message" -> Json.fromString(errCase.message), "code" -> Json.fromInt(errCase.code))
+      )
+
+      val stubClient = createStubClient(Response[IO](errCase.status).withEntity(errorPayload))
+      val client     = createTestClient(stubClient)
+
+      client.createChatCompletion(request).attempt.map { result =>
+        assert(result.isLeft)
+        result.left.map { error =>
+          val expectedDetails = ErrorDetails(code = errCase.code, message = errCase.message, metadata = None)
+          assertEquals(error, errCase.expected(expectedDetails))
+        }
+      }
+    }
+  }
+
   test("createChatCompletion should handle tool calls") {
     val searchTool = createSearchTool()
 

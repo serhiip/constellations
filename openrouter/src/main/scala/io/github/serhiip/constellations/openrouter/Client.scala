@@ -75,7 +75,11 @@ case class ChatMessage(
     toolCallId: Option[String] = None,
     name: Option[String] = None,
     images: Option[List[ImageUrlContent]] = None
-) derives Codec
+) derives Codec:
+
+  override def toString: String =
+    val imagesInfo = images.fold("None")(imgs => s"Some(count=${imgs.size})")
+    s"ChatMessage($role,$content,$toolCalls,$toolCallId,$name,$imagesInfo)"
 
 given Decoder[ChatMessage] = deriveDecoder[ChatMessage]
 given Encoder[ChatMessage] = deriveEncoder[ChatMessage].mapJson(_.deepDropNullValues)
@@ -344,19 +348,20 @@ object Client:
   ): Client[F] =
     new:
       def createChatCompletion(request: ChatCompletionRequest): F[ChatCompletionResponse] =
+        val modelAttr     = Attribute("model", request.model)
+        val operationAttr = Attribute("operation", "chat-completion")
+        val attrs         = List(modelAttr, operationAttr)
         Tracer[F]
-          .span("openrouter-client", "create-chat-completion")
+          .span("openrouter-client", "create-chat-completion")(attrs*)
           .logged: logger =>
-            val modelAttr     = Attribute("model", request.model)
-            val operationAttr = Attribute("operation", "chat-completion")
-            val attrs         = List(modelAttr, operationAttr)
             for
               _      <- logger.trace(s"Creating chat completion for model ${request.model}")
               _      <- meters.traverse_(_.requestCounter.inc(attrs*))
               result <- delegate.createChatCompletion(request).onError {
-                          case e: Client.Error => recordClientError(attrs, e)
+                          case e: Client.Error => addResponseStatus(e).flatTap(_ => recordClientError(attrs, e))
                           case _               => meters.traverse_(_.errorCounter.inc(attrs*))
                         }
+              _      <- addResponseStatus(200)
               _      <- statsSupervisor.supervise(getGenerationStats(result.id))
               _      <- meters.traverse_(_.requestTokenCounter.add(result.usage.promptTokens.toLong, attrs*))
               _      <- meters.traverse_(_.responseTokenCounter.add(result.usage.completionTokens.toLong, attrs*))
@@ -367,19 +372,20 @@ object Client:
             yield result
 
       def createCompletion(request: CompletionRequest): F[CompletionResponse] =
+        val modelAttr     = Attribute("model", request.model)
+        val operationAttr = Attribute("operation", "completion")
+        val attrs         = List(modelAttr, operationAttr)
         Tracer[F]
-          .span("openrouter-client", "create-completion")
+          .span("openrouter-client", "create-completion")(attrs*)
           .logged: logger =>
-            val modelAttr     = Attribute("model", request.model)
-            val operationAttr = Attribute("operation", "completion")
-            val attrs         = List(modelAttr, operationAttr)
             for
               _      <- logger.trace(s"Creating completion for model ${request.model}")
               _      <- meters.traverse_(_.requestCounter.inc(attrs*))
               result <- delegate.createCompletion(request).onError {
-                          case e: Client.Error => recordClientError(attrs, e)
+                          case e: Client.Error => addResponseStatus(e).flatTap(_ => recordClientError(attrs, e))
                           case _               => meters.traverse_(_.errorCounter.inc(attrs*))
                         }
+              _      <- addResponseStatus(200)
               _      <- statsSupervisor.supervise(getGenerationStats(result.id))
               _      <- meters.traverse_(_.requestTokenCounter.add(result.usage.promptTokens.toLong, attrs*))
               _      <- meters.traverse_(_.responseTokenCounter.add(result.usage.completionTokens.toLong, attrs*))
@@ -389,18 +395,18 @@ object Client:
             yield result
 
       def listModels(): F[ModelsResponse] =
+        val operationAttr = Attribute("operation", "list-models")
         Tracer[F]
-          .span("openrouter-client", "list-models")
+          .span("openrouter-client", "list-models")(operationAttr)
           .logged: logger =>
-            val operationAttr = Attribute("operation", "list-models")
-            val attrs         = List(operationAttr)
             for
               _      <- logger.trace("Listing available models")
-              _      <- meters.traverse_(_.requestCounter.inc(attrs*))
+              _      <- meters.traverse_(_.requestCounter.inc(operationAttr))
               result <- delegate.listModels().onError {
-                          case e: Client.Error => recordClientErrorListModels(attrs, e)
-                          case _               => meters.traverse_(_.errorCounter.inc(attrs*))
+                          case e: Client.Error => addResponseStatus(e).flatTap(_ => recordClientErrorListModels(List(operationAttr), e))
+                          case _               => meters.traverse_(_.errorCounter.inc(operationAttr))
                         }
+              _      <- addResponseStatus(200)
               _      <- logger.trace(s"Found ${result.data.size} models")
             yield result
 
@@ -411,25 +417,26 @@ object Client:
         yield result
 
       def getGenerationStatsLinked(generationId: String, linkTo: SpanContext): F[GenerationStats] =
+        val operationAttr = Attribute("operation", "get-generation-stats")
         Tracer[F]
-          .span("openrouter-client", "get-generation-stats")
+          .span("openrouter-client", "get-generation-stats")(operationAttr)
           .logged: logger =>
-            val operationAttr = Attribute("operation", "get-generation-stats")
-            val attrs         = List(operationAttr)
             for
               _            <- logger.trace(s"Getting generation stats for id $generationId")
-              _            <- meters.traverse_(_.requestCounter.inc(attrs*))
+              _            <- meters.traverse_(_.requestCounter.inc(operationAttr))
               span         <- Tracer[F].currentSpanOrNoop
               result       <- delegate
                                 .getGenerationStats(generationId)
                                 .onError(t =>
-                                  meters.traverse_(_.errorCounter.inc(attrs*)) >> span
+                                  meters.traverse_(_.errorCounter.inc(operationAttr)) >> addResponseStatus(t) >> span
                                     .setStatus(StatusCode.Error, t.getMessage) >> logger
                                     .warn(t)("Error while fetching generation stats") >> span.recordException(t)
                                 )
+              _            <- addResponseStatus(200)
               _            <- span.setStatus(StatusCode.Ok)
               _            <- logger.trace(s"Generation stats retrieved for model ${result.model}")
-              enrichedAttrs = attrs ++ List(
+              enrichedAttrs = List(
+                                operationAttr,
                                 Attribute("model", result.model),
                                 Attribute("origin", result.origin),
                                 Attribute("is_byok", result.isByok.toString),
@@ -493,6 +500,22 @@ object Client:
         )
         meters.traverse_(_.errorCounter.inc(attrs :+ errorCodeAttr))
 
+      private def addResponseStatus(code: Int): F[Unit] =
+        Tracer[F].currentSpanOrNoop.flatMap(_.addAttributes(Attribute("response_status_code", code.toLong)))
+
+      private def addResponseStatus(error: Throwable): F[Unit] =
+        error match
+          case clientError: Client.Error => addResponseStatus(statusFromError(clientError))
+          case _                         => addResponseStatus(Status.InternalServerError.code)
+
+      private def statusFromError(error: Client.Error): Int =
+        error match
+          case Client.Error.BadRequest(_, details)          => details.code
+          case Client.Error.Unauthorized(_, details)        => details.code
+          case Client.Error.TooManyRequests(_, details)     => details.code
+          case Client.Error.InternalServerError(_, details) => details.code
+          case Client.Error.UnknownError(status, _, _)      => status
+
   private def create[F[_]: Async: StructuredLogger](client: HTTPClient[F], apiKey: String, config: Config): Client[F] =
     new:
       private val baseHeaders =
@@ -502,43 +525,52 @@ object Client:
 
         authHeaders ++ refererHeaders ++ titleHeaders
 
-      private def handleError[A](operation: String)(response: Response[F]): F[Throwable] =
-        for
-          errorResponse <- response.as[ErrorResponse]
-          domainError    = response.status match
-                             case Status.BadRequest          => Error.BadRequest(errorResponse.error.message, errorResponse.error)
-                             case Status.Unauthorized        => Error.Unauthorized(errorResponse.error.message, errorResponse.error)
-                             case Status.TooManyRequests     => Error.TooManyRequests(errorResponse.error.message, errorResponse.error)
-                             case Status.InternalServerError => Error.InternalServerError(errorResponse.error.message, errorResponse.error)
-                             case status                     => Error.UnknownError(status.code, errorResponse.error.message, errorResponse.error)
-          metadata       = errorResponse.error.metadata.map(_.mkString(", ")).getOrElse("empty")
-          _             <- Logger[F].error(domainError)(s"OpenRouter API error during $operation: metadata=$metadata")
-        yield domainError
-
       def createChatCompletion(request: ChatCompletionRequest): F[ChatCompletionResponse] =
         val uri = config.baseUri / "v1" / "chat" / "completions"
-        client.expectOr[ChatCompletionResponse](Request[F](POST, uri).withHeaders(baseHeaders).withEntity(request))(
-          handleError("chat completion")
-        )
+        client
+          .run(Request[F](POST, uri).withHeaders(baseHeaders).withEntity(request))
+          .use(decodeResponse[ChatCompletionResponse]("chat completion"))
 
       def createCompletion(request: CompletionRequest): F[CompletionResponse] =
         val uri = config.baseUri / "v1" / "completions"
-        client.expectOr[CompletionResponse](Request[F](POST, uri).withHeaders(baseHeaders).withEntity(request))(
-          handleError("completion")
-        )
+        client
+          .run(Request[F](POST, uri).withHeaders(baseHeaders).withEntity(request))
+          .use(decodeResponse[CompletionResponse]("completion"))
 
       def listModels(): F[ModelsResponse] =
-        client.expectOr[ModelsResponse](Request[F](GET, config.baseUri / "v1" / "models").withHeaders(baseHeaders))(
-          handleError("list models")
-        )
+        client
+          .run(Request[F](GET, config.baseUri / "v1" / "models").withHeaders(baseHeaders))
+          .use(decodeResponse[ModelsResponse]("list models"))
 
       def getGenerationStats(generationId: String): F[GenerationStats] =
         val uri = config.baseUri / "v1" / "generation" +? ("id" -> generationId)
         client
-          .expectOr[GenerationStatsResponse](Request[F](GET, uri).withHeaders(baseHeaders))(
-            handleError("get generation stats")
-          )
+          .run(Request[F](GET, uri).withHeaders(baseHeaders))
+          .use(decodeResponse[GenerationStatsResponse]("get generation stats"))
           .map(_.data)
+
+      private def decodeResponse[A: Decoder](operation: String)(response: Response[F]): F[A] =
+        if response.status.isSuccess then
+          response.as[Json].flatMap { json =>
+            json.hcursor.downField("error").as[ErrorDetails] match
+              case Right(details) => raiseDomainError[A](operation, response.status, details)
+              case Left(_)        =>
+                json.as[A].leftMap(err => InvalidMessageBodyFailure(s"Invalid message body: ${err.getMessage}", err.some)).liftTo[F]
+          }
+        else response.as[ErrorResponse].flatMap(error => raiseDomainError[A](operation, response.status, error.error))
+
+      private def raiseDomainError[A](operation: String, status: Status, details: ErrorDetails): F[A] =
+        val domainError = classifyError(status, details)
+        val metadata    = details.metadata.map(_.mkString(", ")).getOrElse("empty")
+        Logger[F].error(domainError)(s"OpenRouter API error during $operation: metadata=$metadata") >> domainError.raiseError[F, A]
+
+      private def classifyError(status: Status, details: ErrorDetails): Client.Error =
+        (status, details.code) match
+          case (Status.BadRequest, _) | (_, 400)          => Client.Error.BadRequest(details.message, details)
+          case (Status.Unauthorized, _) | (_, 401)        => Client.Error.Unauthorized(details.message, details)
+          case (Status.TooManyRequests, _) | (_, 429)     => Client.Error.TooManyRequests(details.message, details)
+          case (Status.InternalServerError, _) | (_, 500) => Client.Error.InternalServerError(details.message, details)
+          case _                                          => Client.Error.UnknownError(status.code, details.message, details)
 
   private def createHttpClient[F[_]: Async: Network](config: Config): Resource[F, HTTPClient[F]] =
     EmberClientBuilder
