@@ -138,6 +138,7 @@ final class Stateful[F[_]: Clock: Parallel: Monad, T](
     case Executor.Step.Call(call, at)                  => Message.Tool(call).pure[F]
     case Executor.Step.Response(result, at)            => Message.ToolResult(result).pure[F]
     case Executor.Step.UserReply(text, at, _)          => Message.System(text).pure[F]
+    case Executor.Step.System(content, at)             => Message.System(content).pure[F]
 
   private type Ctx[T] = RWST[F, NEC[Message], Chain[FinishReason], State, T]
   private object Ctx:

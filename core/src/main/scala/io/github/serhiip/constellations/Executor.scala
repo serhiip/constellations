@@ -25,6 +25,7 @@ object Executor:
     case ModelResponse(text: Option[String], at: OffsetDateTime, assets: List[URI] = List.empty)
     case Call(call: FunctionCall, at: OffsetDateTime)
     case Response(result: FunctionResponse, at: OffsetDateTime)
+    case System(content: String, at: OffsetDateTime)
 
   def apply[F[_]: Tracer: StructuredLogger: Monad, E, T](delegate: Executor[F, E, T]): Executor[F, E, T] = observed(
     delegate
