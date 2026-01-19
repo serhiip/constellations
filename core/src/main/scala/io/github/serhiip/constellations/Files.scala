@@ -1,16 +1,17 @@
 package io.github.serhiip.constellations
 
 import java.net.URI
-import java.nio.file.FileSystems
+import java.nio.file.{Files as JFiles, FileSystems, FileSystemNotFoundException, StandardOpenOption}
 import java.nio.file.spi.FileSystemProvider
-import java.nio.file.{FileSystemNotFoundException}
 import java.util.ServiceLoader
 import scala.jdk.CollectionConverters.*
 
 import cats.{Applicative, MonadThrow, ~>}
-import cats.effect.Async
+import cats.effect.Sync
 import cats.syntax.all.*
 import fs2.io.file.{Files as Fs2Files, Path}
+import fs2.io.writeOutputStream
+import fs2.text.base64
 import org.typelevel.log4cats.StructuredLogger
 import org.typelevel.otel4s.metrics.{Counter, Meter}
 import org.typelevel.otel4s.trace.Tracer
@@ -24,39 +25,32 @@ trait Files[F[_]]:
   def resolve(relative: String): F[URI]
 
 object Files:
-  def apply[F[_]: Async: Fs2Files](baseUri: URI): F[Files[F]] =
+  def apply[F[_]: Sync: Fs2Files](baseUri: URI): F[Files[F]] =
     for
-      providerFound <- Async[F]
-                         .delay(
-                           if (baseUri.getScheme == "file") Some(FileSystems.getDefault().provider())
-                           else
-                             ServiceLoader
-                               .load(classOf[FileSystemProvider], Thread.currentThread().getContextClassLoader)
-                               .asScala
-                               .find(_.getScheme == baseUri.getScheme)
-                         )
-      provider      <- providerFound.map(_.pure).getOrElse(FileSystemNotFoundException(s"Provider '${baseUri.getScheme}' not found").raiseError)
+      providerFound <- Sync[F].blocking:
+                         if baseUri.getScheme == "file" then FileSystems.getDefault().provider().some
+                         else
+                           ServiceLoader
+                             .load(classOf[FileSystemProvider], Thread.currentThread().getContextClassLoader)
+                             .asScala
+                             .find(_.getScheme == baseUri.getScheme)
+      provider      <- providerFound.liftTo[F](FileSystemNotFoundException(s"Provider '${baseUri.getScheme}' not found"))
     yield new:
-      override def resolve(relative: String): F[URI] = Async[F].delay(baseUri.resolve(relative))
+      override def resolve(relative: String): F[URI] = Sync[F].delay(baseUri.resolve(relative))
 
       override def readFileAsBase64(uri: URI): F[String] =
         for
-          nioPath <- Async[F].delay(provider.getPath(uri))
-          content <- Fs2Files[F]
-                       .readAll(Path.fromNioPath(nioPath))
-                       .through(fs2.text.base64.encode)
-                       .compile
-                       .string
+          nioPath <- Sync[F].blocking(provider.getPath(uri))
+          content <- Fs2Files[F].readAll(Path.fromNioPath(nioPath)).through(base64.encode).compile.string
         yield content
 
       override def writeStream(target: URI, bytes: fs2.Stream[F, Byte]): F[Unit] =
-        for
-          nioPath <- Async[F].delay(provider.getPath(target))
-          exists  <- Async[F].delay(java.nio.file.Files.exists(nioPath))
-          _       <- if exists then Async[F].raiseError(new java.io.IOException(s"File '$target' already exists"))
-                     else Async[F].unit
-          _       <- bytes.through(Fs2Files[F].writeAll(Path.fromNioPath(nioPath))).compile.drain
-        yield ()
+        // Uses OutputStream instead of Fs2Files.writeAll because GCS's FileChannel becomes invalid
+        // after calling position() between writes, which fs2's FileChannel-based writes do internally.
+        val mkOutputStream = Sync[F].blocking:
+          val nioPath = provider.getPath(target)
+          JFiles.newOutputStream(nioPath, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
+        bytes.through(writeOutputStream(mkOutputStream, closeAfterUse = true)).compile.drain
 
   def metered[F[_]: MonadThrow](delegate: Files[F], meters: Meters[F]): Files[F] =
     new Files[F]:
