@@ -260,7 +260,9 @@ class DispatcherTest extends CatsEffectSuite:
             required = List("a")
           )
         )
-      )
+      ),
+      FunctionDeclaration("TestApi_offsetDateTimeValue", None, None),
+      FunctionDeclaration("TestApi_uuidValue", None, None)
     ).sortBy(_.name)
 
     declarations.map(decls => assertEquals(decls, expectedDeclarations))

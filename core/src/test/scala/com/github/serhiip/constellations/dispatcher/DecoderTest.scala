@@ -1,5 +1,8 @@
 package io.github.serhiip.constellations.dispatcher
 
+import java.time.OffsetDateTime
+import java.util.UUID
+
 import cats.data.Validated.{Invalid, Valid}
 import cats.data.ValidatedNec
 import io.github.serhiip.constellations.common.{Value, Struct}
@@ -103,6 +106,32 @@ class DecoderTest extends FunSuite:
   test("Decoder[Value, Boolean] should fail for NumberValue") {
     val value  = Value.NumberValue(1.0)
     val result = Decoder[Value, Boolean].decode(value, "test")
+    assert(result.isInvalid)
+  }
+
+  test("Decoder[Value, OffsetDateTime] should decode StringValue correctly") {
+    val time   = OffsetDateTime.parse("2025-01-20T12:34:56.123+02:00")
+    val value  = Value.StringValue(time.toString)
+    val result = Decoder[Value, OffsetDateTime].decode(value, "test")
+    assertEquals(result, Valid(time))
+  }
+
+  test("Decoder[Value, OffsetDateTime] should fail for invalid StringValue") {
+    val value  = Value.StringValue("not-a-date")
+    val result = Decoder[Value, OffsetDateTime].decode(value, "test")
+    assert(result.isInvalid)
+  }
+
+  test("Decoder[Value, UUID] should decode StringValue correctly") {
+    val id     = UUID.fromString("d684b6c2-6c1e-4f84-98f1-5f3ef06435c5")
+    val value  = Value.StringValue(id.toString)
+    val result = Decoder[Value, UUID].decode(value, "test")
+    assertEquals(result, Valid(id))
+  }
+
+  test("Decoder[Value, UUID] should fail for invalid StringValue") {
+    val value  = Value.StringValue("not-a-uuid")
+    val result = Decoder[Value, UUID].decode(value, "test")
     assert(result.isInvalid)
   }
 

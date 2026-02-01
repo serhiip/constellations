@@ -477,6 +477,93 @@ final class ClientTest extends CatsEffectSuite:
       assertEquals(response.choices.head.finishReason, "tool_calls".some)
     }
   }
+
+  test("createChatCompletion parses real response with tool calls from example JSON") {
+    val jsonStr =
+      """
+      |{
+      |  "id": "gen-1000000001-XyZ9AbCdEfGhIjKlMnOpQrSt",
+      |  "provider": "Google",
+      |  "model": "google/gemini-3-pro-preview",
+      |  "object": "chat.completion",
+      |  "created": 1769961862,
+      |  "choices": [
+      |    {
+      |      "logprobs": null,
+      |      "finish_reason": "tool_calls",
+      |      "native_finish_reason": "STOP",
+      |      "index": 0,
+      |      "message": {
+      |        "role": "assistant",
+      |        "content": "",
+      |        "refusal": null,
+      |        "reasoning": "**Assessing Weather Data Retrieval**\n\nI've located a tool, `ExampleFunctions_getWeather`, that should get the weather. It takes a city parameter, which is easy enough to get. \"london\" is what I have to work with, so I'll feed that into the tool.\n\n\n**Executing the Weather Call**\n\nI'm ready to run the tool. I've confirmed that the `ExampleFunctions_getWeather` tool can accept \"london\" as the city parameter. Now, the execution of `ExampleFunctions_getWeather(city='london')` is my next action.\n\n\n",
+      |        "tool_calls": [
+      |          {
+      |            "type": "function",
+      |            "index": 0,
+      |            "id": "tool_ExampleFunctions_getWeather_xYz9AbCdEfGhIjKlMnOpQr",
+      |            "function": {
+      |              "name": "ExampleFunctions_getWeather",
+      |              "arguments": "{\"city\":\"london\"}"
+      |            }
+      |          }
+      |        ],
+      |        "reasoning_details": [
+      |          {
+      |            "format": "google-gemini-v1",
+      |            "index": 0,
+      |            "type": "reasoning.text",
+      |            "text": "**Assessing Weather Data Retrieval**\n\nI've located a tool, `ExampleFunctions_getWeather`, that should get the weather. It takes a city parameter, which is easy enough to get. \"london\" is what I have to work with, so I'll feed that into the tool.\n\n\n**Executing the Weather Call**\n\nI'm ready to run the tool. I've confirmed that the `ExampleFunctions_getWeather` tool can accept \"london\" as the city parameter. Now, the execution of `ExampleFunctions_getWeather(city='london')` is my next action.\n\n\n"
+      |          },
+      |          {
+      |            "id": "tool_ExampleFunctions_getWeather_xYz9AbCdEfGhIjKlMnOpQr",
+      |            "format": "google-gemini-v1",
+      |            "index": 0,
+      |            "type": "reasoning.encrypted",
+      |            "data": "VGVzdEVuY3J5cHRlZERhdGFCbG9iRm9yVW5pdFRlc3RPbmx5"
+      |          }
+      |        ],
+      |        "annotations": []
+      |      }
+      |    }
+      |  ],
+      |  "usage": {
+      |    "prompt_tokens": 45,
+      |    "completion_tokens": 98,
+      |    "total_tokens": 143,
+      |    "cost": 0.001266,
+      |    "is_byok": false,
+      |    "prompt_tokens_details": {
+      |      "cached_tokens": 0,
+      |      "cache_write_tokens": 0,
+      |      "audio_tokens": 0,
+      |      "video_tokens": 0
+      |    },
+      |    "cost_details": {
+      |      "upstream_inference_cost": 0.001266,
+      |      "upstream_inference_prompt_cost": 0.00009,
+      |      "upstream_inference_completions_cost": 0.001176
+      |    },
+      |    "completion_tokens_details": { "reasoning_tokens": 87, "image_tokens": 0 }
+      |  }
+      |}
+      |""".stripMargin
+    decode[ChatCompletionResponse](jsonStr).fold(
+      err => IO.raiseError(err),
+      response =>
+        IO {
+          assertEquals(response.choices.size, 1)
+          assertEquals(response.choices.head.finishReason, Some("tool_calls"))
+          val toolCalls = response.choices.head.message.toolCalls.getOrElse(fail("tool_calls missing"))
+          assertEquals(toolCalls.size, 1)
+          assertEquals(toolCalls.head.id, "tool_ExampleFunctions_getWeather_xYz9AbCdEfGhIjKlMnOpQr")
+          assertEquals(toolCalls.head.function.name, "ExampleFunctions_getWeather")
+          assertEquals(toolCalls.head.function.arguments, """{"city":"london"}""")
+        }
+    )
+  }
+
   test("ChatCompletionRequest encoder should drop null fields") {
     val req = ChatCompletionRequest(
       model = "m",

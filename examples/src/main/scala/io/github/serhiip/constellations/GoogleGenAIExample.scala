@@ -7,45 +7,41 @@ import cats.effect.{IO, IOApp}
 import cats.effect.std.{Console, Env}
 
 import org.typelevel.log4cats.StructuredLogger
-import org.typelevel.otel4s.trace.Tracer
-import org.typelevel.otel4s.trace.Tracer.Implicits.noop
 
-import io.github.serhiip.constellations.common.*
+import io.github.serhiip.constellations.dispatcher.ValueEncoder
 import io.github.serhiip.constellations.executor.Stateful
 import io.github.serhiip.constellations.google.Client
-import fs2.io.file.{Files as Fs2Files}
 import io.github.serhiip.constellations.handling.GoogleGenAI as HandlingGoogle
 import com.google.genai.types.GenerateContentResponse
 import io.github.serhiip.constellations.invoker.GoogleGenAI
 import org.typelevel.log4cats.slf4j.Slf4jFactory
-import io.github.serhiip.constellations.common.{Struct, Value, FunctionResponse}
-import scala.annotation.experimental
 import cats.effect.Clock
-import cats.Applicative
+import cats.Functor
 import cats.syntax.all.*
 import org.typelevel.log4cats.Logger
 import java.time.ZoneId
 import java.time.OffsetDateTime
 
-trait CallableFunctions[F[_]]:
-  def getCurrentTime(zone: Option[String]): F[Dispatcher.Result]
-  def alert(text: String): F[Dispatcher.Result]
+final case class CurrentTime(time: String) derives ValueEncoder
+final case class AlertResult(message: String) derives ValueEncoder
 
-class DefaultFunctions[F[_]: Clock: Applicative: Logger] extends CallableFunctions[F]:
-  def getCurrentTime(zone: Option[String]): F[Dispatcher.Result] =
+trait CallableFunctions[F[_]]:
+  def getCurrentTime(zone: Option[String]): F[CurrentTime]
+  def alert(text: String): F[AlertResult]
+
+class DefaultFunctions[F[_]: Clock: Functor: Logger] extends CallableFunctions[F]:
+  def getCurrentTime(zone: Option[String]): F[CurrentTime] =
     for {
       instant <- Clock[F].realTimeInstant
       nowZoned = OffsetDateTime.ofInstant(instant, ZoneId.of(zone.getOrElse("UTC")))
-    } yield Dispatcher.Result.Response(
-      FunctionResponse("getCurrentTime", Struct("time" -> Value.string(nowZoned.toString)))
-    )
+    } yield CurrentTime(nowZoned.toString)
 
-  def alert(text: String): F[Dispatcher.Result] =
+  def alert(text: String): F[AlertResult] =
     Logger[F]
       .info(s"ALERT: $text")
-      .as(Dispatcher.Result.Response(FunctionResponse("echo", Struct("text" -> Value.string(text)))))
+      .as(AlertResult(text))
 
-@experimental
+@scala.annotation.experimental
 object GoogleGenAIExample extends IOApp.Simple:
   def run: IO[Unit] =
 
@@ -89,7 +85,7 @@ object GoogleGenAIExample extends IOApp.Simple:
                       executor = Stateful[IO, GenerateContentResponse](
                                    Stateful.Config(functionCallLimit = 5),
                                    handling,
-                                   Invoker[IO, GenerateContentResponse](invoker),
+                                   invoker,
                                    files
                                  )
                       memory  <- Memory.inMemory[IO, UUID]

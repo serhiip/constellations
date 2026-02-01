@@ -18,9 +18,8 @@ import org.typelevel.otel4s.trace.{SpanContext, StatusCode, Tracer}
 import io.github.serhiip.constellations.common.Observability
 import io.github.serhiip.constellations.common.Observability.*
 import fs2.io.net.Network
-import io.circe.derivation.Configuration
-import io.circe.{Codec, Decoder, Encoder, Json}
-import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
+import io.circe.derivation.{Configuration, ConfiguredCodec}
+import io.circe.{Codec, Decoder, Json}
 import org.http4s.*
 import org.http4s.Method.*
 import org.http4s.circe.*
@@ -37,36 +36,36 @@ import org.typelevel.otel4s.metrics.BucketBoundaries
 
 private given Configuration = Configuration.default.withSnakeCaseMemberNames
 
-case class ErrorResponse(error: ErrorDetails) derives Codec
-case class ErrorDetails(code: Int, message: String, metadata: Option[Map[String, Json]] = None) derives Codec
+case class ErrorResponse(error: ErrorDetails) derives ConfiguredCodec
+case class ErrorDetails(code: Int, message: String, metadata: Option[Map[String, Json]] = None) derives ConfiguredCodec
 
-case class TextContent(`type`: String = "text", text: String) derives Codec
-case class ImageUrlContent(`type`: String = "image_url", imageUrl: ImageUrl) derives Codec
-case class FileContent(`type`: String = "file", file: FileData) derives Codec
-case class ImageUrl(url: String) derives Codec
-case class FileData(filename: String, fileData: String) derives Codec
+case class TextContent(`type`: String = "text", text: String) derives ConfiguredCodec
+case class ImageUrlContent(`type`: String = "image_url", imageUrl: ImageUrl) derives ConfiguredCodec
+case class FileContent(`type`: String = "file", file: FileData) derives ConfiguredCodec
+case class ImageUrl(url: String) derives ConfiguredCodec
+case class FileData(filename: String, fileData: String) derives ConfiguredCodec
 
 case class ToolFunction(
     name: String,
     description: Option[String] = None,
     parameters: Json
-) derives Codec
+) derives ConfiguredCodec
 
 case class Tool(
     `type`: String = "function",
     function: ToolFunction
-) derives Codec
+) derives ConfiguredCodec
 
 case class ToolCall(
     id: String,
     `type`: String = "function",
     function: ToolCallFunction
-) derives Codec
+) derives ConfiguredCodec
 
 case class ToolCallFunction(
     name: String,
     arguments: String
-) derives Codec
+) derives ConfiguredCodec
 
 case class ChatMessage(
     role: String,
@@ -75,14 +74,15 @@ case class ChatMessage(
     toolCallId: Option[String] = None,
     name: Option[String] = None,
     images: Option[List[ImageUrlContent]] = None
-) derives Codec:
+) derives ConfiguredCodec:
 
   override def toString: String =
     val imagesInfo = images.fold("None")(imgs => s"Some(count=${imgs.size})")
     s"ChatMessage($role,$content,$toolCalls,$toolCallId,$name,$imagesInfo)"
 
-given Decoder[ChatMessage] = deriveDecoder[ChatMessage]
-given Encoder[ChatMessage] = deriveEncoder[ChatMessage].mapJson(_.deepDropNullValues)
+given Codec[ChatMessage] =
+  val c = ConfiguredCodec.derived[ChatMessage]
+  Codec.from(c, c.mapJson(_.deepDropNullValues))
 
 object ChatMessage:
   def system(content: String): ChatMessage =
@@ -122,14 +122,15 @@ case class ChatCompletionRequest(
     tools: Option[List[Tool]] = None,
     toolChoice: Option[Json] = None,
     modalities: Option[List[String]] = None
-) derives Codec
+) derives ConfiguredCodec
 
-given Decoder[ChatCompletionRequest] = deriveDecoder[ChatCompletionRequest]
-given Encoder[ChatCompletionRequest] = deriveEncoder[ChatCompletionRequest].mapJson(_.deepDropNullValues)
+given Codec[ChatCompletionRequest] =
+  val c = ConfiguredCodec.derived[ChatCompletionRequest]
+  Codec.from(c, c.mapJson(_.deepDropNullValues))
 
-case class ChatCompletionChoice(index: Int, message: ChatMessage, finishReason: Option[String]) derives Codec
+case class ChatCompletionChoice(index: Int, message: ChatMessage, finishReason: Option[String]) derives ConfiguredCodec
 
-case class ChatCompletionUsage(promptTokens: Int, completionTokens: Int, totalTokens: Int) derives Codec
+case class ChatCompletionUsage(promptTokens: Int, completionTokens: Int, totalTokens: Int) derives ConfiguredCodec
 
 case class ChatCompletionResponse(
     id: String,
@@ -138,14 +139,46 @@ case class ChatCompletionResponse(
     model: String,
     choices: List[ChatCompletionChoice],
     usage: ChatCompletionUsage
-) derives Codec
+) derives ConfiguredCodec
 
 case class ModelDefaultParameters(
     temperature: Option[Double] = None,
     topP: Option[Double] = None,
     frequencyPenalty: Option[Double] = None,
     presencePenalty: Option[Double] = None
-) derives Codec
+) derives ConfiguredCodec
+
+case class ModelPricing(
+    prompt: String,
+    completion: String,
+    image: Option[String] = None,
+    audio: Option[String] = None,
+    request: Option[String] = None,
+    webSearch: Option[String] = None,
+    internalReasoning: Option[String] = None,
+    inputCacheRead: Option[String] = None,
+    inputCacheWrite: Option[String] = None
+) derives ConfiguredCodec
+
+case class ModelArchitecture(
+    modality: Option[String] = None,
+    inputModalities: List[String],
+    outputModalities: List[String],
+    tokenizer: Option[String] = None,
+    instructType: Option[String] = None
+) derives ConfiguredCodec
+
+case class ModelTopProvider(
+    isModerated: Boolean,
+    contextLength: Option[Int] = None,
+    maxCompletionTokens: Option[Int] = None
+) derives ConfiguredCodec
+
+case class PerRequestLimits(
+    promptTokens: Option[String] = None,
+    completionTokens: Option[String] = None,
+    requestTokens: Option[String] = None
+) derives ConfiguredCodec
 
 case class Model(
     id: String,
@@ -164,41 +197,9 @@ case class Model(
     topP: Option[Double] = None,
     frequencyPenalty: Option[Double] = None,
     defaultParameters: Option[ModelDefaultParameters] = None
-) derives Codec
+) derives ConfiguredCodec
 
-case class ModelPricing(
-    prompt: String,
-    completion: String,
-    image: Option[String] = None,
-    audio: Option[String] = None,
-    request: Option[String] = None,
-    webSearch: Option[String] = None,
-    internalReasoning: Option[String] = None,
-    inputCacheRead: Option[String] = None,
-    inputCacheWrite: Option[String] = None
-) derives Codec
-
-case class ModelArchitecture(
-    modality: Option[String] = None,
-    inputModalities: List[String],
-    outputModalities: List[String],
-    tokenizer: Option[String] = None,
-    instructType: Option[String] = None
-) derives Codec
-
-case class ModelTopProvider(
-    isModerated: Boolean,
-    contextLength: Option[Int] = None,
-    maxCompletionTokens: Option[Int] = None
-) derives Codec
-
-case class PerRequestLimits(
-    promptTokens: Option[String] = None,
-    completionTokens: Option[String] = None,
-    requestTokens: Option[String] = None
-) derives Codec
-
-case class ModelsResponse(data: List[Model]) derives Codec
+case class ModelsResponse(data: List[Model]) derives ConfiguredCodec
 
 case class CompletionRequest(
     model: String,
@@ -210,14 +211,14 @@ case class CompletionRequest(
     presencePenalty: Option[Double] = None,
     frequencyPenalty: Option[Double] = None,
     logitBias: Option[Map[String, Double]] = None
-) derives Codec
+) derives ConfiguredCodec
 
 case class CompletionChoice(
     text: String,
     index: Option[Int],
     logprobs: Option[Json] = None,
     finishReason: Option[String] = None
-) derives Codec
+) derives ConfiguredCodec
 
 case class CompletionResponse(
     id: String,
@@ -226,7 +227,7 @@ case class CompletionResponse(
     model: String,
     choices: List[CompletionChoice],
     usage: ChatCompletionUsage
-) derives Codec
+) derives ConfiguredCodec
 
 case class GenerationStats(
     id: String,
@@ -259,11 +260,11 @@ case class GenerationStats(
     numMediaCompletion: Option[Int] = None,
     numSearchResults: Option[Int] = None,
     apiType: Option[String] = None
-) derives Codec
+) derives ConfiguredCodec
 
 case class GenerationStatsResponse(
     data: GenerationStats
-) derives Codec
+) derives ConfiguredCodec
 
 object ToolChoice:
   def auto: Json                   = Json.fromString("auto")

@@ -49,8 +49,8 @@ object OpenRouter:
       val messages = history.toChain.toList.map(messageToChatMessage)
 
       val tools =
-        if functionDeclarations.nonEmpty then
-          Some(functionDeclarations.map { funcDecl =>
+        Option.when(functionDeclarations.nonEmpty)(
+          functionDeclarations.map { funcDecl =>
             Tool(
               `type` = "function",
               function = ToolFunction(
@@ -59,8 +59,8 @@ object OpenRouter:
                 parameters = funcDecl.parameters.map(_.asJson).getOrElse(Json.obj())
               )
             )
-          })
-        else None
+          }
+        )
 
       for
         modelName <- modelNameOverride.getOrElse(config.model.pure[F])

@@ -1,5 +1,8 @@
 package io.github.serhiip.constellations.dispatcher
 
+import java.time.OffsetDateTime
+import java.util.UUID
+
 import scala.compiletime.{constValue, erasedValue, summonInline}
 import scala.deriving.Mirror
 
@@ -77,6 +80,26 @@ object Decoder:
       value match
         case Value.BoolValue(b) => b.validNec
         case _                  => Error.WrongType(path, "Boolean", value.getClass.getSimpleName).invalidNec
+
+  given Decoder[Value, OffsetDateTime] with
+    def decode(value: Value, path: String): ValidatedNec[Error, OffsetDateTime] =
+      value match
+        case Value.StringValue(s) =>
+          Either
+            .catchNonFatal(OffsetDateTime.parse(s))
+            .leftMap(err => Error.InvalidStringValue(path, s, "OffsetDateTime", Some(err)))
+            .toValidatedNec
+        case _                    => Error.WrongType(path, "String", value.getClass.getSimpleName).invalidNec
+
+  given Decoder[Value, UUID] with
+    def decode(value: Value, path: String): ValidatedNec[Error, UUID] =
+      value match
+        case Value.StringValue(s) =>
+          Either
+            .catchNonFatal(UUID.fromString(s))
+            .leftMap(err => Error.InvalidStringValue(path, s, "UUID", Some(err)))
+            .toValidatedNec
+        case _                    => Error.WrongType(path, "String", value.getClass.getSimpleName).invalidNec
 
   given Decoder[Value, Struct] with
     def decode(value: Value, path: String): ValidatedNec[Error, Struct] =
