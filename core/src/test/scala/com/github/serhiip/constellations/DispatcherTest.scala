@@ -1,43 +1,58 @@
 package io.github.serhiip.constellations
 
+import java.time.OffsetDateTime
+import java.util.UUID
+
 import scala.annotation.experimental
 
 import cats.effect.IO
-import cats.syntax.all.*
-
 import io.github.serhiip.constellations.common.*
-import io.github.serhiip.constellations.dispatcher.Decoder
 import munit.CatsEffectSuite
 
 trait TestApi[F[_]]:
-  def mixedTypes(intVal: Int, strVal: String, boolVal: Boolean): F[Dispatcher.Result]
-  def noParams(): F[Dispatcher.Result]
-  def optionalParam(a: Int, b: Option[String]): F[Dispatcher.Result]
-  def nestedStruct(person: Person): F[Dispatcher.Result]
-  def listParam(items: List[String]): F[Dispatcher.Result]
+  def mixedTypes(intVal: Int, strVal: String, boolVal: Boolean): F[String]
+  def noParams(): F[String]
+  def optionalParam(a: Int, b: Option[String]): F[String]
+  def nestedStruct(person: Person): F[Struct]
+  def listParam(items: List[String]): F[List[String]]
+  def uuidValue(): F[UUID]
+  def offsetDateTimeValue(): F[OffsetDateTime]
 
 case class Person(name: String, age: Int, active: Boolean)
 
 class TestApiImpl extends TestApi[IO]:
-  private def createResponse(value: Any): IO[Dispatcher.Result] = IO {
-    val struct = Struct(Map("value" -> Value.string(value.toString)))
-    Dispatcher.Result.Response(FunctionResponse("response", struct))
-  }
+  val uuid: UUID                     = UUID.fromString("d684b6c2-6c1e-4f84-98f1-5f3ef06435c5")
+  val offsetDateTime: OffsetDateTime =
+    OffsetDateTime.parse("2025-01-20T12:34:56.123+02:00")
 
-  def mixedTypes(intVal: Int, strVal: String, boolVal: Boolean): IO[Dispatcher.Result] =
+  private def createResponse(value: String): IO[String] = IO.pure(value)
+
+  def mixedTypes(intVal: Int, strVal: String, boolVal: Boolean): IO[String] =
     createResponse(s"int=$intVal, str=$strVal, bool=$boolVal")
 
-  def noParams(): IO[Dispatcher.Result] =
+  def noParams(): IO[String] =
     createResponse("no params")
 
-  def optionalParam(a: Int, b: Option[String]): IO[Dispatcher.Result] =
+  def optionalParam(a: Int, b: Option[String]): IO[String] =
     createResponse(s"a=$a, b=${b.getOrElse("none")}")
 
-  def nestedStruct(person: Person): IO[Dispatcher.Result] =
-    createResponse(s"person=${person.name}, age=${person.age}, active=${person.active}")
+  def nestedStruct(person: Person): IO[Struct] =
+    IO.pure(
+      Struct(
+        "name"   -> Value.string(person.name),
+        "age"    -> Value.number(person.age),
+        "active" -> Value.bool(person.active)
+      )
+    )
 
-  def listParam(items: List[String]): IO[Dispatcher.Result] =
-    createResponse(s"items=${items.mkString(",")}")
+  def listParam(items: List[String]): IO[List[String]] =
+    IO.pure(items)
+
+  def uuidValue(): IO[UUID] =
+    IO.pure(uuid)
+
+  def offsetDateTimeValue(): IO[OffsetDateTime] =
+    IO.pure(offsetDateTime)
 
 @experimental
 class DispatcherTest extends CatsEffectSuite:
@@ -64,20 +79,21 @@ class DispatcherTest extends CatsEffectSuite:
       // Convert Map to Struct by converting all values
       val structFields = m.asInstanceOf[Map[String, Any]].map { case (k, v) => k -> convertValue(v) }
       Value.struct(Struct(structFields))
-    case _            => Value.string(value.toString)
+    case other        => Value.string(other.toString)
 
   private def createFunctionCall(name: String, args: Map[String, Any] = Map.empty): FunctionCall =
     val structFields = args.map { case (key, value) => key -> convertValue(value) }
     FunctionCall(name, Struct(structFields))
 
-  private def extractString(response: Dispatcher.Result): String =
+  private def extractResponseStruct(response: Dispatcher.Result): Struct =
     response match
-      case Dispatcher.Result.Response(result) =>
-        result.response.fields("value") match
-          case Value.StringValue(s) => s
-          case _                    => throw new RuntimeException("Unexpected response format")
-      case Dispatcher.Result.HumanInTheLoop   =>
-        throw new RuntimeException("Unexpected HumanInTheLoop result")
+      case Dispatcher.Result.Response(result) => result.response
+      case Dispatcher.Result.HumanInTheLoop   => throw new RuntimeException("Unexpected HumanInTheLoop result")
+
+  private def extractString(response: Dispatcher.Result): String =
+    extractResponseStruct(response).fields("value") match
+      case Value.StringValue(s) => s
+      case other                => throw new RuntimeException(s"Unexpected response format: $other")
 
   val impl       = new TestApiImpl
   val factory    = Dispatcher.generate[IO, TestApi]
@@ -106,13 +122,32 @@ class DispatcherTest extends CatsEffectSuite:
   test("dispatcher should handle nested case class parameters") {
     val person = Person("John", 30, true)
     val call   = createFunctionCall("TestApi_nestedStruct", Map("person" -> person))
-    dispatcher.dispatch(call).map(response => assertEquals(extractString(response), "person=John, age=30, active=true"))
+    dispatcher.dispatch(call).map { response =>
+      val fields = extractResponseStruct(response).fields
+      assertEquals(fields("name"), Value.string(person.name))
+      assertEquals(fields("age"), Value.number(person.age))
+      assertEquals(fields("active"), Value.bool(person.active))
+    }
   }
 
   test("dispatcher should handle list parameters") {
     val items = List("apple", "banana", "cherry")
     val call  = createFunctionCall("TestApi_listParam", Map("items" -> items))
-    dispatcher.dispatch(call).map(response => assertEquals(extractString(response), "items=apple,banana,cherry"))
+    dispatcher.dispatch(call).map { response =>
+      extractResponseStruct(response).fields("value") match
+        case Value.ListValue(values) => assertEquals(values, items.map(Value.string))
+        case other                   => throw new RuntimeException(s"Unexpected response format: $other")
+    }
+  }
+
+  test("dispatcher should encode UUID results as strings") {
+    val call = createFunctionCall("TestApi_uuidValue")
+    dispatcher.dispatch(call).map(response => assertEquals(extractString(response), impl.uuid.toString))
+  }
+
+  test("dispatcher should encode OffsetDateTime results as strings") {
+    val call = createFunctionCall("TestApi_offsetDateTimeValue")
+    dispatcher.dispatch(call).map(response => assertEquals(extractString(response), impl.offsetDateTime.toString))
   }
 
   test("dispatcher should throw RuntimeException for an unknown method") {

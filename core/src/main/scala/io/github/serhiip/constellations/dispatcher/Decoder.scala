@@ -16,11 +16,12 @@ object Decoder:
   def apply[P, A](using d: Decoder[P, A]): Decoder[P, A] = d
 
   enum Error(val path: String):
-    case MissingField(override val path: String)                                                                           extends Error(path)
-    case WrongType(override val path: String, expected: String, actual: String)                                            extends Error(path)
-    case InvalidStringValue(override val path: String, value: String, targetType: String, cause: Option[Throwable] = None) extends Error(path)
-    case MissingDiscriminator(override val path: String)                                                                   extends Error(path)
-    case UnknownDiscriminator(override val path: String, typeName: String, knownTypes: Seq[String])                        extends Error(path)
+    case MissingField(override val path: String)                                                    extends Error(path)
+    case WrongType(override val path: String, expected: String, actual: String)                     extends Error(path)
+    case InvalidStringValue(override val path: String, value: String, targetType: String, cause: Option[Throwable] = None)
+        extends Error(path)
+    case MissingDiscriminator(override val path: String)                                            extends Error(path)
+    case UnknownDiscriminator(override val path: String, typeName: String, knownTypes: Seq[String]) extends Error(path)
 
   given Show[Error] with
     def show(e: Error): String =
@@ -31,7 +32,8 @@ object Decoder:
           val causeMsg = cause.map(c => s" Cause: ${c.getMessage}").getOrElse("")
           s"Cannot parse '$value' into $targetType.$causeMsg"
         case Error.MissingDiscriminator(_)                         => "Sum type discriminator field '_type' is missing."
-        case Error.UnknownDiscriminator(_, typeName, knownTypes)   => s"Unknown type '$typeName'. Expected one of: ${knownTypes.mkString(", ")}."
+        case Error.UnknownDiscriminator(_, typeName, knownTypes)   =>
+          s"Unknown type '$typeName'. Expected one of: ${knownTypes.mkString(", ")}."
       s"Error at path '${e.path}': $details"
 
   given Decoder[Value, String] with
@@ -134,25 +136,23 @@ object Decoder:
     lazy val labels   = getLabels[m.MirroredElemLabels]
     new CaseClassDecoder[A](decoders, labels, m)
 
-  private val DISCRIMINATOR_FIELD = "_type"
-
   final class SumTypeDecoder[A](
       decoders: => Map[String, Decoder[Struct, ? <: A]]
   ) extends Decoder[Struct, A]:
     def decode(s: Struct, path: String): ValidatedNec[Error, A] =
       val fields   = s.fields
-      val typeName = fields.get(DISCRIMINATOR_FIELD).flatMap {
+      val typeName = fields.get(SumType.discriminatorField).flatMap {
         case Value.StringValue(s) => Some(s)
         case _                    => None
       }
 
       typeName match
         case None    =>
-          Error.MissingDiscriminator(s"$path.$DISCRIMINATOR_FIELD").invalidNec
+          Error.MissingDiscriminator(s"$path.${SumType.discriminatorField}").invalidNec
         case Some(t) =>
           decoders.get(t) match
             case None          =>
-              Error.UnknownDiscriminator(s"$path.$DISCRIMINATOR_FIELD", t, decoders.keys.toSeq).invalidNec
+              Error.UnknownDiscriminator(s"$path.${SumType.discriminatorField}", t, decoders.keys.toSeq).invalidNec
             case Some(decoder) =>
               decoder.decode(s, path).asInstanceOf[ValidatedNec[Error, A]]
 

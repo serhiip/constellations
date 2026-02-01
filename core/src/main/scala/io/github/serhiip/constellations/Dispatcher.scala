@@ -6,7 +6,7 @@ import scala.quoted.*
 import cats.data.NonEmptyChain
 import cats.data.Validated.{Invalid, Valid}
 import cats.syntax.all.*
-import cats.{Monad, Show, ~>}
+import cats.{Functor, Monad, Show, ~>}
 
 import org.typelevel.log4cats.StructuredLogger
 import org.typelevel.otel4s.trace.Tracer
@@ -63,7 +63,7 @@ object Dispatcher:
   inline def generate[F[_], T[_[_]]]: T[F] => Dispatcher[F] = ${ macroImpl[F, T] }
 
   @experimental
-  private def macroImpl[F[_]: Type, T[_[_]]: Type](using quotes: Quotes): Expr[T[F] => Dispatcher[F]] =
+  private def macroImpl[F[_]: Type, T[F[_]]: Type](using quotes: Quotes): Expr[T[F] => Dispatcher[F]] =
     import quotes.reflect.*
 
     def getCaseClassFields(tpe: TypeRepr): List[(String, TypeRepr, Boolean, Option[String])] =
@@ -225,20 +225,36 @@ object Dispatcher:
           val validatedArgsExpr = '{ ${ Expr.ofList(argExprs) }.sequence }
 
           def callExpr =
-            '{ (args: List[Any]) =>
+            '{ (args: List[Any], callName: String) =>
               ${
-                val terms =
+                val terms      =
                   params.zipWithIndex.map { case (param, idx) =>
                     param.info.asType match
                       case '[t] => '{ args(${ Expr(idx) }).asInstanceOf[t] }.asExprOf[t].asTerm
                   }
-                Apply(Select(from, method), terms).asExprOf[F[Dispatcher.Result]]
+                val applied    = Apply(Select(from, method), terms)
+                val resultType = applied.tpe.widen.simplified
+                resultType.asType match
+                  case '[F[t]] =>
+                    val functor =
+                      Expr
+                        .summon[Functor[F]]
+                        .getOrElse(report.errorAndAbort("No cats.Functor given found for F", Position.ofMacroExpansion))
+                    val encoder = '{ scala.compiletime.summonInline[ResultEncoder[t]] }
+                    '{
+                      $functor.map(${ applied.asExprOf[F[t]] })(value => $encoder.encode(callName, value))
+                    }
+                  case _       =>
+                    report.errorAndAbort(
+                      s"Unsupported return type '${resultType.show}' for method '${method.fullName}': expected F[...]",
+                      Symbol.spliceOwner.pos.get
+                    )
               }
             }
 
           '{
             $validatedArgsExpr
-              .map(args => $callExpr(args))
+              .map(args => $callExpr(args, call.name))
               .valueOr: errors =>
                 given Show[Decoder.Error] = Decoder.given_Show_Error
                 val errorString           = errors.mkString_(delim = ", ")
@@ -275,7 +291,7 @@ object Dispatcher:
           val tpe       = term.tpe
           val symbol    = tpe.classSymbol.getOrElse(
             report.errorAndAbort(
-              s"Instance ${term.show} needs to be a class symbol (trait or class instance)",
+              s"Instance ${term.show} needs to be a trait",
               Symbol.spliceOwner.pos.get
             )
           )
