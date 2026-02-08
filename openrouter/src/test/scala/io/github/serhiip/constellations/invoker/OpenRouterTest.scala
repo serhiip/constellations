@@ -63,9 +63,9 @@ class OpenRouterTest extends CatsEffectSuite:
               pricing = ModelPricing(prompt = "0.005", completion = "0.015").some,
               contextLength = 128000.some,
               architecture = ModelArchitecture(
-                inputModalities = List("text"),
-                outputModalities = List("text"),
-                tokenizer = "cl100k_base".some
+                inputModalities = Set(Modality.Text),
+                outputModalities = Set(Modality.Text),
+                tokenizer = Tokenizer.GPT.some
               ).some,
               topProvider = ModelTopProvider(
                 isModerated = false,

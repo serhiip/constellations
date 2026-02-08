@@ -67,9 +67,9 @@ final class ClientTest extends CatsEffectSuite:
           created = 1741818122L.some,
           description = "State-of-the-art general model".some,
           architecture = ModelArchitecture(
-            inputModalities = List("text", "image"),
-            outputModalities = List("text"),
-            tokenizer = "GPT".some
+            inputModalities = Set(Modality.Text, Modality.Image),
+            outputModalities = Set(Modality.Text),
+            tokenizer = Tokenizer.GPT.some
           ).some,
           topProvider = ModelTopProvider(isModerated = true, contextLength = Some(128000), maxCompletionTokens = Some(16384)).some,
           pricing = ModelPricing(
@@ -86,7 +86,7 @@ final class ClientTest extends CatsEffectSuite:
           contextLength = 128000.some,
           huggingFaceId = none,
           perRequestLimits = Some(PerRequestLimits()),
-          supportedParameters = Some(List("temperature", "top_p"))
+          supportedParameters = Some(List(SupportedParameter.Temperature, SupportedParameter.TopP))
         )
       )
     )
@@ -779,9 +779,9 @@ final class ClientTest extends CatsEffectSuite:
         model.architecture match
           case Some(arch) =>
             assertEquals(arch.modality, Some("text+image->text"))
-            assertEquals(arch.inputModalities, List("image", "text", "file"))
-            assertEquals(arch.outputModalities, List("text"))
-            assertEquals(arch.tokenizer, Some("GPT"))
+            assertEquals(arch.inputModalities, Set(Modality.Image, Modality.Text, Modality.File))
+            assertEquals(arch.outputModalities, Set(Modality.Text))
+            assertEquals(arch.tokenizer, Some(Tokenizer.GPT))
             assertEquals(arch.instructType, None)
           case None       => fail("architecture should be present")
 
@@ -808,22 +808,22 @@ final class ClientTest extends CatsEffectSuite:
           model.supportedParameters,
           Some(
             List(
-              "frequency_penalty",
-              "include_reasoning",
-              "logit_bias",
-              "logprobs",
-              "max_tokens",
-              "presence_penalty",
-              "reasoning",
-              "response_format",
-              "seed",
-              "stop",
-              "structured_outputs",
-              "temperature",
-              "tool_choice",
-              "tools",
-              "top_logprobs",
-              "top_p"
+              SupportedParameter.FrequencyPenalty,
+              SupportedParameter.IncludeReasoning,
+              SupportedParameter.LogitBias,
+              SupportedParameter.Logprobs,
+              SupportedParameter.MaxTokens,
+              SupportedParameter.PresencePenalty,
+              SupportedParameter.Reasoning,
+              SupportedParameter.ResponseFormat,
+              SupportedParameter.Seed,
+              SupportedParameter.Stop,
+              SupportedParameter.StructuredOutputs,
+              SupportedParameter.Temperature,
+              SupportedParameter.ToolChoice,
+              SupportedParameter.Tools,
+              SupportedParameter.TopLogprobs,
+              SupportedParameter.TopP
             )
           )
         )

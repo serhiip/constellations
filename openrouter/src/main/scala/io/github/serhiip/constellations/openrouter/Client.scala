@@ -19,7 +19,7 @@ import io.github.serhiip.constellations.common.Observability
 import io.github.serhiip.constellations.common.Observability.*
 import fs2.io.net.Network
 import io.circe.derivation.{Configuration, ConfiguredCodec}
-import io.circe.{Codec, Decoder, Json}
+import io.circe.{Codec, Decoder, Encoder, Json}
 import org.http4s.*
 import org.http4s.Method.*
 import org.http4s.circe.*
@@ -35,6 +35,102 @@ import org.http4s.client.middleware.Logger as Http4sLogger
 import org.typelevel.otel4s.metrics.BucketBoundaries
 
 private given Configuration = Configuration.default.withSnakeCaseMemberNames
+
+enum Modality:
+  case Text, Image, Audio, Video, File
+  case Unknown(value: String)
+
+object Modality:
+  private val knownByString: Map[String, Modality] =
+    Map("text" -> Text, "image" -> Image, "audio" -> Audio, "video" -> Video, "file" -> File)
+
+  private val stringByKnown: Map[Modality, String] =
+    knownByString.map(_.swap)
+
+  given Codec[Modality] = Codec.from(
+    Decoder[String].map(s => knownByString.getOrElse(s, Unknown(s))),
+    Encoder[String].contramap {
+      case Unknown(v) => v
+      case other      => stringByKnown(other)
+    }
+  )
+
+enum SupportedParameter:
+  case FrequencyPenalty, IncludeReasoning, LogitBias, Logprobs, MaxTokens, MinP, PresencePenalty, Reasoning,
+    RepetitionPenalty, ResponseFormat, Seed, Stop, StructuredOutputs, Temperature, ToolChoice, Tools, TopA, TopK,
+    TopLogprobs, TopP, Verbosity, WebSearchOptions
+  case Unknown(value: String)
+
+object SupportedParameter:
+  private val knownByString: Map[String, SupportedParameter] = Map(
+    "frequency_penalty"  -> FrequencyPenalty,
+    "include_reasoning"  -> IncludeReasoning,
+    "logit_bias"         -> LogitBias,
+    "logprobs"           -> Logprobs,
+    "max_tokens"         -> MaxTokens,
+    "min_p"              -> MinP,
+    "presence_penalty"   -> PresencePenalty,
+    "reasoning"          -> Reasoning,
+    "repetition_penalty" -> RepetitionPenalty,
+    "response_format"    -> ResponseFormat,
+    "seed"               -> Seed,
+    "stop"               -> Stop,
+    "structured_outputs" -> StructuredOutputs,
+    "temperature"        -> Temperature,
+    "tool_choice"        -> ToolChoice,
+    "tools"              -> Tools,
+    "top_a"              -> TopA,
+    "top_k"              -> TopK,
+    "top_logprobs"       -> TopLogprobs,
+    "top_p"              -> TopP,
+    "verbosity"          -> Verbosity,
+    "web_search_options" -> WebSearchOptions
+  )
+
+  private val stringByKnown: Map[SupportedParameter, String] =
+    knownByString.map(_.swap)
+
+  given Codec[SupportedParameter] = Codec.from(
+    Decoder[String].map(s => knownByString.getOrElse(s, Unknown(s))),
+    Encoder[String].contramap {
+      case Unknown(v) => v
+      case other      => stringByKnown(other)
+    }
+  )
+
+enum Tokenizer:
+  case Claude, Cohere, DeepSeek, GPT, Gemini, Grok, Llama2, Llama3, Llama4, Mistral, Nova, Qwen, Qwen3, Router, Other
+  case Unknown(value: String)
+
+object Tokenizer:
+  private val knownByString: Map[String, Tokenizer] = Map(
+    "Claude"   -> Claude,
+    "Cohere"   -> Cohere,
+    "DeepSeek" -> DeepSeek,
+    "GPT"      -> GPT,
+    "Gemini"   -> Gemini,
+    "Grok"     -> Grok,
+    "Llama2"   -> Llama2,
+    "Llama3"   -> Llama3,
+    "Llama4"   -> Llama4,
+    "Mistral"  -> Mistral,
+    "Nova"     -> Nova,
+    "Qwen"     -> Qwen,
+    "Qwen3"    -> Qwen3,
+    "Router"   -> Router,
+    "Other"    -> Other
+  )
+
+  private val stringByKnown: Map[Tokenizer, String] =
+    knownByString.map(_.swap)
+
+  given Codec[Tokenizer] = Codec.from(
+    Decoder[String].map(s => knownByString.getOrElse(s, Unknown(s))),
+    Encoder[String].contramap {
+      case Unknown(v) => v
+      case other      => stringByKnown(other)
+    }
+  )
 
 case class ErrorResponse(error: ErrorDetails) derives ConfiguredCodec
 case class ErrorDetails(code: Int, message: String, metadata: Option[Map[String, Json]] = None) derives ConfiguredCodec
@@ -162,9 +258,9 @@ case class ModelPricing(
 
 case class ModelArchitecture(
     modality: Option[String] = None,
-    inputModalities: List[String],
-    outputModalities: List[String],
-    tokenizer: Option[String] = None,
+    inputModalities: Set[Modality],
+    outputModalities: Set[Modality],
+    tokenizer: Option[Tokenizer] = None,
     instructType: Option[String] = None
 ) derives ConfiguredCodec
 
@@ -192,12 +288,13 @@ case class Model(
     contextLength: Option[Int] = None,
     huggingFaceId: Option[String] = None,
     perRequestLimits: Option[PerRequestLimits] = None,
-    supportedParameters: Option[List[String]] = None,
+    supportedParameters: Option[List[SupportedParameter]] = None,
     temperature: Option[Double] = None,
     topP: Option[Double] = None,
     frequencyPenalty: Option[Double] = None,
     defaultParameters: Option[ModelDefaultParameters] = None
-) derives ConfiguredCodec
+) derives ConfiguredCodec:
+  def supportsTools: Boolean = supportedParameters.exists(_.contains(SupportedParameter.Tools))
 
 case class ModelsResponse(data: List[Model]) derives ConfiguredCodec
 
