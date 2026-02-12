@@ -58,3 +58,20 @@ class FilesTest extends CatsEffectSuite:
       result <- files.writeStream(path.toUri, bytes).attempt
     yield assert(result.isLeft)
   }
+
+  test("Files.writeStream should handle sequential writes to different files") {
+    val path1    = fs().getPath("/seq1.txt")
+    val path2    = fs().getPath("/seq2.txt")
+    val content1 = "first file"
+    val content2 = "second file"
+
+    for
+      files   <- Files[IO](fs().getPath("/").toUri)
+      _       <- files.writeStream(path1.toUri, fs2.Stream.emits(content1.getBytes).covary[IO])
+      _       <- files.writeStream(path2.toUri, fs2.Stream.emits(content2.getBytes).covary[IO])
+      result1 <- IO(JFiles.readString(path1))
+      result2 <- IO(JFiles.readString(path2))
+    yield
+      assertEquals(result1, content1)
+      assertEquals(result2, content2)
+  }

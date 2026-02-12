@@ -7,7 +7,7 @@ import java.util.ServiceLoader
 import scala.jdk.CollectionConverters.*
 
 import cats.{Applicative, MonadThrow, ~>}
-import cats.effect.Sync
+import cats.effect.{Resource, Sync}
 import cats.syntax.all.*
 import fs2.io.file.{Files as Fs2Files, Path}
 import fs2.io.writeOutputStream
@@ -47,10 +47,17 @@ object Files:
       override def writeStream(target: URI, bytes: fs2.Stream[F, Byte]): F[Unit] =
         // Uses OutputStream instead of Fs2Files.writeAll because GCS's FileChannel becomes invalid
         // after calling position() between writes, which fs2's FileChannel-based writes do internally.
-        val mkOutputStream = Sync[F].blocking:
-          val nioPath = provider.getPath(target)
-          JFiles.newOutputStream(nioPath, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
-        bytes.through(writeOutputStream(mkOutputStream, closeAfterUse = true)).compile.drain
+        // Uses Resource to explicitly bracket the OutputStream lifecycle, ensuring the GCS upload
+        // session is fully finalized (flush + close) before returning. This prevents broken pipe
+        // errors when multiple files are written sequentially through the GCS NIO provider.
+        val outputStreamResource = Resource.make(
+          Sync[F].blocking:
+            val nioPath = provider.getPath(target)
+            JFiles.newOutputStream(nioPath, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
+        )(os => Sync[F].blocking(os.close()))
+
+        outputStreamResource.use: os =>
+          bytes.through(writeOutputStream(Sync[F].pure(os), closeAfterUse = false)).compile.drain
 
   def metered[F[_]: MonadThrow](delegate: Files[F], meters: Meters[F]): Files[F] =
     new Files[F]:
