@@ -8,12 +8,13 @@ import cats.data.Validated.{Invalid, Valid}
 import cats.syntax.all.*
 import cats.{Functor, Monad, Show, ~>}
 
-import org.typelevel.log4cats.StructuredLogger
+import org.typelevel.log4cats.{LoggerFactory, StructuredLogger}
 import org.typelevel.otel4s.trace.Tracer
 
 import io.github.serhiip.constellations.common.*
 import io.github.serhiip.constellations.common.Observability.*
 import io.github.serhiip.constellations.dispatcher.*
+import io.github.serhiip.constellations.dispatcher.naming.SnakeCaseNamingStrategy._
 
 trait Dispatcher[F[_]]:
   def dispatch(call: FunctionCall): F[Dispatcher.Result]
@@ -26,30 +27,31 @@ object Dispatcher:
     case Response(result: FunctionResponse)
     case HumanInTheLoop
 
-  def apply[F[_]: Tracer: StructuredLogger: Monad](delegate: Dispatcher[F]): Dispatcher[F] = observed(delegate)
+  def apply[F[_]: Tracer: LoggerFactory: Monad](delegate: Dispatcher[F]): F[Dispatcher[F]] = observed(delegate)
 
-  private def observed[F[_]: Monad: Tracer: StructuredLogger](delegate: Dispatcher[F]): Dispatcher[F] =
-    new Dispatcher[F]:
-      def dispatch(call: FunctionCall): F[Dispatcher.Result] =
-        Tracer[F]
-          .span("dispatcher", "dispatch")
-          .logged: logger =>
+  private def observed[F[_]: Monad: Tracer: LoggerFactory](delegate: Dispatcher[F]): F[Dispatcher[F]] =
+    LoggerFactory[F].create.map { logger =>
+      given StructuredLogger[F] = logger
+      new Dispatcher[F]:
+        def dispatch(call: FunctionCall): F[Dispatcher.Result] =
+          Tracer[F].span("dispatcher", "dispatch").logged { logger =>
             for
               _      <- logger.trace(s"Dispatching call: ${call.name}")
               result <- delegate.dispatch(call)
               _      <- logger.trace(s"Dispatch result: $result")
             yield result
+          }
 
-      def getFunctionDeclarations: F[List[FunctionDeclaration]] =
-        Tracer[F]
-          .span("dispatcher", "get-function-declarations")
-          .logged: logger =>
+        def getFunctionDeclarations: F[List[FunctionDeclaration]] =
+          Tracer[F].span("dispatcher", "get-function-declarations").logged { logger =>
             for
               decls <- delegate.getFunctionDeclarations
               _     <- logger.trace(s"Function declarations: ${decls.map(_.name).mkString(",")}")
             yield decls
+          }
 
-      override def mapK[G[_]](f: F ~> G): Dispatcher[G] = Dispatcher.mapK(this)(f)
+        override def mapK[G[_]](f: F ~> G): Dispatcher[G] = Dispatcher.mapK(this)(f)
+    }
 
   def noop[F[_]: cats.Applicative]: Dispatcher[F] = new Dispatcher[F]:
     def dispatch(call: FunctionCall): F[Dispatcher.Result] =
@@ -136,8 +138,8 @@ object Dispatcher:
       '{ Schema.string(enm = $childrenExpr) }
 
     def processMethodForDeclaration(traitSym: Symbol)(method: Symbol): Expr[FunctionDeclaration] =
-      val methodName    = method.name
-      val qualifiedName = s"${traitSym.name}_$methodName"
+      val convertedMethodName = methodName(method.name)
+      val qualifiedName = s"${componentName(traitSym.name)}_$convertedMethodName"
       val docstring     = method.docstring
 
       val params = method.paramSymss.headOption.getOrElse(List.empty).filterNot(_.isTypeParam)
@@ -146,7 +148,7 @@ object Dispatcher:
         if params.isEmpty then '{ None }
         else
           val propertiesExprs = params.map { param =>
-            val paramName       = param.name
+            val paramName       = parameterName(param.name)
             val paramTpe        = param.info
             val paramSchemaExpr = tpeToSchema(paramTpe, param.pos)
             val doc             = param.docstring
@@ -158,7 +160,7 @@ object Dispatcher:
 
           val requiredExprs = params
             .filterNot(_.info <:< TypeRepr.of[Option[Any]])
-            .map(p => Expr(p.name))
+            .map(p => Expr(parameterName(p.name)))
 
           '{
             Some(
@@ -191,7 +193,7 @@ object Dispatcher:
     def processMethodForDispatch(repr: TypeRepr, from: Term)(
         method: Symbol
     ): (String, Expr[FunctionCall => F[Dispatcher.Result]]) =
-      val qualifiedName: String = s"${repr.typeSymbol.name}_${method.name}"
+      val qualifiedName: String = s"${componentName(repr.typeSymbol.name)}_${methodName(method.name)}"
       qualifiedName -> '{ (call: FunctionCall) =>
         ${
           val params = method.paramSymss.headOption.getOrElse(List.empty).filterNot(_.isTypeParam)
@@ -207,7 +209,7 @@ object Dispatcher:
                         s"No Decoder[Value, ${param.info.show}] found for parameter '${param.name}' in '${method.fullName}'"
                       )
                     )
-                val paramName = Expr(param.name)
+                val paramName = Expr(parameterName(param.name))
                 '{
                   call.args.fields.get($paramName) match
                     case Some(value) => $decoder.decode(value, $paramName)

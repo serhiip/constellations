@@ -6,7 +6,7 @@ import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import cats.{Monad, ~>}
 
-import org.typelevel.log4cats.StructuredLogger
+import org.typelevel.log4cats.{LoggerFactory, StructuredLogger}
 import org.typelevel.otel4s.trace.Tracer
 
 import io.github.serhiip.constellations.common.IDGen
@@ -19,7 +19,10 @@ trait Memory[F[_], Id]:
 
 object Memory:
 
-  def apply[F[_]: Tracer: StructuredLogger: Monad, I](delegate: Memory[F, I]): Memory[F, I] = observed(delegate)
+  def apply[F[_]: Tracer: LoggerFactory: Monad, I](delegate: Memory[F, I]): F[Memory[F, I]] =
+    LoggerFactory[F].create.map: logger =>
+      given StructuredLogger[F] = logger
+      observed(delegate)
 
   def observed[F[_]: Monad: Tracer: StructuredLogger, I](delegate: Memory[F, I]): Memory[F, I] = new:
     override def record(step: Executor.Step): F[Unit] =
@@ -35,22 +38,24 @@ object Memory:
     override def retrieve: F[Chain[Executor.Step]] =
       Tracer[F]
         .span("memory", "retrieve")
-        .logged: logger =>
+        .logged { logger =>
           for
             _      <- logger.trace("Retrieving steps")
             result <- delegate.retrieve
             _      <- logger.trace(s"Retrieved ${result.size} steps")
           yield result
+        }
 
     override def last: F[Option[(I, Executor.Step)]] =
       Tracer[F]
         .span("memory", "last")
-        .logged: logger =>
+        .logged { logger =>
           for
             _      <- logger.trace("Retrieving last step")
             result <- delegate.last
             _      <- logger.trace(s"Last present: ${result.isDefined}")
           yield result
+        }
 
   def inMemory[F[_]: Async, I](using idGen: IDGen[F, I]): F[Memory[F, I]] =
     for storage <- Ref.of[F, Chain[(I, Executor.Step)]](Chain.empty)

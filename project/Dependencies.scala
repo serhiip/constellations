@@ -4,6 +4,8 @@ object Dependencies {
   val catsEffectVersion      = "3.6.0"
   val otel4sVersion          = "0.12.0"
   val munitCatsEffectVersion = "2.0.0"
+  val munitVersion           = "1.0.0"
+  val scalacheckVersion      = "1.18.1"
   val circeVersion           = "0.14.10"
   val http4sVersion          = "0.23.30"
   val catsRetryVersion       = "4.0.0"
@@ -56,7 +58,9 @@ object Dependencies {
 
   val testing = Seq(
     "org.typelevel"   %% "munit-cats-effect" % munitCatsEffectVersion % Test,
-    "org.scalameta"   %% "munit"             % "1.0.0"                % Test,
+    "org.scalameta"   %% "munit"             % munitVersion           % Test,
+    "org.scalameta"   %% "munit-scalacheck"  % munitVersion           % Test,
+    "org.scalacheck"  %% "scalacheck"        % scalacheckVersion      % Test,
     "com.google.jimfs" % "jimfs"             % "1.3.0"                % Test
   )
 
@@ -71,7 +75,7 @@ object Dependencies {
   val constellationsCore =
     catsEffect ++ fs2 ++ otel4s ++ logging ++ circe ++ testing ++ otel4sCore
 
-  val constellationsOpenRouter = http4s ++ circe ++ testing
+  val constellationsOpenRouter = http4s ++ circe ++ testing ++ logging ++ logback
 
   val constellationsGoogleGenai = googleGenai ++ testing
 }

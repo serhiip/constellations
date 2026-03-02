@@ -65,7 +65,7 @@ val dispatcher = Dispatcher.generate[IO, Calculator](calculatorImpl)
 
 // Use the dispatcher
 val functionCall = FunctionCall(
-  name = "Calculator_add",
+  name = "calculator_add",
   args = Struct(Map("a" -> Value.number(5), "b" -> Value.number(3)))
 )
 
@@ -194,6 +194,254 @@ enum Value:
   case StructValue(value: Struct)
   case ListValue(value: List[Value])
 ```
+
+## Dispatcher: Automatic Function Calling
+
+The `Dispatcher` is the heart of Constellations, enabling seamless integration between AI models and your Scala code. It automatically handles:
+
+### 1. Automatic Function Calling
+
+Define your API as a Scala trait with methods returning `F[_]`:
+
+```scala
+import io.github.serhiip.constellations.*
+import io.github.serhiip.constellations.Dispatcher
+import cats.effect.IO
+
+trait WeatherService[F[_]]:
+  def getWeather(city: String): F[WeatherReport]
+  def listCities(): F[List[String]]
+
+case class WeatherReport(
+  temperature: Double,
+  conditions: String,
+  humidity: Int
+) derives ValueEncoder
+
+// Implementation
+class WeatherServiceImpl extends WeatherService[IO]:
+  def getWeather(city: String): IO[WeatherReport] =
+    IO.pure(WeatherReport(72.5, "Sunny", 45))
+
+  def listCities(): IO[List[String]] =
+    IO.pure(List("New York", "London", "Tokyo"))
+
+// Generate dispatcher (macros do all the work!)
+val dispatcher = Dispatcher.generate[IO, WeatherService](new WeatherServiceImpl)
+```
+
+The macro automatically:
+- Generates JSON schemas for function declarations
+- Creates dispatch logic to route LLM calls to your methods
+- Handles parameter decoding and error reporting
+
+### 2. Return Type Translation: Case Class → Struct
+
+When your methods return case classes, they're automatically converted to `Struct` for the LLM:
+
+```scala
+def getWeather(city: String): IO[WeatherReport]
+// Returns: WeatherReport(72.5, "Sunny", 45)
+
+// Automatically becomes JSON for the LLM:
+// {
+//   "temperature": 72.5,
+//   "conditions": "Sunny",
+//   "humidity": 45
+// }
+```
+
+Just add `derives ValueEncoder` to your case classes:
+
+```scala
+case class WeatherReport(
+  temperature: Double,
+  conditions: String,
+  humidity: Int
+) derives ValueEncoder
+```
+
+### 3. Input Translation: Struct → Case Class
+
+When the LLM provides structured data, it automatically converts to your case classes:
+
+```scala
+// LLM sends:
+// {
+//   "city": "San Francisco",
+//   "include_forecast": true
+// }
+
+case class WeatherQuery(
+  city: String,
+  includeForecast: Boolean  // camelCase in Scala
+)
+
+def queryWeather(query: WeatherQuery): IO[WeatherReport]
+```
+
+### 4. Automatic camelCase → snake_case Translation
+
+Constellations automatically converts between Scala conventions and LLM-optimized naming:
+
+| Scala (your code) | LLM sees/calls | Notes |
+|-------------------|----------------|-------|
+| `getWeather` | `weather_service_get_weather` | Method name converted |
+| `includeForecast` | `include_forecast` | Parameter names converted |
+| `WeatherService` | `weather_service` | Service name converted |
+
+**Example:**
+
+```scala
+trait UserService[F[_]]:
+  def updateUserProfile(userId: String, newEmail: String): F[ProfileUpdated]
+
+// LLM sees:
+// Function: "user_service_update_user_profile"
+// Parameters: {"user_id": "...", "new_email": "..."}
+```
+
+This provides:
+- **Idiomatic Scala**: You write `camelCase` code
+- **LLM optimization**: Models get `snake_case` (better accuracy)
+- **Zero configuration**: Happens automatically
+
+### Complete End-to-End Example with OpenRouter
+
+Here's a runnable example using OpenRouter:
+
+```scala
+import scala.annotation.experimental
+import cats.effect.{IO, IOApp}
+import cats.effect.std.{Console, Env}
+import cats.syntax.all.*
+import io.github.serhiip.constellations.*
+import io.github.serhiip.constellations.dispatcher.ValueEncoder
+import io.github.serhiip.constellations.executor.Stateful
+import io.github.serhiip.constellations.handling.OpenRouter as ORHandling
+import io.github.serhiip.constellations.invoker.OpenRouter
+import io.github.serhiip.constellations.openrouter.{ChatCompletionResponse, Client}
+import org.typelevel.log4cats.LoggerFactory
+import org.typelevel.log4cats.slf4j.Slf4jFactory
+
+// 1. Define your case classes with ValueEncoder
+case class WeatherReport(city: String, temperatureC: Double, condition: String)
+  derives ValueEncoder
+
+case class SearchResult(query: String, results: List[String])
+  derives ValueEncoder
+
+// 2. Define your service trait
+@experimental
+trait AssistantFunctions[F[_]]:
+  def getWeather(city: String): F[WeatherReport]
+  def search(query: String): F[SearchResult]
+
+// 3. Implement the service
+@experimental
+class AssistantFunctionsImpl[F[_]: cats.Applicative] extends AssistantFunctions[F]:
+  def getWeather(city: String): F[WeatherReport] =
+    WeatherReport(city, 21.5, "Sunny").pure[F]
+
+  def search(query: String): F[SearchResult] =
+    SearchResult(query, List(s"Result for: $query")).pure[F]
+
+// 4. Run the application
+@experimental
+object AssistantApp extends IOApp.Simple:
+  def run: IO[Unit] =
+    val factory = Slf4jFactory.create[IO]
+    given LoggerFactory[IO] = factory
+
+    factory.create.flatMap { implicit logger =>
+      for
+        apiKeyOpt <- Env[IO].get("OPENROUTER_API_KEY")
+        apiKey    <- apiKeyOpt.liftTo[IO](new RuntimeException("Set OPENROUTER_API_KEY"))
+        model      = sys.env.getOrElse("OPENROUTER_MODEL", "anthropic/claude-3-haiku")
+
+        _ <- Client.resource[IO](apiKey, Client.Config()).use { client =>
+          // Generate dispatcher from trait
+          Dispatcher(Dispatcher.generate[IO, AssistantFunctions](
+            AssistantFunctionsImpl[IO]
+          )).flatMap { dispatcher =>
+            for
+              // Get function declarations for the LLM
+              decls <- dispatcher.getFunctionDeclarations
+              _     <- IO.println(s"Available functions: ${decls.map(_.name).mkString(", ")}")
+              // Output: Available functions: assistant_functions_get_weather, assistant_functions_search
+
+              // Set up the executor
+              rawInvoker = OpenRouter.chatCompletion(
+                client,
+                OpenRouter.Config(
+                  model = model,
+                  temperature = 0.7.some,
+                  systemPrompt = "You are a helpful assistant. Use the provided tools when relevant.".some
+                ),
+                decls
+              )
+              invoker  = Invoker(rawInvoker)
+              handling = ORHandling[IO]()
+              files   <- Files[IO](java.net.URI.create("file:///tmp/"))
+              executor = Stateful[IO, ChatCompletionResponse](
+                Stateful.Config(functionCallLimit = 5),
+                handling,
+                invoker,
+                files
+              )
+              memory  <- Memory.inMemory[IO, java.util.UUID]
+              _       <- IO.println("Assistant ready! Type 'exit' to quit.\n")
+              _       <- replLoop(dispatcher, executor, memory)
+            yield ()
+          }
+        }
+      yield ()
+    }.handleErrorWith(err => IO.println(s"Error: ${err.getMessage}"))
+
+  private def replLoop(
+      dispatcher: Dispatcher[IO],
+      executor: Executor[IO, ?, Executor.Step.ModelResponse],
+      memory: Memory[IO, java.util.UUID]
+  ): IO[Unit] =
+    for
+      _    <- Console[IO].print("You: ")
+      line <- Console[IO].readLine
+      _    <- if line == null || line.trim.equalsIgnoreCase("exit") then
+                IO.println("Goodbye!")
+              else
+                executor
+                  .execute(dispatcher, memory, line)
+                  .flatMap {
+                    case Right(resp) => IO.println(s"AI: ${resp.text.getOrElse("no response")}")
+                    case Left(_)     => IO.println("AI: [interrupted]")
+                  } >> replLoop(dispatcher, executor, memory)
+    yield ()
+```
+
+**To run:**
+
+```bash
+export OPENROUTER_API_KEY="your-api-key"
+export OPENROUTER_MODEL="anthropic/claude-3-haiku"  # Optional
+sbt "examples/runMain io.github.serhiip.constellations.AssistantApp"
+```
+
+### How It Works
+
+1. **You define**: A trait with methods like `def getWeather(city: String): F[WeatherReport]`
+2. **Macro generates**:
+   - Function schema: `{"name": "assistant_functions_get_weather", ...}`
+   - Dispatch logic that maps LLM calls to your methods
+3. **LLM sees**: snake_case names optimized for function calling
+4. **Your code receives**: Properly typed parameters and returns case classes
+5. **LLM receives**: JSON-structured responses automatically
+
+The dispatcher handles all the complexity of:
+- Parameter parsing and validation
+- Type conversion (String → Int, JSON → Case Class, etc.)
+- Error accumulation (missing fields, type mismatches)
+- Method routing by name
+- Response encoding
 
 ## Advanced Usage
 

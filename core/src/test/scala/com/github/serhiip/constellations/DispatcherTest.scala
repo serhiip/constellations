@@ -100,28 +100,28 @@ class DispatcherTest extends CatsEffectSuite:
   val dispatcher = factory(impl)
 
   test("dispatcher should successfully call a method with various parameter types") {
-    val call = createFunctionCall("TestApi_mixedTypes", Map("intVal" -> 42, "strVal" -> "test", "boolVal" -> true))
+    val call = createFunctionCall("test_api_mixed_types", Map("int_val" -> 42, "str_val" -> "test", "bool_val" -> true))
     dispatcher.dispatch(call).map(response => assertEquals(extractString(response), "int=42, str=test, bool=true"))
   }
 
   test("dispatcher should successfully call a method with no parameters") {
-    val call = createFunctionCall("TestApi_noParams")
+    val call = createFunctionCall("test_api_no_params")
     dispatcher.dispatch(call).map(response => assertEquals(extractString(response), "no params"))
   }
 
   test("dispatcher should handle an optional parameter when it's present") {
-    val call = createFunctionCall("TestApi_optionalParam", Map("a" -> 1, "b" -> "hello"))
+    val call = createFunctionCall("test_api_optional_param", Map("a" -> 1, "b" -> "hello"))
     dispatcher.dispatch(call).map(response => assertEquals(extractString(response), "a=1, b=hello"))
   }
 
   test("dispatcher should handle an optional parameter when it's missing") {
-    val call = createFunctionCall("TestApi_optionalParam", Map("a" -> 1))
+    val call = createFunctionCall("test_api_optional_param", Map("a" -> 1))
     dispatcher.dispatch(call).map(response => assertEquals(extractString(response), "a=1, b=none"))
   }
 
   test("dispatcher should handle nested case class parameters") {
     val person = Person("John", 30, true)
-    val call   = createFunctionCall("TestApi_nestedStruct", Map("person" -> person))
+    val call   = createFunctionCall("test_api_nested_struct", Map("person" -> person))
     dispatcher.dispatch(call).map { response =>
       val fields = extractResponseStruct(response).fields
       assertEquals(fields("name"), Value.string(person.name))
@@ -132,7 +132,7 @@ class DispatcherTest extends CatsEffectSuite:
 
   test("dispatcher should handle list parameters") {
     val items = List("apple", "banana", "cherry")
-    val call  = createFunctionCall("TestApi_listParam", Map("items" -> items))
+    val call  = createFunctionCall("test_api_list_param", Map("items" -> items))
     dispatcher.dispatch(call).map { response =>
       extractResponseStruct(response).fields("value") match
         case Value.ListValue(values) => assertEquals(values, items.map(Value.string))
@@ -141,43 +141,43 @@ class DispatcherTest extends CatsEffectSuite:
   }
 
   test("dispatcher should encode UUID results as strings") {
-    val call = createFunctionCall("TestApi_uuidValue")
+    val call = createFunctionCall("test_api_uuid_value")
     dispatcher.dispatch(call).map(response => assertEquals(extractString(response), impl.uuid.toString))
   }
 
   test("dispatcher should encode OffsetDateTime results as strings") {
-    val call = createFunctionCall("TestApi_offsetDateTimeValue")
+    val call = createFunctionCall("test_api_offset_date_time_value")
     dispatcher.dispatch(call).map(response => assertEquals(extractString(response), impl.offsetDateTime.toString))
   }
 
   test("dispatcher should throw RuntimeException for an unknown method") {
-    val call = createFunctionCall("TestApi_unknownMethod")
+    val call = createFunctionCall("test_api_unknown_method")
     val ex   = intercept[RuntimeException](dispatcher.dispatch(call)) // TODO: should raise inside IO
-    assertEquals(ex.getMessage, "No handler for TestApi_unknownMethod")
+    assertEquals(ex.getMessage, "No handler for test_api_unknown_method")
   }
 
   test("dispatcher should report a single missing required parameter") {
-    val call = createFunctionCall("TestApi_mixedTypes", Map("strVal" -> "test", "boolVal" -> true))
+    val call = createFunctionCall("test_api_mixed_types", Map("str_val" -> "test", "bool_val" -> true))
     val ex   = intercept[IllegalArgumentException](dispatcher.dispatch(call)) // TODO: should raise inside IO
-    assertEquals(ex.getMessage, "Failed to decode arguments for method 'TestApi_mixedTypes': Error at path 'intVal': Field is missing.")
+    assertEquals(ex.getMessage, "Failed to decode arguments for method 'test_api_mixed_types': Error at path 'int_val': Field is missing.")
   }
 
   test("dispatcher should accumulate and report multiple decoding errors") {
-    val call = createFunctionCall("TestApi_mixedTypes", Map("boolVal" -> "not-a-bool"))
+    val call = createFunctionCall("test_api_mixed_types", Map("bool_val" -> "not-a-bool"))
     val ex   = intercept[IllegalArgumentException](dispatcher.dispatch(call)) // TODO: should raise inside IO
     assertEquals(
       ex.getMessage,
-      "Failed to decode arguments for method 'TestApi_mixedTypes': Error at path 'intVal': Field is missing., Error at path 'strVal': Field is missing., Error at path 'boolVal': Expected type Boolean, but got StringValue."
+      "Failed to decode arguments for method 'test_api_mixed_types': Error at path 'int_val': Field is missing., Error at path 'str_val': Field is missing., Error at path 'bool_val': Expected type Boolean, but got StringValue."
     )
   }
 
   test("dispatcher should ignore extra parameters in the function call") {
     val call = createFunctionCall(
-      "TestApi_mixedTypes",
+      "test_api_mixed_types",
       Map(
-        "intVal"  -> 42,
-        "strVal"  -> "test",
-        "boolVal" -> true,
+        "int_val"  -> 42,
+        "str_val"  -> "test",
+        "bool_val" -> true,
         "extra"   -> "ignored"
       )
     )
@@ -185,7 +185,7 @@ class DispatcherTest extends CatsEffectSuite:
   }
 
   test("dispatcher should handle wrong type for nested struct") {
-    val call = createFunctionCall("TestApi_nestedStruct", Map("person" -> "not a person"))
+    val call = createFunctionCall("test_api_nested_struct", Map("person" -> "not a person"))
     val ex   = intercept[IllegalArgumentException](dispatcher.dispatch(call)) // TODO: should raise inside IO
     assert(ex.getMessage.contains("Expected type Struct, but got StringValue"))
   }
@@ -195,7 +195,7 @@ class DispatcherTest extends CatsEffectSuite:
       "name"   -> "John",
       "active" -> true
     )
-    val call         = createFunctionCall("TestApi_nestedStruct", Map("person" -> personStruct))
+    val call         = createFunctionCall("test_api_nested_struct", Map("person" -> personStruct))
     val ex           = intercept[IllegalArgumentException](dispatcher.dispatch(call)) // TODO: should raise inside IO
     assert(ex.getMessage.contains("Error at path 'person.age': Field is missing"))
   }
@@ -214,7 +214,7 @@ class DispatcherTest extends CatsEffectSuite:
 
     val expectedDeclarations = List(
       FunctionDeclaration(
-        "TestApi_listParam",
+        "test_api_list_param",
         None,
         Some(
           Schema.obj(
@@ -224,21 +224,21 @@ class DispatcherTest extends CatsEffectSuite:
         )
       ),
       FunctionDeclaration(
-        "TestApi_mixedTypes",
+        "test_api_mixed_types",
         None,
         Some(
           Schema.obj(
             properties = Map(
-              "intVal"  -> Schema.integer(),
-              "strVal"  -> Schema.string(),
-              "boolVal" -> Schema.boolean()
+              "int_val"  -> Schema.integer(),
+              "str_val"  -> Schema.string(),
+              "bool_val" -> Schema.boolean()
             ),
-            required = List("intVal", "strVal", "boolVal")
+            required = List("int_val", "str_val", "bool_val")
           )
         )
       ),
       FunctionDeclaration(
-        "TestApi_nestedStruct",
+        "test_api_nested_struct",
         None,
         Some(
           Schema.obj(
@@ -247,9 +247,9 @@ class DispatcherTest extends CatsEffectSuite:
           )
         )
       ),
-      FunctionDeclaration("TestApi_noParams", None, None),
+      FunctionDeclaration("test_api_no_params", None, None),
       FunctionDeclaration(
-        "TestApi_optionalParam",
+        "test_api_optional_param",
         None,
         Some(
           Schema.obj(
@@ -261,8 +261,8 @@ class DispatcherTest extends CatsEffectSuite:
           )
         )
       ),
-      FunctionDeclaration("TestApi_offsetDateTimeValue", None, None),
-      FunctionDeclaration("TestApi_uuidValue", None, None)
+      FunctionDeclaration("test_api_offset_date_time_value", None, None),
+      FunctionDeclaration("test_api_uuid_value", None, None)
     ).sortBy(_.name)
 
     declarations.map(decls => assertEquals(decls, expectedDeclarations))
