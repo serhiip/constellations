@@ -61,6 +61,8 @@ lazy val commonReleaseSettings = Seq[Setting[?]](
   )
 )
 
+lazy val syncApiDocs = taskKey[Unit]("Sync generated unidoc into website/static/api")
+
 lazy val root = (project in file("."))
   .settings(commonReleaseSettings)
   .settings(
@@ -73,6 +75,8 @@ lazy val root = (project in file("."))
     `constellations-openrouter`,
     `constellations-google-genai`,
     `constellations-examples`,
+    `constellations-examples`,
+    docs
   )
 
 lazy val `constellations-core` = (project in file("core"))
@@ -105,4 +109,35 @@ lazy val `constellations-examples` = (project in file("examples"))
     libraryDependencies ++= Dependencies.logging ++ Dependencies.logback ++ Dependencies.googleCloudNio,
     publish / skip := true
   )
-  .dependsOn(`constellations-core`, `constellations-google-genai`, `constellations-openrouter`)
+  .dependsOn(`constellations-core`, `constellations-google-genai`, `constellations-openrouter`, `constellations-mcp`)
+
+lazy val docs = project
+  .in(file("docs"))
+  .settings(
+    name                                       := "constellations-docs",
+    moduleName                                 := "constellations-docs",
+    scalacOptions += "-experimental",
+    mdocIn                                     := baseDirectory.value / "src" / "main" / "mdoc",
+    mdocOut                                    := baseDirectory.value / ".." / "website" / "docs",
+    mdocVariables                              := Map(
+      "VERSION"       -> version.value,
+      "SCALA_VERSION" -> scalaVersion.value
+    ),
+    // Scaladoc configuration - exclude non-library projects
+    ScalaUnidoc / unidoc / unidocProjectFilter :=
+      inProjects(`constellations-core`, `constellations-openrouter`, `constellations-google-genai`, `constellations-mcp`),
+    syncApiDocs                                := {
+      val _           = (Compile / unidoc).value
+      val generated   = baseDirectory.value / "target" / s"scala-${scalaVersion.value}" / "unidoc"
+      val destination = baseDirectory.value / ".." / "website" / "static" / "api"
+      IO.delete(destination)
+      IO.createDirectory(destination)
+      IO.copyDirectory(generated, destination)
+    },
+    cleanFiles += (baseDirectory.value / ".." / "website" / "static" / "api"),
+    // Docusaurus tasks
+    docusaurusCreateSite                       := docusaurusCreateSite.dependsOn(mdoc.toTask(""), syncApiDocs).value,
+    docusaurusPublishGhpages                   := docusaurusPublishGhpages.dependsOn(mdoc.toTask(""), syncApiDocs).value
+  )
+  .enablePlugins(MdocPlugin, DocusaurusPlugin, ScalaUnidocPlugin)
+  .dependsOn(`constellations-core`, `constellations-openrouter`, `constellations-google-genai`, `constellations-mcp`)
