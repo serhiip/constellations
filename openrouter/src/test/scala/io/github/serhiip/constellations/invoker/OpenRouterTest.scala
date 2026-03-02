@@ -261,11 +261,10 @@ class OpenRouterTest extends CatsEffectSuite:
       // The arguments should be the JSON string representation of calculatorArgs
       assertEquals(toolCall.function.arguments, """{"a":2.0,"b":3.0}""")
 
-      // Check the tool result message
+      // Check the tool result message (model "gpt-4o" has no openai/ prefix, so default handler → JSON object)
       assertEquals(request.messages(2).role, "tool")
       assertEquals(request.messages(2).name, Some("calculator"))
       assert(request.messages(2).toolCallId.isDefined)
-      // The content should be the JSON representation of calculatorResult
       assertEquals(
         request.messages(2).content,
         Some(Json.obj("result" -> Json.fromDoubleOrNull(5.0), "operation" -> Json.fromString("addition")))
@@ -671,7 +670,7 @@ class OpenRouterTest extends CatsEffectSuite:
       assertEquals(toolResultMessage.name, Some("calculator")) // Default should have name field
       assert(toolResultMessage.toolCallId.isDefined)
       assertEquals(toolResultMessage.toolCallId.get, "call-123")
-      // Content should be a JSON object for default models
+      // Content should be a JSON object for default handler
       val contentObject = toolResultMessage.content.get.asObject.get
       assertEquals(contentObject("result").get.asNumber.get.toDouble, 5.0)
   }
@@ -753,13 +752,27 @@ class OpenRouterTest extends CatsEffectSuite:
     assert(result.content.get.asString.get.contains("result"), "Content should contain 'result'")
   }
 
+  test("MessageHandler.openai.convertToolResultMessage should use string content") {
+    val content = FunctionResponse(
+      name = "calculator",
+      response = Struct(Map("result" -> Value.number(5.0))),
+      functionCallId = "call-123".some
+    )
+    val result = MessageHandler.openai.convertToolResultMessage(content)
+    assertEquals(result.role, "tool")
+    assertEquals(result.name, Some("calculator"))
+    assertEquals(result.toolCallId, "call-123".some)
+    val contentObject = io.circe.parser.parse(result.content.get.asString.get).toOption.get.asObject.get
+    assertEquals(contentObject("result").get.asNumber.get.toDouble, 5.0)
+  }
+
   test("MessageHandler.default.convertToolResultMessage should include name field") {
     val content = FunctionResponse(
       name = "calculator",
       response = Struct(Map("result" -> Value.number(5.0))),
       functionCallId = "call-123".some
     )
-    val result  = MessageHandler.default.convertToolResultMessage(content)
+    val result = MessageHandler.default.convertToolResultMessage(content)
     assertEquals(result.role, "tool")
     assertEquals(result.name, Some("calculator"))
     assertEquals(result.toolCallId, "call-123".some)

@@ -62,7 +62,8 @@ object OpenRouter:
       response.choices.headOption match
         case Some(ChatCompletionChoice(_, ChatMessage(_, _, Some(toolCalls), _, _, _), _)) =>
           toolCalls.traverse { toolCall =>
-            parse(toolCall.function.arguments) match
+            val argsJson = Option(toolCall.function.arguments).filterNot(_.isBlank).getOrElse("{}")
+            parse(argsJson) match
               case Right(json) =>
                 val fields = json.asObject
                   .map(_.toMap.view.mapValues(_.toString).mapValues(Value.string).toMap)

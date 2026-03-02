@@ -21,7 +21,7 @@ object Memory:
 
   def apply[F[_]: Tracer: StructuredLogger: Monad, I](delegate: Memory[F, I]): Memory[F, I] = observed(delegate)
 
-  private def observed[F[_]: Monad: Tracer: StructuredLogger, I](delegate: Memory[F, I]): Memory[F, I] = new Memory[F, I]:
+  def observed[F[_]: Monad: Tracer: StructuredLogger, I](delegate: Memory[F, I]): Memory[F, I] = new:
     override def record(step: Executor.Step): F[Unit] =
       Tracer[F]
         .span("memory", "record")
@@ -64,7 +64,7 @@ object Memory:
       override def last: F[Option[(I, Executor.Step)]]  = storage.get.map(_.lastOption)
 
   def mapK[F[_], G[_], Id](f: F ~> G)(memory: Memory[F, Id]): Memory[G, Id] =
-    new Memory[G, Id]:
+    new:
       override def record(step: Executor.Step): G[Unit] = f(memory.record(step))
       override def retrieve: G[Chain[Executor.Step]]    = f(memory.retrieve)
       override def last: G[Option[(Id, Executor.Step)]] = f(memory.last)

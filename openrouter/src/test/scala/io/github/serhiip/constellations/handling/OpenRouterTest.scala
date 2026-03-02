@@ -4,7 +4,14 @@ import cats.effect.IO
 import munit.CatsEffectSuite
 import cats.syntax.all.*
 import io.github.serhiip.constellations.common.*
-import io.github.serhiip.constellations.openrouter.*
+import io.github.serhiip.constellations.openrouter.{
+  ChatCompletionChoice,
+  ChatCompletionResponse,
+  ChatCompletionUsage,
+  ChatMessage,
+  ToolCall => OrToolCall,
+  ToolCallFunction => OrToolCallFunction
+}
 import io.circe.Json
 
 class OpenRouterTest extends CatsEffectSuite:
@@ -86,6 +93,44 @@ class OpenRouterTest extends CatsEffectSuite:
       assertEquals(text, None)
       assertEquals(reason, FinishReason.Error)
       assertEquals(calls, List.empty[FunctionCall])
+  }
+
+  test("OpenRouter handling should parse tool calls with empty or blank arguments as empty Struct") {
+    val handling = OpenRouter[IO]()
+
+    val response = ChatCompletionResponse(
+      id = "test-id",
+      `object` = "chat.completion",
+      created = 1234567890L,
+      model = "test-model",
+      choices = List(
+        ChatCompletionChoice(
+          index = 0,
+          message = ChatMessage(
+            role = "assistant",
+            content = None,
+            toolCalls = Some(
+              List(
+                OrToolCall(
+                  id = "call_abc",
+                  `type` = "function",
+                  function = OrToolCallFunction(name = "get_current_time", arguments = "")
+                )
+              )
+            )
+          ),
+          finishReason = Some("tool_calls")
+        )
+      ),
+      usage = ChatCompletionUsage(promptTokens = 10, completionTokens = 5, totalTokens = 15)
+    )
+
+    for calls <- handling.getFunctinoCalls(response)
+    yield
+      assertEquals(calls.length, 1)
+      assertEquals(calls.head.name, "get_current_time")
+      assertEquals(calls.head.args.fields, Map.empty)
+      assertEquals(calls.head.callId, Some("call_abc"))
   }
 
   test("OpenRouter handling should handle different finish reasons") {

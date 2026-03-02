@@ -82,9 +82,13 @@ object OpenRouter:
 
     private def messageToChatMessage(message: Message): ChatMessage =
       val gemini         = "google/gemini-.*".r
+      val openai         = "openai/.*".r
+      val anthropic      = "anthropic/.*".r
       val messageHandler = config.model match
-        case gemini() => MessageHandler.gemini
-        case _        => MessageHandler.default
+        case gemini()    => MessageHandler.gemini
+        case openai()    => MessageHandler.openai
+        case anthropic() => MessageHandler.openai
+        case _           => MessageHandler.default
 
       message match
         case Message.User(content)              => ChatMessage(role = "user", content = Some(messageHandler.convertUserMessage(content)))
@@ -156,6 +160,18 @@ protected object MessageHandler:
         role = "tool",
         content = Some(Json.fromString(content.response.asJson.noSpaces)),
         toolCallId = content.functionCallId
+      )
+
+  def openai: MessageHandler = new:
+    def convertUserMessage(content: List[ContentPart]): Json =
+      Json.arr(content.map(convertContentPartToJson)*)
+
+    def convertToolResultMessage(content: FunctionResponse): ChatMessage =
+      ChatMessage(
+        role = "tool",
+        content = Some(Json.fromString(content.response.asJson.noSpaces)),
+        toolCallId = content.functionCallId,
+        name = Some(content.name)
       )
 
   def default: MessageHandler = new:

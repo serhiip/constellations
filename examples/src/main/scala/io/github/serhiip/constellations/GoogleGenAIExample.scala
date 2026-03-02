@@ -21,6 +21,7 @@ import cats.syntax.all.*
 import org.typelevel.log4cats.Logger
 import java.time.ZoneId
 import java.time.OffsetDateTime
+import org.typelevel.otel4s.trace.Tracer
 
 final case class CurrentTime(time: String) derives ValueEncoder
 final case class AlertResult(message: String) derives ValueEncoder
@@ -45,10 +46,15 @@ class DefaultFunctions[F[_]: Clock: Functor: Logger] extends CallableFunctions[F
 object GoogleGenAIExample extends IOApp.Simple:
   def run: IO[Unit] =
 
+    given Tracer[IO] = Tracer.noop[IO]
+
     val factory = Slf4jFactory.create[IO]
 
     for {
       given StructuredLogger[IO] <- factory.create
+      given Logger[IO]            = summon[StructuredLogger[IO]]
+
+      _ <- StructuredLogger[IO].info("Logging initialized")
 
       callableFunctions = DefaultFunctions[IO]
 
@@ -82,13 +88,15 @@ object GoogleGenAIExample extends IOApp.Simple:
                                  )
                       handling = HandlingGoogle[IO]
                       files   <- Files[IO](URI.create("file:///tmp/"))
-                      executor = Stateful[IO, GenerateContentResponse](
-                                   Stateful.Config(functionCallLimit = 5),
-                                   handling,
-                                   invoker,
-                                   files
+                      executor = Executor(
+                                   Stateful[IO, GenerateContentResponse](
+                                     Stateful.Config(functionCallLimit = 5),
+                                     handling,
+                                     invoker,
+                                     files
+                                   )
                                  )
-                      memory  <- Memory.inMemory[IO, UUID]
+                      memory  <- Memory.inMemory[IO, UUID].map(Memory.observed)
                       _       <- IO.println("Type 'exit' to quit.\n")
                       _       <- replLoop(dispatcher, executor, memory)
                     yield ()
@@ -99,7 +107,7 @@ object GoogleGenAIExample extends IOApp.Simple:
 
   private def replLoop(
       dispatcher: Dispatcher[IO],
-      executor: Stateful[IO, com.google.genai.types.GenerateContentResponse],
+      executor: Executor[IO, Stateful.Interruption.type, Executor.Step.ModelResponse],
       memory: Memory[IO, UUID]
   ): IO[Unit] =
     for

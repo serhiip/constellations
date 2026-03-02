@@ -66,4 +66,4 @@ lazy val `constellations-examples` = (project in file("examples"))
     libraryDependencies ++= Dependencies.logging ++ Dependencies.logback ++ Dependencies.googleCloudNio,
     publish / skip := true
   )
-  .dependsOn(`constellations-core`, `constellations-google-genai`)
+  .dependsOn(`constellations-core`, `constellations-google-genai`, `constellations-openrouter`)
