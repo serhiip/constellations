@@ -2,13 +2,17 @@ package io.github.serhiip.constellations.invoker
 
 import cats.data.NonEmptyChain as NEC
 import cats.syntax.all.*
+import cats.MonadThrow
 
 import io.github.serhiip.constellations.*
 import io.github.serhiip.constellations.common.*
 import io.github.serhiip.constellations.common.Codecs.given
 import io.github.serhiip.constellations.google.*
+import io.github.serhiip.constellations.dispatcher.Decoder as StructDecoder
+import io.github.serhiip.constellations.schema.Structured
 import scala.jdk.CollectionConverters.*
 import scala.util.chaining.*
+import io.circe.parser.parse
 import io.circe.syntax.*
 import java.util.Base64
 
@@ -97,6 +101,34 @@ object GoogleGenAI:
         .tap(b => fd.description.foreach(b.description(_)))
         .tap(b => fd.parameters.foreach(p => b.parameters(GSchema.fromJson(p.asJson.noSpaces))))
         .build()
+
+  def chatCompletionStructured[F[_]: MonadThrow, T: Structured](
+      client: Client[F],
+      config: Config,
+      functionDeclarations: List[FunctionDeclaration] = List.empty
+  )(using StructDecoder[Struct, T]): Invoker[F, T] = new:
+    private val delegate = chatCompletion(client, config, functionDeclarations)
+
+    def generate(history: NEC[Message], responseSchema: Option[Schema]): F[T] =
+      delegate
+        .generate(history, responseSchema.orElse(Structured[T].schema.some))
+        .flatMap(decodeStructuredOutput)
+
+    override def generateStructured(history: NEC[Message]): F[T] =
+      delegate
+        .generate(history, Structured[T].schema.some)
+        .flatMap(decodeStructuredOutput)
+
+    private def decodeStructuredOutput(response: GenerateContentResponse): F[T] =
+      for
+        json   <- parse(response.text()).liftTo[F]
+        struct <- json.as[Struct].liftTo[F]
+        value  <- StructDecoder[Struct, T]
+                    .decode(struct)
+                    .toEither
+                    .leftMap(errs => RuntimeException(errs.toNonEmptyList.toList.map(_.show).mkString("; ")))
+                    .liftTo[F]
+      yield value
 
   def valueToJava(v: Value): Object = v match
     case Value.NullValue        => null

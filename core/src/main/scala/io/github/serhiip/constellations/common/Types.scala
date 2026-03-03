@@ -108,6 +108,8 @@ final case class Schema(
 )
 
 object Schema:
+  import io.github.serhiip.constellations.schema.SchemaMacros
+
   def string(
       format: Option[String] = None,
       description: Option[String] = None,
@@ -199,6 +201,8 @@ object Schema:
       minProperties = minProperties,
       maxProperties = maxProperties
     )
+
+  inline def derived[A]: Schema = ${ SchemaMacros.deriveImpl[A] }
 
 final case class FunctionDeclaration(name: String, description: Option[String] = None, parameters: Option[Schema] = None)
 

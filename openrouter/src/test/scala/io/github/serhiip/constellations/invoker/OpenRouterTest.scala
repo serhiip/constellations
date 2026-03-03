@@ -10,6 +10,7 @@ import io.circe.Json
 import munit.CatsEffectSuite
 
 class OpenRouterTest extends CatsEffectSuite:
+  private case class StructuredPerson(name: String, age: Int)
 
   private class StubClient(chatRequestRef: Ref[IO, Option[ChatCompletionRequest]], completionRequestRef: Ref[IO, Option[CompletionRequest]])
       extends Client[IO]:
@@ -112,6 +113,83 @@ class OpenRouterTest extends CatsEffectSuite:
           numSearchResults = none
         )
       )
+
+  test("chatCompletionStructured should decode structured JSON into domain type") {
+    for
+      chatRequestRef       <- Ref.of[IO, Option[ChatCompletionRequest]](none)
+      completionRequestRef <- Ref.of[IO, Option[CompletionRequest]](none)
+      client                = new Client[IO]:
+                                def createChatCompletion(request: ChatCompletionRequest): IO[ChatCompletionResponse] =
+                                  chatRequestRef.set(request.some) *>
+                                    IO.pure(
+                                      ChatCompletionResponse(
+                                        id = "structured-id",
+                                        `object` = "chat.completion",
+                                        created = 1234567890L,
+                                        model = request.model,
+                                        choices = List(
+                                          ChatCompletionChoice(
+                                            index = 0,
+                                            message = ChatMessage(
+                                              role = "assistant",
+                                              content = Some(Json.fromString("""{"name":"Alice","age":33}"""))
+                                            ),
+                                            finishReason = "stop".some
+                                          )
+                                        ),
+                                        usage = ChatCompletionUsage(promptTokens = 10, completionTokens = 5, totalTokens = 15)
+                                      )
+                                    )
+                                def createCompletion(request: CompletionRequest): IO[CompletionResponse] =
+                                  completionRequestRef.set(request.some) *>
+                                    IO.pure(
+                                      CompletionResponse(
+                                        id = "completion-id",
+                                        `object` = "text_completion",
+                                        created = 1234567890L,
+                                        model = request.model,
+                                        choices = List(CompletionChoice(text = "ok", index = 0.some, finishReason = "stop".some)),
+                                        usage = ChatCompletionUsage(promptTokens = 1, completionTokens = 1, totalTokens = 2)
+                                      )
+                                    )
+                                def listModels(): IO[ModelsResponse] = IO.pure(ModelsResponse(List.empty))
+                                def getGenerationStats(generationId: String): IO[GenerationStats] =
+                                  IO.pure(
+                                    GenerationStats(
+                                      id = generationId,
+                                      totalCost = 0.0,
+                                      createdAt = "2024-01-01T00:00:00Z",
+                                      model = "gpt-4o",
+                                      origin = "api",
+                                      usage = 0.0,
+                                      isByok = false,
+                                      upstreamInferenceCost = 0.0,
+                                      streamed = false,
+                                      cancelled = false,
+                                      providerName = "OpenAI",
+                                      latency = 1,
+                                      generationTime = 1,
+                                      finishReason = "stop",
+                                      nativeFinishReason = "stop",
+                                      tokensPrompt = 1,
+                                      tokensCompletion = 1,
+                                      nativeTokensPrompt = 1,
+                                      nativeTokensCompletion = 1,
+                                      nativeTokensReasoning = 0,
+                                      nativeTokensCached = 0
+                                    )
+                                  )
+      invoker               = OpenRouter.chatCompletionStructured[IO, StructuredPerson](
+                                client = client,
+                                config = OpenRouter.Config(model = "gpt-4o")
+                              )
+      history               = NEC.one(Message.User(List(ContentPart.Text("Return a person"))))
+      result               <- invoker.generateStructured(history)
+      capturedRequest      <- chatRequestRef.get
+    yield
+      assertEquals(result, StructuredPerson("Alice", 33))
+      assert(capturedRequest.isDefined)
+  }
 
   test("chatCompletion should convert text-only messages correctly") {
     for

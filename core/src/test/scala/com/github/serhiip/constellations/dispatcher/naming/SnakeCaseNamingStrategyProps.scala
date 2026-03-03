@@ -134,11 +134,9 @@ class SnakeCaseNamingStrategyProps extends ScalaCheckSuite:
     }
   }
 
-  property("componentName, methodName, and parameterName produce same results") {
+  property("componentName preserves name (CamelCase), methodName and parameterName produce same snake_case") {
     forAll(stringGen) { (name: String) =>
-      val component = SnakeCaseNamingStrategy.componentName(name)
-      val method = SnakeCaseNamingStrategy.methodName(name)
-      val parameter = SnakeCaseNamingStrategy.parameterName(name)
-      component == method && method == parameter
+      SnakeCaseNamingStrategy.componentName(name) == name &&
+      SnakeCaseNamingStrategy.methodName(name) == SnakeCaseNamingStrategy.parameterName(name)
     }
   }
