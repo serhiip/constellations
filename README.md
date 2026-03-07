@@ -1,5 +1,131 @@
 # Constellations
 
+Type-safe Scala 3 toolkit for building AI applications with function calling, schema derivation, and observability.
+
+## Quick Start
+
+```sbt
+libraryDependencies ++= Seq(
+  "io.github.serhiip" %% "constellations-core" % "<version>",
+  "io.github.serhiip" %% "constellations-openrouter" % "<version>",
+  "io.github.serhiip" %% "constellations-google-genai" % "<version>"
+)
+```
+
+> [!NOTE]
+> Snapshots require:
+> ```sbt
+> resolvers += ("Maven snapshots" at "https://central.sonatype.com/repository/maven-snapshots/")
+> ```
+
+## What you get
+
+- Function calling via Scala traits and macro-generated dispatch
+- Schema derivation for model inputs and outputs
+- Memory + execution orchestration
+- Tracing and structured logging
+- OpenRouter and Google GenAI integrations
+
+## Modules
+
+- `constellations-core`: dispatching, execution, memory, common types
+- `constellations-openrouter`: OpenRouter client and invokers
+- `constellations-google-genai`: Google GenAI client and invokers
+- `constellations-examples`: runnable examples
+
+## Core concepts
+
+- `Dispatcher[F[_]]`: builds function declarations and routes calls to Scala methods
+- `Executor[F[_], E, T]`: runs workflows with memory
+- `Invoker[F[_], T]`: calls LLMs and returns model responses
+- `Memory[F[_], Id]`: stores conversation steps
+- Common types: `Schema`, `Struct`, `Value`, `FunctionCall`, `FunctionResponse`
+
+## Schema derivation (SchemaMacros + ToSchema)
+
+`Schema.derived` is implemented by `SchemaMacros` in `core/src/main/scala/io/github/serhiip/constellations/schema/SchemaMacros.scala`.
+The macro builds JSON Schema for case classes and sealed traits/enums with support for:
+
+- Primitive types
+- `Option` (nullable fields)
+- `List`/`Seq`
+- Nested case classes and sealed hierarchies
+
+Use `@llmHint` to override schema metadata and validation constraints.
+`ToSchema` in `core/src/main/scala/io/github/serhiip/constellations/schema/ToSchema.scala` exposes derived schemas in generic code.
+
+```scala
+import io.github.serhiip.constellations.common.{Schema, llmHint}
+import io.github.serhiip.constellations.schema.ToSchema
+
+final case class Person(
+  @llmHint(description = "Full name")
+  name: String,
+  age: Int
+)
+
+val schema1 = Schema.derived[Person]
+val schema2 = ToSchema[Person].schema
+```
+
+## Example: dispatching a function call
+
+```scala
+import cats.effect.IO
+import io.github.serhiip.constellations.*
+
+trait Calculator[F[_]]:
+  def add(a: Int, b: Int): F[Int]
+
+val impl = new Calculator[IO]:
+  def add(a: Int, b: Int): IO[Int] = IO.pure(a + b)
+
+val dispatcher = Dispatcher.generate[IO, Calculator](impl)
+
+val call = FunctionCall(
+  name = "calculator_add",
+  args = Struct("a" -> Value.number(5), "b" -> Value.number(3))
+)
+
+dispatcher.dispatch(call).flatMap {
+  case Dispatcher.Result.Response(response) => IO.println(response.response)
+  case Dispatcher.Result.HumanInTheLoop     => IO.println("Human input required")
+}
+```
+
+## Observability
+
+Observed wrappers add tracing and structured logging:
+
+```scala
+val observedDispatcher = Dispatcher[IO](dispatcher)
+val observedExecutor = Executor[IO, Error, Response](executor)
+val observedMemory = Memory[IO, UUID](memory)
+```
+
+## Naming conventions
+
+Constellations converts Scala `camelCase` to `snake_case` for LLMs:
+
+- `WeatherService` -> `weather_service`
+- `getWeather` -> `get_weather`
+- `includeForecast` -> `include_forecast`
+
+## Running examples
+
+```bash
+sbt "examples/runMain io.github.serhiip.constellations.AssistantApp"
+```
+
+## Contributing
+
+PRs and issues are welcome.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
+# Constellations
+
 A Scala 3 library for building AI-powered applications with function calling capabilities. Constellations provides a type-safe, observable framework for integrating AI models with your Scala applications.
 
 ## Quick Start
@@ -143,6 +269,33 @@ The macro automatically generates:
 - JSON schemas for all parameters
 - Function declarations with descriptions
 - Type-safe dispatching logic
+
+#### SchemaMacros and ToSchema
+
+`Schema.derived` is implemented by `SchemaMacros` in `core/src/main/scala/io/github/serhiip/constellations/schema/SchemaMacros.scala`. The macro inspects case classes and sealed traits/enums to build JSON Schema trees, including support for:
+
+- Primitive types (`String`, `Int`, `Boolean`, etc.)
+- `Option` (marks fields as nullable)
+- `List`/`Seq` collections
+- Nested case classes and sealed hierarchies
+
+You can refine the generated schema with the `@llmHint` annotation on fields, constructor parameters, or the type itself to override metadata like `description`, `title`, and validation constraints.
+
+The `ToSchema` typeclass in `core/src/main/scala/io/github/serhiip/constellations/schema/ToSchema.scala` exposes these derived schemas in generic code and provides a given instance for any supported type.
+
+```scala
+import io.github.serhiip.constellations.common.{Schema, llmHint}
+import io.github.serhiip.constellations.schema.ToSchema
+
+final case class Person(
+  @llmHint(description = "Full name")
+  name: String,
+  age: Int
+)
+
+val schema1 = Schema.derived[Person]
+val schema2 = ToSchema[Person].schema
+```
 
 ### Built-in Observability
 
@@ -458,14 +611,6 @@ class DatabaseMemory[F[_]: Async, Id](repo: UserRepository[F, Id])
 
   def last: F[Option[(Id, Executor.Step)]] =
     repo.getLastStep()
-```
-
-### Effect Type Transformation
-
-```scala
-// Transform between different effect types
-val ioClient: Client[IO] = ???
-val futureClient: Client[Future] = Client.mapK(ioClient)(λ[IO ~> Future](_.unsafeToFuture()))
 ```
 
 ### Custom Executors

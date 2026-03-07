@@ -9,7 +9,7 @@ import io.github.serhiip.constellations.common.*
 import io.github.serhiip.constellations.common.Codecs.given
 import io.github.serhiip.constellations.google.*
 import io.github.serhiip.constellations.dispatcher.Decoder as StructDecoder
-import io.github.serhiip.constellations.schema.Structured
+import io.github.serhiip.constellations.schema.ToSchema
 import scala.jdk.CollectionConverters.*
 import scala.util.chaining.*
 import io.circe.parser.parse
@@ -45,31 +45,25 @@ object GoogleGenAI:
       functionDeclarations: List[FunctionDeclaration] = List.empty
   ): Invoker[F, GenerateContentResponse] = new:
 
-    def generate(history: NEC[Message], responseSchema: Option[Schema]) =
+    def generate(history: NEC[Message], responseSchema: Option[Schema] = None) =
       val messages = history.map(messageToContent)
-
       val maybeTools =
         Option.when(functionDeclarations.nonEmpty) {
           List(GTool.builder().functionDeclarations(functionDeclarations.map(toGFunctionDeclaration).asJava).build())
         }
-
+      val schema = responseSchema.orElse(config.responseSchema)
       val genCfg = GenerateContentConfig
         .builder()
         .tap(b => config.temperature.foreach(b.temperature(_)))
         .tap(b => config.topP.foreach(b.topP(_)))
         .tap(b => config.maxTokens.foreach(b.maxOutputTokens(_)))
         .tap(b => maybeTools.foreach(tools => b.tools(tools.asJava)))
-        .tap(b =>
-          responseSchema
-            .orElse(config.responseSchema)
-            .foreach(s => b.responseSchema(GSchema.fromJson(s.asJson.noSpaces)))
-        )
-        .tap(b => responseSchema.orElse(config.responseSchema).foreach(_ => b.responseMimeType("application/json")))
+        .tap(b => schema.foreach(s => b.responseSchema(GSchema.fromJson(s.asJson.noSpaces))))
+        .tap(b => schema.foreach(_ => b.responseMimeType("application/json")))
         .tap(b =>
           config.systemPrompt.foreach(sys => b.systemInstruction(Content.builder().role("system").parts(Part.fromText(sys)).build()))
         )
         .build()
-
       client.generate(config.model, messages, genCfg.some)
 
     private def messageToContent(message: Message): Content = message match
@@ -102,22 +96,16 @@ object GoogleGenAI:
         .tap(b => fd.parameters.foreach(p => b.parameters(GSchema.fromJson(p.asJson.noSpaces))))
         .build()
 
-  def chatCompletionStructured[F[_]: MonadThrow, T: Structured](
+  def chatCompletionStructured[F[_]: MonadThrow, T: ToSchema](
       client: Client[F],
       config: Config,
       functionDeclarations: List[FunctionDeclaration] = List.empty
   )(using StructDecoder[Struct, T]): Invoker[F, T] = new:
-    private val delegate = chatCompletion(client, config, functionDeclarations)
+    private val baseConfig = config.copy(responseSchema = ToSchema[T].schema.some)
+    private val delegate   = chatCompletion(client, baseConfig, functionDeclarations)
 
-    def generate(history: NEC[Message], responseSchema: Option[Schema]): F[T] =
-      delegate
-        .generate(history, responseSchema.orElse(Structured[T].schema.some))
-        .flatMap(decodeStructuredOutput)
-
-    override def generateStructured(history: NEC[Message]): F[T] =
-      delegate
-        .generate(history, Structured[T].schema.some)
-        .flatMap(decodeStructuredOutput)
+    override def generate(history: NEC[Message], responseSchema: Option[Schema] = None): F[T] =
+      delegate.generate(history, responseSchema.orElse(ToSchema[T].schema.some)).flatMap(decodeStructuredOutput)
 
     private def decodeStructuredOutput(response: GenerateContentResponse): F[T] =
       for

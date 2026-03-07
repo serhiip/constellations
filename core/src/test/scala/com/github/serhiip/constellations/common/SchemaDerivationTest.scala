@@ -1,7 +1,7 @@
 package io.github.serhiip.constellations.common
 
 import munit.FunSuite
-import io.github.serhiip.constellations.schema.Structured
+import io.github.serhiip.constellations.schema.ToSchema
 
 class SchemaDerivationSuite extends FunSuite:
   /** Address for a person. */
@@ -316,7 +316,7 @@ class SchemaDerivationSuite extends FunSuite:
   }
 
   test("Structured typeclass should provide derived schema for case classes") {
-    val schema = Structured[Person].schema
+    val schema = ToSchema[Person].schema
 
     assertEquals(schema, expectedPersonSchema)
   }

@@ -27,7 +27,6 @@ import io.circe.Json
 import io.circe.parser.parse
 import io.circe.syntax.*
 import java.util.UUID
-import io.github.serhiip.constellations.schema.Structured
 
 object OpenRouter:
 
@@ -49,7 +48,7 @@ object OpenRouter:
       modelNameOverride: Option[F[String]] = None
   ): Invoker[F, ChatCompletionResponse] = new:
 
-    override def generate(history: NEC[Message], responseSchema: Option[Schema]): F[ChatCompletionResponse] =
+    override def generate(history: NEC[Message], responseSchema: Option[Schema] = None): F[ChatCompletionResponse] =
       val messages = history.toChain.toList.map(messageToChatMessage)
 
       val tools =
@@ -117,23 +116,16 @@ object OpenRouter:
           ChatMessage(role = "assistant", toolCalls = Some(List(toolCall)))
         case Message.ToolResult(content)        => messageHandler.convertToolResultMessage(content)
 
-  def chatCompletionStructured[F[_]: cats.MonadThrow, T: Structured](
+  def chatCompletionStructured[F[_]: cats.MonadThrow, T](
       client: Client[F],
       config: Config,
       functionDeclarations: List[FunctionDeclaration] = List.empty,
       modelNameOverride: Option[F[String]] = None
-  )(using StructDecoder[Struct, T]): Invoker[F, T] = new:
+  )(using decoder: StructDecoder[Struct, T]): Invoker[F, T] = new:
     private val delegate = chatCompletion(client, config, functionDeclarations, modelNameOverride)
 
-    override def generate(history: NEC[Message], responseSchema: Option[Schema]): F[T] =
-      delegate
-        .generate(history, responseSchema.orElse(Structured[T].schema.some))
-        .flatMap(decodeStructuredOutput)
-
-    override def generateStructured(history: NEC[Message]): F[T] =
-      delegate
-        .generate(history, Structured[T].schema.some)
-        .flatMap(decodeStructuredOutput)
+    override def generate(history: NEC[Message], responseSchema: Option[Schema] = None): F[T] =
+      delegate.generate(history, responseSchema).flatMap(decodeStructuredOutput)
 
     private def decodeStructuredOutput(response: ChatCompletionResponse): F[T] =
       response.choices.headOption match
@@ -143,7 +135,7 @@ object OpenRouter:
                         case Some(contentString) => parse(contentString).liftTo[F]
                         case None                => content.pure[F]
             struct <- asJson.as[Struct].liftTo[F]
-            value  <- StructDecoder[Struct, T]
+            value  <- decoder
                         .decode(struct)
                         .toEither
                         .leftMap(errs => RuntimeException(errs.toNonEmptyList.toList.map(_.show).mkString("; ")))
@@ -156,7 +148,7 @@ object OpenRouter:
 
   def completion[F[_]](client: Client[F], config: Config): Invoker[F, CompletionResponse] = new:
 
-    override def generate(history: NEC[Message], responseSchema: Option[Schema]): F[CompletionResponse] =
+    override def generate(history: NEC[Message], responseSchema: Option[Schema] = None): F[CompletionResponse] =
       val prompt  = history.toChain.toList.flatMap(messageToText(_).toList).mkString("\n")
       val request = CompletionRequest(
         model = config.model,

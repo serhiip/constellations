@@ -184,7 +184,7 @@ class OpenRouterTest extends CatsEffectSuite:
                                 config = OpenRouter.Config(model = "gpt-4o")
                               )
       history               = NEC.one(Message.User(List(ContentPart.Text("Return a person"))))
-      result               <- invoker.generateStructured(history)
+      result               <- invoker.generate(history)
       capturedRequest      <- chatRequestRef.get
     yield
       assertEquals(result, StructuredPerson("Alice", 33))
