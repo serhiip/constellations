@@ -7,7 +7,6 @@ import cats.data.NonEmptyChain as NEC
 import cats.effect.Temporal
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
-
 import org.typelevel.log4cats.StructuredLogger
 import org.typelevel.otel4s.trace.Tracer
 
@@ -17,14 +16,13 @@ import retry.*
 
 trait Invoker[F[_], T]:
   def generate(history: NEC[Message], responseSchema: Option[Schema] = None): F[T]
-  def generateStructured(history: NEC[Message]): F[T] = generate(history, None)
 
 object Invoker:
   def apply[F[_]: Tracer: StructuredLogger: Monad, T](delegate: Invoker[F, T]): Invoker[F, T] = observed(delegate)
 
   private def observed[F[_]: Monad: Tracer: StructuredLogger, T](delegate: Invoker[F, T]): Invoker[F, T] =
     new Invoker[F, T]:
-      override def generate(history: NEC[Message], responseSchema: Option[Schema]): F[T] =
+      override def generate(history: NEC[Message], responseSchema: Option[Schema] = None): F[T] =
         Tracer[F]
           .span("invoker", "generate")
           .logged: logger =>
@@ -32,16 +30,6 @@ object Invoker:
               _      <- logger.trace(s"Generating with ${history.length} messages in history")
               result <- delegate.generate(history, responseSchema)
               _      <- logger.trace(s"Generate result: $result")
-            yield result
-
-      override def generateStructured(history: NEC[Message]): F[T] =
-        Tracer[F]
-          .span("invoker", "generate-structured")
-          .logged: logger =>
-            for
-              _      <- logger.trace(s"Generating structured output with ${history.length} messages in history")
-              result <- delegate.generateStructured(history)
-              _      <- logger.trace(s"Generate structured result: $result")
             yield result
 
   def retrying[F[_]: StructuredLogger: Temporal, T](
@@ -57,14 +45,8 @@ object Invoker:
           logger.trace(s"Invoker retry after ${details.retriesSoFar} attemps")
         case RetryDetails.NextStep.GiveUp                                   => logger.error(err)(s"Giving up after ${details.retriesSoFar} retries")
 
-    override def generate(prompt: NEC[Message], responseSchema: Option[Schema]): F[T] =
+    override def generate(prompt: NEC[Message], responseSchema: Option[Schema] = None): F[T] =
       retryingOnErrors(delegate.generate(prompt, responseSchema))(
-        RetryPolicies.limitRetriesByCumulativeDelay(maxDelay, RetryPolicies.exponentialBackoff(initialDelay)),
-        ResultHandler.retryOnAllErrors(logError)
-      )
-
-    override def generateStructured(prompt: NEC[Message]): F[T] =
-      retryingOnErrors(delegate.generateStructured(prompt))(
         RetryPolicies.limitRetriesByCumulativeDelay(maxDelay, RetryPolicies.exponentialBackoff(initialDelay)),
         ResultHandler.retryOnAllErrors(logError)
       )
