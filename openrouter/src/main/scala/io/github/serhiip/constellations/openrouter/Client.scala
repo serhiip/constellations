@@ -245,16 +245,22 @@ case class ModelDefaultParameters(
 ) derives ConfiguredCodec
 
 case class ModelPricing(
-    prompt: String,
-    completion: String,
-    image: Option[String] = None,
-    audio: Option[String] = None,
-    request: Option[String] = None,
-    webSearch: Option[String] = None,
-    internalReasoning: Option[String] = None,
-    inputCacheRead: Option[String] = None,
-    inputCacheWrite: Option[String] = None
-) derives ConfiguredCodec
+    prompt: BigDecimal,
+    completion: BigDecimal,
+    image: Option[BigDecimal] = None,
+    audio: Option[BigDecimal] = None,
+    request: Option[BigDecimal] = None,
+    webSearch: Option[BigDecimal] = None,
+    internalReasoning: Option[BigDecimal] = None,
+    inputCacheRead: Option[BigDecimal] = None,
+    inputCacheWrite: Option[BigDecimal] = None
+)
+
+object ModelPricing:
+  private given Decoder[BigDecimal] =
+    Decoder.decodeBigDecimal.or(Decoder.decodeString.emap(s => Either.catchOnly[NumberFormatException](BigDecimal(s)).leftMap(_.getMessage)))
+
+  given Codec[ModelPricing] = ConfiguredCodec.derived
 
 case class ModelArchitecture(
     modality: Option[String] = None,

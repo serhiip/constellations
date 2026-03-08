@@ -61,7 +61,7 @@ class OpenRouterTest extends CatsEffectSuite:
               id = "gpt-4o",
               name = "GPT-4o",
               description = "Test model".some,
-              pricing = ModelPricing(prompt = "0.005", completion = "0.015").some,
+              pricing = ModelPricing(prompt = BigDecimal("0.005"), completion = BigDecimal("0.015")).some,
               contextLength = 128000.some,
               architecture = ModelArchitecture(
                 inputModalities = Set(Modality.Text),

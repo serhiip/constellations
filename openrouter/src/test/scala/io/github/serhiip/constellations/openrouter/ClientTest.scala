@@ -73,14 +73,14 @@ final class ClientTest extends CatsEffectSuite:
           ).some,
           topProvider = ModelTopProvider(isModerated = true, contextLength = Some(128000), maxCompletionTokens = Some(16384)).some,
           pricing = ModelPricing(
-            prompt = "0.0000007",
-            completion = "0.0000007",
-            image = "0".some,
-            request = "0".some,
-            webSearch = "0".some,
-            internalReasoning = "0".some,
-            inputCacheRead = "0".some,
-            inputCacheWrite = "0".some
+            prompt = BigDecimal("0.0000007"),
+            completion = BigDecimal("0.0000007"),
+            image = BigDecimal("0").some,
+            request = BigDecimal("0").some,
+            webSearch = BigDecimal("0").some,
+            internalReasoning = BigDecimal("0").some,
+            inputCacheRead = BigDecimal("0").some,
+            inputCacheWrite = BigDecimal("0").some
           ).some,
           canonicalSlug = "anthropic/claude-3.7-sonnet".some,
           contextLength = 128000.some,
@@ -787,13 +787,13 @@ final class ClientTest extends CatsEffectSuite:
 
         model.pricing match
           case Some(pricing) =>
-            assertEquals(pricing.prompt, "0.00001")
-            assertEquals(pricing.completion, "0.00004")
-            assertEquals(pricing.request, Some("0"))
-            assertEquals(pricing.image, Some("0.00765"))
-            assertEquals(pricing.webSearch, Some("0.01"))
-            assertEquals(pricing.internalReasoning, Some("0"))
-            assertEquals(pricing.inputCacheRead, Some("0.0000025"))
+            assertEquals(pricing.prompt, BigDecimal("0.00001"))
+            assertEquals(pricing.completion, BigDecimal("0.00004"))
+            assertEquals(pricing.request, Some(BigDecimal("0")))
+            assertEquals(pricing.image, Some(BigDecimal("0.00765")))
+            assertEquals(pricing.webSearch, Some(BigDecimal("0.01")))
+            assertEquals(pricing.internalReasoning, Some(BigDecimal("0")))
+            assertEquals(pricing.inputCacheRead, Some(BigDecimal("0.0000025")))
           case None          => fail("pricing should be present")
 
         model.topProvider match
@@ -828,4 +828,30 @@ final class ClientTest extends CatsEffectSuite:
           )
         )
       case Left(error)     => fail(s"Failed to decode JSON: ${error.getMessage}")
+  }
+
+  test("ModelPricing decodes from API string values") {
+    val json = """{"prompt":"0.00001","completion":"0.00004","request":"0","image":"0.00765","web_search":"0.01","internal_reasoning":"0","input_cache_read":"0.0000025"}"""
+    parse(json).flatMap(_.as[ModelPricing]) match
+      case Right(pricing) =>
+        assertEquals(pricing.prompt, BigDecimal("0.00001"))
+        assertEquals(pricing.completion, BigDecimal("0.00004"))
+        assertEquals(pricing.request, Some(BigDecimal("0")))
+        assertEquals(pricing.image, Some(BigDecimal("0.00765")))
+        assertEquals(pricing.webSearch, Some(BigDecimal("0.01")))
+        assertEquals(pricing.internalReasoning, Some(BigDecimal("0")))
+        assertEquals(pricing.inputCacheRead, Some(BigDecimal("0.0000025")))
+        assertEquals(pricing.inputCacheWrite, None)
+      case Left(e)        => fail(s"Failed to decode ModelPricing from strings: $e")
+  }
+
+  test("ModelPricing decodes from JSON number values") {
+    val json = """{"prompt":0.00001,"completion":0.00004,"request":0,"image":0.00765}"""
+    parse(json).flatMap(_.as[ModelPricing]) match
+      case Right(pricing) =>
+        assertEquals(pricing.prompt, BigDecimal("0.00001"))
+        assertEquals(pricing.completion, BigDecimal("0.00004"))
+        assertEquals(pricing.request, Some(BigDecimal("0")))
+        assertEquals(pricing.image, Some(BigDecimal("0.00765")))
+      case Left(e)        => fail(s"Failed to decode ModelPricing from numbers: $e")
   }
