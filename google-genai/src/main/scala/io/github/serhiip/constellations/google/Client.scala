@@ -29,10 +29,8 @@ object Client:
     new Client[F]:
       def generate(model: String, contents: NEC[Content], config: Option[GenerateContentConfig]) =
         val effectiveCfg = config.getOrElse(GenerateContentConfig.builder().build())
-        Async[F].fromCompletableFuture(
-          Async[F].delay(
-            underlying.async.models.generateContent(model, contents.toNonEmptyList.toList.asJava, effectiveCfg)
-          )
+        Async[F].blocking(
+          underlying.models.generateContent(model, contents.toNonEmptyList.toList.asJava, effectiveCfg)
         )
 
   def mapK[F[_], G[_]](client: Client[F])(f: F ~> G): Client[G] = new Client[G]:
