@@ -62,10 +62,11 @@ object Dispatcher:
     override def mapK[G[_]](f: F ~> G): Dispatcher[G] = Dispatcher.mapK(this)(f)
 
   @experimental
-  inline def generate[F[_], T[_[_]]]: T[F] => Dispatcher[F] = ${ macroImpl[F, T] }
+  inline def generate[F[_]](inline component: Any, inline optionalOtherComponents: Any*): Dispatcher[F] =
+    ${ macroImpl[F]('component, 'optionalOtherComponents) }
 
   @experimental
-  private def macroImpl[F[_]: Type, T[F[_]]: Type](using quotes: Quotes): Expr[T[F] => Dispatcher[F]] =
+  private def macroImpl[F[_]: Type](componentExpr: Expr[Any], optionalExpr: Expr[Seq[Any]])(using quotes: Quotes): Expr[Dispatcher[F]] =
     import quotes.reflect.*
 
     def getCaseClassFields(tpe: TypeRepr): List[(String, TypeRepr, Boolean, Option[String])] =
@@ -139,8 +140,8 @@ object Dispatcher:
 
     def processMethodForDeclaration(traitSym: Symbol)(method: Symbol): Expr[FunctionDeclaration] =
       val convertedMethodName = methodName(method.name)
-      val qualifiedName = s"${componentName(traitSym.name)}_$convertedMethodName"
-      val docstring     = method.docstring
+      val qualifiedName       = s"${componentName(traitSym.name)}_$convertedMethodName"
+      val docstring           = method.docstring
 
       val params = method.paramSymss.headOption.getOrElse(List.empty).filterNot(_.isTypeParam)
 
@@ -279,41 +280,89 @@ object Dispatcher:
       if methods.isEmpty then report.warning(s"Component ${symbol.fullName} has no public methods to route.", term.pos)
       methods.map(processMethodForDispatch(symbol.typeRef.dealias, term))
 
-    val traitSym = TypeRepr.of[T].typeSymbol
+    def hasEffectType(tpe: TypeRepr): Boolean =
+      tpe.dealias.simplified match
+        case AppliedType(_, args) =>
+          args match
+            case List(arg) => arg =:= TypeRepr.of[F]
+            case _         => false
+        case _                    => false
 
-    if !traitSym.flags.is(Flags.Trait) then report.errorAndAbort(s"${traitSym.fullName} is not a trait.", Position.ofMacroExpansion)
+    def resolveComponentTrait(tpe: TypeRepr, pos: Position): Symbol =
+      val baseType   = tpe.widen.dealias
+      val candidates = baseType.baseClasses.flatMap { sym =>
+        if sym.flags.is(Flags.Trait) then
+          val applied = baseType.baseType(sym).dealias
+          if hasEffectType(applied) then Some(sym) else None
+        else None
+      }.distinct
+      candidates match
+        case sym :: Nil => sym
+        case Nil        =>
+          report.errorAndAbort(
+            s"Component ${baseType.show} must be typed as a trait with effect type ${TypeRepr.of[F].show}",
+            pos
+          )
+        case many       =>
+          report.errorAndAbort(
+            s"Component ${baseType.show} implements multiple traits with effect type ${TypeRepr.of[F].show}: ${many.map(_.fullName).mkString(", ")}",
+            pos
+          )
 
-    val functionDeclarationsExpr = getMethodDeclarations(traitSym)
+    def extractComponents(expr: Expr[Seq[Any]]): List[Term] =
+      expr match
+        case Varargs(args) => args.toList.map(_.asTerm)
+        case _             =>
+          def loop(term: Term, env: Map[Symbol, Term]): List[Term] = term match
+            case Inlined(_, _, inner)                          => loop(inner, env)
+            case Typed(inner, _)                               => loop(inner, env)
+            case Block(stats, inner)                           =>
+              val newBindings = stats.collect {
+                case valDef: ValDef if valDef.rhs.nonEmpty =>
+                  valDef.symbol -> valDef.rhs.get
+              }.toMap
+              loop(inner, env ++ newBindings)
+            case ident: Ident if env.contains(ident.symbol)    => loop(env(ident.symbol), env)
+            case Repeated(elems, _)                            => elems
+            case Apply(Select(_, "apply"), args)               => args
+            case Apply(TypeApply(Select(_, "apply"), _), args) => args
+            case other                                         =>
+              report.errorAndAbort(
+                "Dispatcher.generate requires explicit component arguments. Avoid passing a Seq or collection.",
+                other.pos
+              )
+          loop(expr.asTerm, Map.empty)
 
-    '{ (instance: T[F]) =>
+    val components = componentExpr.asTerm :: extractComponents(optionalExpr)
+
+    val componentInfo = components.map { term =>
+      val traitSym = resolveComponentTrait(term.tpe, term.pos)
+      (term, traitSym)
+    }
+
+    val functionDeclarationsExpr =
+      componentInfo
+        .map { case (_, traitSym) => getMethodDeclarations(traitSym) }
+        .reduceLeftOption((left, right) => '{ $left ++ $right })
+        .getOrElse('{ List.empty[FunctionDeclaration] })
+
+    val callables = componentInfo.flatMap { case (term, traitSym) => processMethodsForDispatch(traitSym, term) }
+
+    '{
       new Dispatcher[F]:
 
-        def dispatch(call: FunctionCall): F[Dispatcher.Result] = ${
-          val term      = '{ instance }.asTerm
-          val tpe       = term.tpe
-          val symbol    = tpe.classSymbol.getOrElse(
-            report.errorAndAbort(
-              s"Instance ${term.show} needs to be a trait",
-              Symbol.spliceOwner.pos.get
-            )
-          )
-          val callables = processMethodsForDispatch(symbol, term)
+        private val methodMap: Map[String, FunctionCall => F[Dispatcher.Result]] = Map(
+          ${ Expr.ofList(callables.map { case (k, v) => '{ ${ Expr(k) } -> ${ v } } }) }*
+        )
 
-          val dispatchImpl = '{ (call: FunctionCall) =>
-            val methodMap: Map[String, FunctionCall => F[Dispatcher.Result]] = Map(
-              ${ Expr.ofList(callables.map { case (k, v) => '{ ${ Expr(k) } -> ${ v } } }) }*
-            )
-
-            methodMap.getOrElse(call.name, throw RuntimeException(s"No handler for ${call.name}"))(call)
-          }
-          '{ ${ dispatchImpl }(call) }
-        }
+        def dispatch(call: FunctionCall): F[Dispatcher.Result] =
+          methodMap.getOrElse(call.name, throw RuntimeException(s"No handler for ${call.name}"))(call)
 
         def getFunctionDeclarations: F[List[FunctionDeclaration]] = ${
           val app = Expr
             .summon[cats.Applicative[F]]
             .getOrElse(report.errorAndAbort("No cats.Applicative given found for F", Position.ofMacroExpansion))
-          '{ $app.pure(${ functionDeclarationsExpr }) }
+          '{ $app.pure($functionDeclarationsExpr) }
         }
 
         override def mapK[G[_]](f: F ~> G): Dispatcher[G] = Dispatcher.mapK(this)(f)

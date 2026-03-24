@@ -54,6 +54,13 @@ class TestApiImpl extends TestApi[IO]:
   def offsetDateTimeValue(): IO[OffsetDateTime] =
     IO.pure(offsetDateTime)
 
+trait GreetingApi[F[_]]:
+  def greet(name: String): F[String]
+
+class GreetingApiStub extends GreetingApi[IO]:
+  def greet(name: String): IO[String] =
+    IO.pure(s"Hello, $name")
+
 @experimental
 class DispatcherTest extends CatsEffectSuite:
 
@@ -96,8 +103,9 @@ class DispatcherTest extends CatsEffectSuite:
       case other                => throw new RuntimeException(s"Unexpected response format: $other")
 
   val impl       = new TestApiImpl
-  val factory    = Dispatcher.generate[IO, TestApi]
-  val dispatcher = factory(impl)
+  val dispatcher = Dispatcher.generate[IO](impl)
+  val greeting   = new GreetingApiStub
+  val multiDispatcher = Dispatcher.generate[IO](impl, greeting)
 
   test("dispatcher should successfully call a method with various parameter types") {
     val call = createFunctionCall("TestApi_mixed_types", Map("int_val" -> 42, "str_val" -> "test", "bool_val" -> true))
@@ -178,7 +186,7 @@ class DispatcherTest extends CatsEffectSuite:
         "int_val"  -> 42,
         "str_val"  -> "test",
         "bool_val" -> true,
-        "extra"   -> "ignored"
+        "extra"    -> "ignored"
       )
     )
     dispatcher.dispatch(call).map(response => assertEquals(extractString(response), "int=42, str=test, bool=true"))
@@ -198,6 +206,25 @@ class DispatcherTest extends CatsEffectSuite:
     val call         = createFunctionCall("TestApi_nested_struct", Map("person" -> personStruct))
     val ex           = intercept[IllegalArgumentException](dispatcher.dispatch(call)) // TODO: should raise inside IO
     assert(ex.getMessage.contains("Error at path 'person.age': Field is missing"))
+  }
+
+  test("dispatcher should support multiple components") {
+    val testCall     = createFunctionCall("TestApi_no_params")
+    val greetingCall = createFunctionCall("GreetingApi_greet", Map("name" -> "Ada"))
+    for
+      testResponse     <- multiDispatcher.dispatch(testCall)
+      greetingResponse <- multiDispatcher.dispatch(greetingCall)
+    yield
+      assertEquals(extractString(testResponse), "no params")
+      assertEquals(extractString(greetingResponse), "Hello, Ada")
+  }
+
+  test("getFunctionDeclarations should include multiple components") {
+    multiDispatcher.getFunctionDeclarations.map { declarations =>
+      val names = declarations.map(_.name).toSet
+      assert(names.contains("TestApi_no_params"))
+      assert(names.contains("GreetingApi_greet"))
+    }
   }
 
   test("getFunctionDeclarations should return correct function declarations") {

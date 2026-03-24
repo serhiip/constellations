@@ -43,6 +43,13 @@ class ExampleFunctionsImpl[F[_]: Applicative] extends ExampleFunctions[F]:
   def status(): F[OperationStatus] =
     OperationStatus.Ok("ready").pure[F]
 
+trait DiagnosticFunctions[F[_]]:
+  def ping(): F[String]
+
+class DiagnosticFunctionsDefault[F[_]: Applicative] extends DiagnosticFunctions[F]:
+  def ping(): F[String] =
+    "pong".pure[F]
+
 @experimental
 object DispatcherEncodingExample extends IOApp.Simple:
   def run: IO[Unit] =
@@ -56,7 +63,10 @@ object DispatcherEncodingExample extends IOApp.Simple:
         _                          <- Client
                                         .resource[IO](apiKey, Client.Config())
                                         .use { client =>
-                                          Dispatcher(Dispatcher.generate[IO, ExampleFunctions](ExampleFunctionsImpl[IO])).flatMap { dispatcher =>
+                                          Dispatcher(Dispatcher.generate[IO](
+                                            ExampleFunctionsImpl[IO],
+                                            DiagnosticFunctionsDefault[IO]
+                                          )).flatMap { dispatcher =>
                                             for
                                               decls      <- dispatcher.getFunctionDeclarations
                                               rawInvoker  = OpenRouter.chatCompletion(

@@ -26,17 +26,20 @@ import org.typelevel.otel4s.trace.Tracer
 final case class CurrentTime(time: String) derives ValueEncoder
 final case class AlertResult(message: String) derives ValueEncoder
 
-trait CallableFunctions[F[_]]:
+trait TimeFunctions[F[_]]:
   def getCurrentTime(zone: Option[String]): F[CurrentTime]
+
+trait AlertFunctions[F[_]]:
   def alert(text: String): F[AlertResult]
 
-class DefaultFunctions[F[_]: Clock: Functor: Logger] extends CallableFunctions[F]:
+class DefaultTimeFunctions[F[_]: Clock: Functor] extends TimeFunctions[F]:
   def getCurrentTime(zone: Option[String]): F[CurrentTime] =
-    for {
+    for
       instant <- Clock[F].realTimeInstant
       nowZoned = OffsetDateTime.ofInstant(instant, ZoneId.of(zone.getOrElse("UTC")))
-    } yield CurrentTime(nowZoned.toString)
+    yield CurrentTime(nowZoned.toString)
 
+class DefaultAlertFunctions[F[_]: Functor: Logger] extends AlertFunctions[F]:
   def alert(text: String): F[AlertResult] =
     Logger[F]
       .info(s"ALERT: $text")
@@ -56,7 +59,8 @@ object GoogleGenAIExample extends IOApp.Simple:
 
       _ <- StructuredLogger[IO].info("Logging initialized")
 
-      callableFunctions = DefaultFunctions[IO]
+      timeFunctions  = DefaultTimeFunctions[IO]
+      alertFunctions = DefaultAlertFunctions[IO]
 
       projectOpt <- Env[IO].get("GOOGLE_CLOUD_PROJECT")
       project    <- projectOpt.liftTo[IO](new RuntimeException("GOOGLE_CLOUD_PROJECT is not set"))
@@ -64,44 +68,44 @@ object GoogleGenAIExample extends IOApp.Simple:
       locationOpt <- Env[IO].get("GOOGLE_CLOUD_LOCATION")
       location     = locationOpt.getOrElse("europe-west4")
 
-      modelOpt <- Env[IO].get("GOOGLE_GENAI_MODEL")
-      model     = modelOpt.getOrElse("gemini-2.5-pro")
-
-      result <- Client
-                  .resource[IO](Client.Config(project = project, location = location))
-                  .use { client =>
-
-                    val dispatcher = Dispatcher.generate[IO, CallableFunctions](callableFunctions)
-
-                    for
-                      decls   <- dispatcher.getFunctionDeclarations
-                      _       <- Logger[IO].info(s"Dispatcher: ${decls.map(_.name).mkString(", ")}")
-                      invoker  = GoogleGenAI.chatCompletion(
-                                   client,
-                                   GoogleGenAI.Config(
-                                     model = model,
-                                     temperature = 2f.some,
-                                     systemPrompt =
-                                       "You are a helpful assistant that can answer questions and help with tasks. Use full function name when replying with function calls.".some
-                                   ),
-                                   decls
-                                 )
-                      handling = HandlingGoogle[IO]
-                      files   <- Files[IO](URI.create("file:///tmp/"))
-                      executor = Executor(
-                                   Stateful[IO, GenerateContentResponse](
-                                     Stateful.Config(functionCallLimit = 5),
-                                     handling,
-                                     invoker,
-                                     files
-                                   )
-                                 )
-                      memory  <- Memory.inMemory[IO, UUID].map(Memory.observed)
-                      _       <- IO.println("Type 'exit' to quit.\n")
-                      _       <- replLoop(dispatcher, executor, memory)
-                    yield ()
-                  }
-                  .handleErrorWith { error => IO.println(s"Error occurred: ${error.getMessage}") }
+      modelOpt  <- Env[IO].get("GOOGLE_GENAI_MODEL")
+      model      = modelOpt.getOrElse("gemini-2.5-pro")
+      _          = println("dispatcher start")
+      dispatcher = Dispatcher.generate[IO](timeFunctions, alertFunctions)
+      _          = println("dispatcher end")
+      // dispatcher end
+      result    <- Client
+                     .resource[IO](Client.Config(project = project, location = location))
+                     .use { client =>
+                       for
+                         decls   <- dispatcher.getFunctionDeclarations
+                         _       <- Logger[IO].info(s"Dispatcher: ${decls.map(_.name).mkString(", ")}")
+                         invoker  = GoogleGenAI.chatCompletion(
+                                      client,
+                                      GoogleGenAI.Config(
+                                        model = model,
+                                        temperature = 2f.some,
+                                        systemPrompt =
+                                          "You are a helpful assistant that can answer questions and help with tasks. Use full function name when replying with function calls.".some
+                                      ),
+                                      decls
+                                    )
+                         handling = HandlingGoogle[IO]
+                         files   <- Files[IO](URI.create("file:///tmp/"))
+                         executor = Executor(
+                                      Stateful[IO, GenerateContentResponse](
+                                        Stateful.Config(functionCallLimit = 5),
+                                        handling,
+                                        invoker,
+                                        files
+                                      )
+                                    )
+                         memory  <- Memory.inMemory[IO, UUID].map(Memory.observed)
+                         _       <- IO.println("Type 'exit' to quit.\n")
+                         _       <- replLoop(dispatcher, executor, memory)
+                       yield ()
+                     }
+                     .handleErrorWith { error => IO.println(s"Error occurred: ${error.getMessage}") }
 
     } yield result
 

@@ -80,7 +80,7 @@ trait Calculator[F[_]]:
 val impl = new Calculator[IO]:
   def add(a: Int, b: Int): IO[Int] = IO.pure(a + b)
 
-val dispatcher = Dispatcher.generate[IO, Calculator](impl)
+val dispatcher = Dispatcher.generate[IO](impl)
 
 val call = FunctionCall(
   name = "calculator_add",
@@ -187,7 +187,7 @@ val calculatorImpl = new Calculator[IO]:
   def multiply(a: Int, b: Int): IO[Int] = IO.pure(a * b)
 
 // Generate a dispatcher (automatically creates JSON schemas and routing)
-val dispatcher = Dispatcher.generate[IO, Calculator](calculatorImpl)
+val dispatcher = Dispatcher.generate[IO](calculatorImpl)
 
 // Use the dispatcher
 val functionCall = FunctionCall(
@@ -380,7 +380,7 @@ class WeatherServiceImpl extends WeatherService[IO]:
     IO.pure(List("New York", "London", "Tokyo"))
 
 // Generate dispatcher (macros do all the work!)
-val dispatcher = Dispatcher.generate[IO, WeatherService](new WeatherServiceImpl)
+val dispatcher = Dispatcher.generate[IO](new WeatherServiceImpl)
 ```
 
 The macro automatically:
@@ -514,7 +514,7 @@ object AssistantApp extends IOApp.Simple:
 
         _ <- Client.resource[IO](apiKey, Client.Config()).use { client =>
           // Generate dispatcher from trait
-          Dispatcher(Dispatcher.generate[IO, AssistantFunctions](
+          Dispatcher(Dispatcher.generate[IO](
             AssistantFunctionsImpl[IO]
           )).flatMap { dispatcher =>
             for
