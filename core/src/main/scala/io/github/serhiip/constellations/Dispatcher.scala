@@ -5,9 +5,11 @@ import scala.quoted.*
 import cats.data.NonEmptyChain
 import cats.data.Validated.{Invalid, Valid}
 import cats.syntax.all.*
-import cats.{Functor, Monad, Show, ~>}
+import cats.{Applicative, Functor, MonadThrow, Show, ~>}
 
 import org.typelevel.log4cats.{LoggerFactory, StructuredLogger}
+import org.typelevel.otel4s.Attribute
+import org.typelevel.otel4s.metrics.{Counter, Meter}
 import org.typelevel.otel4s.trace.Tracer
 
 import io.github.serhiip.constellations.common.*
@@ -24,25 +26,43 @@ object Dispatcher:
     case Response(result: FunctionResponse)
     case HumanInTheLoop
 
-  def apply[F[_]: Tracer: LoggerFactory: Monad](delegate: Dispatcher[F]): F[Dispatcher[F]] = observed(delegate)
+  def apply[F[_]: Tracer: LoggerFactory: MonadThrow: Meter: Applicative](
+      delegate: Dispatcher[F]
+  ): F[Dispatcher[F]] =
+    Meters.create[F].flatMap(observed(delegate, _))
 
-  private def observed[F[_]: Monad: Tracer: LoggerFactory](delegate: Dispatcher[F]): F[Dispatcher[F]] =
+  final case class Meters[F[_]](dispatchSuccess: Counter[F, Long], dispatchError: Counter[F, Long])
+
+  object Meters:
+    def create[F[_]: Meter: Applicative]: F[Meters[F]] =
+      (
+        Meter[F].counter[Long](Observability.Metrics.name("dispatcher_dispatch_success_count")).create,
+        Meter[F].counter[Long](Observability.Metrics.name("dispatcher_dispatch_error_count")).create
+      ).mapN(Meters(_, _))
+
+  private def observed[F[_]: MonadThrow: Tracer: LoggerFactory](
+      delegate: Dispatcher[F],
+      meters: Meters[F]
+  ): F[Dispatcher[F]] =
     LoggerFactory[F].create.map { logger =>
       given StructuredLogger[F] = logger
       new Dispatcher[F]:
         def dispatch(call: FunctionCall): F[Dispatcher.Result] =
-          Tracer[F].span("dispatcher", "dispatch").logged { logger =>
+          val traced = Tracer[F].span("dispatcher", "dispatch")(dispatchSpanAttributes(call)*).logged { logger =>
             for
               _      <- logger.trace(s"Dispatching call: ${call.name}")
               result <- delegate.dispatch(call)
               _      <- logger.trace(s"Dispatch result: $result")
             yield result
           }
+          traced.withOperationCounters(meters.dispatchSuccess, meters.dispatchError)
 
         def getFunctionDeclarations: F[List[FunctionDeclaration]] =
           Tracer[F].span("dispatcher", "get-function-declarations").logged { logger =>
             for
               decls <- delegate.getFunctionDeclarations
+              span  <- Tracer[F].currentSpanOrNoop
+              _     <- span.addAttributes(getFunctionDeclarationsSpanAttributes(decls)*)
               _     <- logger.trace(s"Function declarations: ${decls.map(_.name).mkString(",")}")
             yield decls
           }
@@ -420,3 +440,31 @@ object Dispatcher:
   def mapK[F[_], G[_]](dispatcher: Dispatcher[F])(f: F ~> G): Dispatcher[G] = new Dispatcher[G]:
     def dispatch(call: FunctionCall): G[Dispatcher.Result]    = f(dispatcher.dispatch(call))
     def getFunctionDeclarations: G[List[FunctionDeclaration]] = f(dispatcher.getFunctionDeclarations)
+
+  private def getFunctionDeclarationsSpanAttributes(decls: List[FunctionDeclaration]): List[Attribute[?]] =
+    Attribute("function_declaration_count", decls.size.toLong) ::
+      decls.zipWithIndex.map { case (d, i) =>
+        Attribute(s"function_declaration.$i", d.name)
+      }
+
+  private def dispatchSpanAttributes(call: FunctionCall): List[Attribute[?]] =
+    val nameAttr = Attribute("function_name", call.name)
+    val idAttrs  = call.callId.toList.map(id => Attribute("function_call_id", id))
+    nameAttr :: (idAttrs ++ structFieldsAsAttributes(call.args, "function"))
+
+  private def structFieldsAsAttributes(struct: Struct, prefix: String): List[Attribute[?]] =
+    struct.fields.toList.flatMap { case (key, value) =>
+      valueAsAttributes(value, s"$prefix.$key")
+    }
+
+  private def valueAsAttributes(value: Value, path: String): List[Attribute[?]] =
+    value match
+      case Value.NullValue            => List(Attribute(path, "null"))
+      case Value.NumberValue(n)       => List(Attribute(path, n.toString))
+      case Value.StringValue(s)       => List(Attribute(path, s))
+      case Value.BoolValue(b)         => List(Attribute(path, b.toString))
+      case Value.StructValue(inner)   => structFieldsAsAttributes(inner, path)
+      case Value.ListValue(elements)  =>
+        elements.zipWithIndex.toList.flatMap { case (elem, idx) =>
+          valueAsAttributes(elem, s"$path.$idx")
+        }

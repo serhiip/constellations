@@ -11,6 +11,7 @@ import cats.syntax.all.*
 
 import org.typelevel.log4cats.LoggerFactory
 import org.typelevel.log4cats.slf4j.Slf4jFactory
+import org.typelevel.otel4s.metrics.Meter.Implicits.noop
 import org.typelevel.otel4s.trace.Tracer
 import org.typelevel.otel4s.trace.Tracer.Implicits.noop
 
@@ -61,38 +62,39 @@ object DispatcherEncodingExample extends IOApp.Simple:
         _                          <- Client
                                         .resource[IO](apiKey, Client.Config())
                                         .use { client =>
-                                          Dispatcher(Dispatcher.generate[IO](
-                                            ExampleFunctionsImpl[IO],
-                                            DiagnosticFunctionsDefault[IO]
-                                          )).flatMap { dispatcher =>
-                                            for
-                                              decls      <- dispatcher.getFunctionDeclarations
-                                              rawInvoker  = OpenRouter.chatCompletion(
-                                                              client,
-                                                              OpenRouter.Config(
-                                                                model = model,
-                                                                temperature = 0.7.some,
-                                                                systemPrompt =
-                                                                  "You are a helpful assistant. Use the provided tools when relevant. Use full function names for tool calls.".some
-                                                              ),
-                                                              decls
+                                          for
+                                            dispatcher <- Dispatcher(
+                                                            Dispatcher.generate[IO](
+                                                              ExampleFunctionsImpl[IO],
+                                                              DiagnosticFunctionsDefault[IO]
                                                             )
-                                              invoker     = Invoker(rawInvoker)
-                                              handling    = ORHandling[IO]()
-                                              files      <- Files[IO](URI.create("file:///tmp/"))
-                                              rawExecutor = Stateful[IO, ChatCompletionResponse](
-                                                              Stateful.Config(functionCallLimit = 5),
-                                                              handling,
-                                                              invoker,
-                                                              files
-                                                            )
-                                              executor    = Executor(rawExecutor)
-                                              rawMemory  <- Memory.inMemory[IO, UUID]
-                                              memory      <- Memory(rawMemory)
-                                              _          <- IO.println("Dispatcher encoding example with OpenRouter. Type 'exit' to quit.\n")
-                                              _          <- replLoop(dispatcher, executor, memory)
-                                            yield ()
-                                          }
+                                                          )
+                                            decls      <- dispatcher.getFunctionDeclarations
+                                            rawInvoker  = OpenRouter.chatCompletion(
+                                                            client,
+                                                            OpenRouter.Config(
+                                                              model = model,
+                                                              temperature = 0.7.some,
+                                                              systemPrompt =
+                                                                "You are a helpful assistant. Use the provided tools when relevant. Use full function names for tool calls.".some
+                                                            ),
+                                                            decls
+                                                          )
+                                            invoker     = Invoker(rawInvoker)
+                                            handling    = ORHandling[IO]()
+                                            files      <- Files[IO](URI.create("file:///tmp/"))
+                                            rawExecutor = Stateful[IO, ChatCompletionResponse](
+                                                            Stateful.Config(functionCallLimit = 5),
+                                                            handling,
+                                                            invoker,
+                                                            files
+                                                          )
+                                            executor    = Executor(rawExecutor)
+                                            rawMemory  <- Memory.inMemory[IO, UUID]
+                                            memory      <- Memory(rawMemory)
+                                            _          <- IO.println("Dispatcher encoding example with OpenRouter. Type 'exit' to quit.\n")
+                                            _          <- replLoop(dispatcher, executor, memory)
+                                          yield ()
                                         }
       yield ()
     }.handleErrorWith(err => IO.println(s"Error: ${err.getMessage}"))
