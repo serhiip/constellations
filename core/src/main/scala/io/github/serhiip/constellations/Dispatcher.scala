@@ -56,14 +56,56 @@ object Dispatcher:
     def getFunctionDeclarations: F[List[FunctionDeclaration]] = List.empty.pure[F]
 
   @experimental
+  inline def to[F[_], T[_[_]]]: T[F] => Dispatcher[F] = ${ macroImplTo[F, T] }
+
+  @experimental
   inline def generate[F[_]](inline component: Any, inline optionalOtherComponents: Any*): Dispatcher[F] =
     ${ macroImpl[F]('component, 'optionalOtherComponents) }
 
   @experimental
-  private def macroImpl[F[_]: Type](componentExpr: Expr[Any], optionalExpr: Expr[Seq[Any]])(using quotes: Quotes): Expr[Dispatcher[F]] =
-    import quotes.reflect.*
+  private def macroImplTo[F[_]: Type, T[F[_]]: Type](using quotes: Quotes): Expr[T[F] => Dispatcher[F]] =
+    MacroSupport.buildFromTrait[F, T]
 
-    def getCaseClassFields(tpe: TypeRepr): List[(String, TypeRepr, Boolean, Option[String])] =
+  @experimental
+  private def macroImpl[F[_]: Type](componentExpr: Expr[Any], optionalExpr: Expr[Seq[Any]])(using quotes: Quotes): Expr[Dispatcher[F]] =
+    MacroSupport.buildFromComponents[F](componentExpr, optionalExpr)
+
+  @experimental
+  private object MacroSupport:
+    def buildFromTrait[F[_]: Type, T[F[_]]: Type](using Quotes): Expr[T[F] => Dispatcher[F]] =
+      import quotes.reflect.*
+      val traitSym = TypeRepr.of[T].typeSymbol
+      if !traitSym.flags.is(Flags.Trait) then report.errorAndAbort(s"${traitSym.fullName} is not a trait.", Position.ofMacroExpansion)
+
+      val methodType = MethodType(List("instance"))(
+        _ => List(TypeRepr.of[T[F]]),
+        _ => TypeRepr.of[Dispatcher[F]]
+      )
+
+      val lambda = Lambda(
+        Symbol.spliceOwner,
+        methodType,
+        (owner, params) =>
+          val instanceTerm = params.headOption match
+            case Some(term: Term) => term
+            case Some(other)      => report.errorAndAbort(s"Expected a term parameter, got: ${other.show}", other.pos)
+            case None             => report.errorAndAbort("Expected a single parameter for dispatcher lambda.", Position.ofMacroExpansion)
+          buildDispatcherExpr[F](List((instanceTerm, traitSym))).asTerm.changeOwner(owner)
+      )
+
+      lambda.asExprOf[T[F] => Dispatcher[F]]
+
+    def buildFromComponents[F[_]: Type](componentExpr: Expr[Any], optionalExpr: Expr[Seq[Any]])(using Quotes): Expr[Dispatcher[F]] =
+      import quotes.reflect.*
+      val components    = componentExpr.asTerm :: extractComponents(optionalExpr)
+      val componentInfo = components.map { term =>
+        val traitSym = resolveComponentTrait[F](term.tpe, term.pos)
+        (term, traitSym)
+      }
+      buildDispatcherExpr[F](componentInfo)
+
+    def getCaseClassFields(using Quotes)(tpe: quotes.reflect.TypeRepr): List[(String, quotes.reflect.TypeRepr, Boolean, Option[String])] =
+      import quotes.reflect.*
       tpe.typeSymbol.caseFields.map { field =>
         val fieldName  = field.name
         val fieldTpe   = tpe.memberType(field)
@@ -72,7 +114,8 @@ object Dispatcher:
         (fieldName, fieldTpe, !isOptional, docstring)
       }.toList
 
-    def tpeToSchema(tpe: TypeRepr, posOpt: Option[Position]): Expr[Schema] =
+    def tpeToSchema(using Quotes)(tpe: quotes.reflect.TypeRepr, posOpt: Option[quotes.reflect.Position]): Expr[Schema] =
+      import quotes.reflect.*
       val errorPos = posOpt.getOrElse(Position.ofMacroExpansion)
       tpe.widen.simplified match
         case t if t =:= TypeRepr.of[String]                                                => '{ Schema.string() }
@@ -96,7 +139,7 @@ object Dispatcher:
         case other                                                                         =>
           report.errorAndAbort(s"Unsupported parameter type for schema generation: ${other.show}", errorPos)
 
-    def processCaseClassSchema(tpe: TypeRepr, posOpt: Option[Position]): Expr[Schema] =
+    def processCaseClassSchema(using Quotes)(tpe: quotes.reflect.TypeRepr, posOpt: Option[quotes.reflect.Position]): Expr[Schema] =
       val fields = getCaseClassFields(tpe)
 
       val propertiesExprs = fields.map { case (name, fieldTpe, _, docstring) =>
@@ -120,7 +163,8 @@ object Dispatcher:
         )
       }
 
-    def processEnumSchema(tpe: TypeRepr): Expr[Schema] =
+    def processEnumSchema(using Quotes)(tpe: quotes.reflect.TypeRepr): Expr[Schema] =
+      import quotes.reflect.*
       val sym          = tpe.typeSymbol
       val children     =
         if sym.flags.is(Flags.Enum) then
@@ -132,7 +176,10 @@ object Dispatcher:
       val childrenExpr = Expr(children.toList)
       '{ Schema.string(enm = $childrenExpr) }
 
-    def processMethodForDeclaration(traitSym: Symbol)(method: Symbol): Expr[FunctionDeclaration] =
+    def processMethodForDeclaration(using Quotes)(traitSym: quotes.reflect.Symbol)(
+        method: quotes.reflect.Symbol
+    ): Expr[FunctionDeclaration] =
+      import quotes.reflect.*
       val convertedMethodName = methodName(method.name)
       val qualifiedName       = s"${componentName(traitSym.name)}_$convertedMethodName"
       val docstring           = method.docstring
@@ -174,7 +221,8 @@ object Dispatcher:
         )
       }
 
-    def getMethodDeclarations(traitSym: Symbol): Expr[List[FunctionDeclaration]] =
+    def getMethodDeclarations(using Quotes)(traitSym: quotes.reflect.Symbol): Expr[List[FunctionDeclaration]] =
+      import quotes.reflect.*
       val methods = traitSym.declarations.filter(m =>
         m.isDefDef && !m.flags.is(Flags.Private) && !m.flags.is(Flags.Protected) && !m.flags.is(
           Flags.Synthetic
@@ -185,9 +233,11 @@ object Dispatcher:
       )
       Expr.ofList(methods.map(processMethodForDeclaration(traitSym)))
 
-    def processMethodForDispatch(repr: TypeRepr, from: Term)(
-        method: Symbol
-    ): (String, Expr[FunctionCall => F[Dispatcher.Result]]) =
+    def processMethodForDispatch[F[_]: Type](using Quotes)(
+        repr: quotes.reflect.TypeRepr,
+        from: quotes.reflect.Term
+    )(method: quotes.reflect.Symbol): (String, Expr[FunctionCall => F[Dispatcher.Result]]) =
+      import quotes.reflect.*
       val qualifiedName: String = s"${componentName(repr.typeSymbol.name)}_${methodName(method.name)}"
       qualifiedName -> '{ (call: FunctionCall) =>
         ${
@@ -262,7 +312,11 @@ object Dispatcher:
         }
       }
 
-    def processMethodsForDispatch(symbol: Symbol, term: Term) =
+    def processMethodsForDispatch[F[_]: Type](using Quotes)(
+        symbol: quotes.reflect.Symbol,
+        term: quotes.reflect.Term
+    ) =
+      import quotes.reflect.*
       val methods = symbol.declarations.filter(m =>
         m.isDefDef && !m.flags.is(Flags.Private) && !m.flags.is(Flags.Protected) && !m.flags.is(
           Flags.Synthetic
@@ -272,9 +326,10 @@ object Dispatcher:
           ) && !m.flags.is(Flags.StableRealizable)
       )
       if methods.isEmpty then report.warning(s"Component ${symbol.fullName} has no public methods to route.", term.pos)
-      methods.map(processMethodForDispatch(symbol.typeRef.dealias, term))
+      methods.map(processMethodForDispatch[F](symbol.typeRef.dealias, term))
 
-    def hasEffectType(tpe: TypeRepr): Boolean =
+    def hasEffectType[F[_]: Type](using Quotes)(tpe: quotes.reflect.TypeRepr): Boolean =
+      import quotes.reflect.*
       tpe.dealias.simplified match
         case AppliedType(_, args) =>
           args match
@@ -282,12 +337,13 @@ object Dispatcher:
             case _         => false
         case _                    => false
 
-    def resolveComponentTrait(tpe: TypeRepr, pos: Position): Symbol =
+    def resolveComponentTrait[F[_]: Type](using Quotes)(tpe: quotes.reflect.TypeRepr, pos: quotes.reflect.Position): quotes.reflect.Symbol =
+      import quotes.reflect.*
       val baseType   = tpe.widen.dealias
       val candidates = baseType.baseClasses.flatMap { sym =>
         if sym.flags.is(Flags.Trait) then
           val applied = baseType.baseType(sym).dealias
-          if hasEffectType(applied) then Some(sym) else None
+          if hasEffectType[F](applied) then Some(sym) else None
         else None
       }.distinct
       candidates match
@@ -303,7 +359,8 @@ object Dispatcher:
             pos
           )
 
-    def extractComponents(expr: Expr[Seq[Any]]): List[Term] =
+    def extractComponents(using Quotes)(expr: Expr[Seq[Any]]): List[quotes.reflect.Term] =
+      import quotes.reflect.*
       expr match
         case Varargs(args) => args.toList.map(_.asTerm)
         case _             =>
@@ -327,39 +384,36 @@ object Dispatcher:
               )
           loop(expr.asTerm, Map.empty)
 
-    val components = componentExpr.asTerm :: extractComponents(optionalExpr)
+    def buildDispatcherExpr[F[_]: Type](using Quotes)(
+        componentInfo: List[(quotes.reflect.Term, quotes.reflect.Symbol)]
+    ): Expr[Dispatcher[F]] =
+      import quotes.reflect.*
+      val functionDeclarationsExpr =
+        componentInfo
+          .map { case (_, traitSym) => getMethodDeclarations(traitSym) }
+          .reduceLeftOption((left, right) => '{ $left ++ $right })
+          .getOrElse('{ List.empty[FunctionDeclaration] })
 
-    val componentInfo = components.map { term =>
-      val traitSym = resolveComponentTrait(term.tpe, term.pos)
-      (term, traitSym)
-    }
+      val callables = componentInfo.flatMap { case (term, traitSym) => processMethodsForDispatch[F](traitSym, term) }
 
-    val functionDeclarationsExpr =
-      componentInfo
-        .map { case (_, traitSym) => getMethodDeclarations(traitSym) }
-        .reduceLeftOption((left, right) => '{ $left ++ $right })
-        .getOrElse('{ List.empty[FunctionDeclaration] })
+      '{
+        new Dispatcher[F]:
 
-    val callables = componentInfo.flatMap { case (term, traitSym) => processMethodsForDispatch(traitSym, term) }
+          private val methodMap: Map[String, FunctionCall => F[Dispatcher.Result]] = Map(
+            ${ Expr.ofList(callables.map { case (k, v) => '{ ${ Expr(k) } -> ${ v } } }) }*
+          )
 
-    '{
-      new Dispatcher[F]:
+          def dispatch(call: FunctionCall): F[Dispatcher.Result] =
+            methodMap.getOrElse(call.name, throw RuntimeException(s"No handler for ${call.name}"))(call)
 
-        private val methodMap: Map[String, FunctionCall => F[Dispatcher.Result]] = Map(
-          ${ Expr.ofList(callables.map { case (k, v) => '{ ${ Expr(k) } -> ${ v } } }) }*
-        )
-
-        def dispatch(call: FunctionCall): F[Dispatcher.Result] =
-          methodMap.getOrElse(call.name, throw RuntimeException(s"No handler for ${call.name}"))(call)
-
-        def getFunctionDeclarations: F[List[FunctionDeclaration]] = ${
-          val app = Expr
-            .summon[cats.Applicative[F]]
-            .getOrElse(report.errorAndAbort("No cats.Applicative given found for F", Position.ofMacroExpansion))
-          '{ $app.pure($functionDeclarationsExpr) }
-        }
-    }
+          def getFunctionDeclarations: F[List[FunctionDeclaration]] = ${
+            val app = Expr
+              .summon[cats.Applicative[F]]
+              .getOrElse(report.errorAndAbort("No cats.Applicative given found for F", Position.ofMacroExpansion))
+            '{ $app.pure($functionDeclarationsExpr) }
+          }
+      }
 
   def mapK[F[_], G[_]](dispatcher: Dispatcher[F])(f: F ~> G): Dispatcher[G] = new Dispatcher[G]:
-    def dispatch(call: FunctionCall): G[Dispatcher.Result]             = f(dispatcher.dispatch(call))
-    def getFunctionDeclarations: G[List[FunctionDeclaration]]          = f(dispatcher.getFunctionDeclarations)
+    def dispatch(call: FunctionCall): G[Dispatcher.Result]    = f(dispatcher.dispatch(call))
+    def getFunctionDeclarations: G[List[FunctionDeclaration]] = f(dispatcher.getFunctionDeclarations)

@@ -104,6 +104,7 @@ class DispatcherTest extends CatsEffectSuite:
 
   val impl       = new TestApiImpl
   val dispatcher = Dispatcher.generate[IO](impl)
+  val typedDispatcher = Dispatcher.to[IO, TestApi](impl)
   val greeting   = new GreetingApiStub
   val multiDispatcher = Dispatcher.generate[IO](impl, greeting)
 
@@ -217,6 +218,20 @@ class DispatcherTest extends CatsEffectSuite:
     yield
       assertEquals(extractString(testResponse), "no params")
       assertEquals(extractString(greetingResponse), "Hello, Ada")
+  }
+
+  test("dispatcher to should dispatch for single trait") {
+    val call = createFunctionCall("TestApi_no_params")
+    typedDispatcher.dispatch(call).map(response => assertEquals(extractString(response), "no params"))
+  }
+
+  test("dispatcher to should match generate declarations") {
+    for
+      typedDeclsRaw <- typedDispatcher.getFunctionDeclarations
+      typedDecls     = typedDeclsRaw.sortBy(_.name)
+      generatedRaw  <- dispatcher.getFunctionDeclarations
+      generated      = generatedRaw.sortBy(_.name)
+    yield assertEquals(typedDecls, generated)
   }
 
   test("getFunctionDeclarations should include multiple components") {
