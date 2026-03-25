@@ -28,7 +28,6 @@ ThisBuild / versionScheme          := Some("early-semver")
 lazy val root = (project in file("."))
   .settings(
     name              := "constellations",
-    scalacOptions += "-experimental",
     semanticdbVersion := scalafixSemanticdb.revision,
     publish / skip    := true
   )

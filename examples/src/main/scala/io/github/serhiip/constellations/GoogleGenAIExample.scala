@@ -45,7 +45,6 @@ class DefaultAlertFunctions[F[_]: Functor: Logger] extends AlertFunctions[F]:
       .info(s"ALERT: $text")
       .as(AlertResult(text))
 
-@scala.annotation.experimental
 object GoogleGenAIExample extends IOApp.Simple:
   def run: IO[Unit] =
 

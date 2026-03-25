@@ -3,7 +3,6 @@ package io.github.serhiip.constellations
 import java.net.URI
 import java.util.UUID
 
-import scala.annotation.experimental
 
 import cats.Applicative
 import cats.effect.{IO, IOApp}
@@ -50,7 +49,6 @@ class DiagnosticFunctionsDefault[F[_]: Applicative] extends DiagnosticFunctions[
   def ping(): F[String] =
     "pong".pure[F]
 
-@experimental
 object DispatcherEncodingExample extends IOApp.Simple:
   def run: IO[Unit] =
     val factory = Slf4jFactory.create[IO]

@@ -1,6 +1,5 @@
 package io.github.serhiip.constellations
 
-import scala.annotation.experimental
 import scala.quoted.*
 
 import cats.data.NonEmptyChain
@@ -14,7 +13,7 @@ import org.typelevel.otel4s.trace.Tracer
 import io.github.serhiip.constellations.common.*
 import io.github.serhiip.constellations.common.Observability.*
 import io.github.serhiip.constellations.dispatcher.*
-import io.github.serhiip.constellations.dispatcher.naming.SnakeCaseNamingStrategy._
+import io.github.serhiip.constellations.dispatcher.naming.SnakeCaseNamingStrategy.*
 
 trait Dispatcher[F[_]]:
   def dispatch(call: FunctionCall): F[Dispatcher.Result]
@@ -55,22 +54,17 @@ object Dispatcher:
 
     def getFunctionDeclarations: F[List[FunctionDeclaration]] = List.empty.pure[F]
 
-  @experimental
   inline def to[F[_], T[_[_]]]: T[F] => Dispatcher[F] = ${ macroImplTo[F, T] }
 
-  @experimental
   inline def generate[F[_]](inline component: Any, inline optionalOtherComponents: Any*): Dispatcher[F] =
     ${ macroImpl[F]('component, 'optionalOtherComponents) }
 
-  @experimental
   private def macroImplTo[F[_]: Type, T[F[_]]: Type](using quotes: Quotes): Expr[T[F] => Dispatcher[F]] =
     MacroSupport.buildFromTrait[F, T]
 
-  @experimental
   private def macroImpl[F[_]: Type](componentExpr: Expr[Any], optionalExpr: Expr[Seq[Any]])(using quotes: Quotes): Expr[Dispatcher[F]] =
     MacroSupport.buildFromComponents[F](componentExpr, optionalExpr)
 
-  @experimental
   private object MacroSupport:
     def buildFromTrait[F[_]: Type, T[F[_]]: Type](using Quotes): Expr[T[F] => Dispatcher[F]] =
       import quotes.reflect.*
@@ -184,6 +178,11 @@ object Dispatcher:
       val qualifiedName       = s"${componentName(traitSym.name)}_$convertedMethodName"
       val docstring           = method.docstring
 
+      def paramType(param: Symbol): TypeRepr =
+        param.tree match
+          case valDef: ValDef => valDef.tpt.tpe
+          case other          => report.errorAndAbort(s"Expected ValDef for parameter '${param.name}', got: ${other.show}", other.pos)
+
       val params = method.paramSymss.headOption.getOrElse(List.empty).filterNot(_.isTypeParam)
 
       val parametersSchemaExpr =
@@ -191,7 +190,7 @@ object Dispatcher:
         else
           val propertiesExprs = params.map { param =>
             val paramName       = parameterName(param.name)
-            val paramTpe        = param.info
+            val paramTpe        = paramType(param)
             val paramSchemaExpr = tpeToSchema(paramTpe, param.pos)
             val doc             = param.docstring
             val schemaWithDesc  = doc match
@@ -201,7 +200,7 @@ object Dispatcher:
           }
 
           val requiredExprs = params
-            .filterNot(_.info <:< TypeRepr.of[Option[Any]])
+            .filterNot(param => paramType(param) <:< TypeRepr.of[Option[Any]])
             .map(p => Expr(parameterName(p.name)))
 
           '{
@@ -238,20 +237,24 @@ object Dispatcher:
         from: quotes.reflect.Term
     )(method: quotes.reflect.Symbol): (String, Expr[FunctionCall => F[Dispatcher.Result]]) =
       import quotes.reflect.*
-      val qualifiedName: String = s"${componentName(repr.typeSymbol.name)}_${methodName(method.name)}"
+      val qualifiedName: String              = s"${componentName(repr.typeSymbol.name)}_${methodName(method.name)}"
+      def paramType(param: Symbol): TypeRepr =
+        param.tree match
+          case valDef: ValDef => valDef.tpt.tpe
+          case other          => report.errorAndAbort(s"Expected ValDef for parameter '${param.name}', got: ${other.show}", other.pos)
       qualifiedName -> '{ (call: FunctionCall) =>
         ${
           val params = method.paramSymss.headOption.getOrElse(List.empty).filterNot(_.isTypeParam)
 
           val argExprs = params.map { param =>
-            param.info.asType match
+            paramType(param).asType match
               case '[t] =>
                 val decoder   =
                   Expr
                     .summon[Decoder[Value, t]]
                     .getOrElse(
                       report.errorAndAbort(
-                        s"No Decoder[Value, ${param.info.show}] found for parameter '${param.name}' in '${method.fullName}'"
+                        s"No Decoder[Value, ${paramType(param).show}] found for parameter '${param.name}' in '${method.fullName}'"
                       )
                     )
                 val paramName = Expr(parameterName(param.name))
@@ -259,12 +262,12 @@ object Dispatcher:
                   call.args.fields.get($paramName) match
                     case Some(value) => $decoder.decode(value, $paramName)
                     case None        =>
-                      if ${ Expr(param.info <:< TypeRepr.of[Option[Any]]) } then Valid(None)
+                      if ${ Expr(paramType(param) <:< TypeRepr.of[Option[Any]]) } then Valid(None)
                       else Invalid(NonEmptyChain(Decoder.Error.MissingField($paramName)))
                 }
               case _    =>
                 report.errorAndAbort(
-                  s"Unsupported parameter type in match: ${param.info.show}",
+                  s"Unsupported parameter type in match: ${paramType(param).show}",
                   Symbol.spliceOwner.pos.get
                 )
           }
@@ -276,7 +279,7 @@ object Dispatcher:
               ${
                 val terms      =
                   params.zipWithIndex.map { case (param, idx) =>
-                    param.info.asType match
+                    paramType(param).asType match
                       case '[t] => '{ args(${ Expr(idx) }).asInstanceOf[t] }.asExprOf[t].asTerm
                   }
                 val applied    = Apply(Select(from, method), terms)

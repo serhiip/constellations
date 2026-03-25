@@ -3,7 +3,6 @@ package io.github.serhiip.constellations
 import java.time.OffsetDateTime
 import java.util.UUID
 
-import scala.annotation.experimental
 
 import cats.effect.IO
 import io.github.serhiip.constellations.common.*
@@ -61,7 +60,6 @@ class GreetingApiStub extends GreetingApi[IO]:
   def greet(name: String): IO[String] =
     IO.pure(s"Hello, $name")
 
-@experimental
 class DispatcherTest extends CatsEffectSuite:
 
   private def convertValue(value: Any): Value = value match
