@@ -73,7 +73,6 @@ object GoogleGenAIExample extends IOApp.Simple:
       _          = println("dispatcher start")
       dispatcher = Dispatcher.generate[IO](timeFunctions, alertFunctions)
       _          = println("dispatcher end")
-      // dispatcher end
       result    <- Client
                      .resource[IO](Client.Config(project = project, location = location))
                      .use { client =>

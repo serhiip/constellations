@@ -20,8 +20,6 @@ trait Dispatcher[F[_]]:
   def dispatch(call: FunctionCall): F[Dispatcher.Result]
   def getFunctionDeclarations: F[List[FunctionDeclaration]]
 
-  def mapK[G[_]](f: F ~> G): Dispatcher[G]
-
 object Dispatcher:
   enum Result:
     case Response(result: FunctionResponse)
@@ -49,8 +47,6 @@ object Dispatcher:
               _     <- logger.trace(s"Function declarations: ${decls.map(_.name).mkString(",")}")
             yield decls
           }
-
-        override def mapK[G[_]](f: F ~> G): Dispatcher[G] = Dispatcher.mapK(this)(f)
     }
 
   def noop[F[_]: cats.Applicative]: Dispatcher[F] = new Dispatcher[F]:
@@ -58,8 +54,6 @@ object Dispatcher:
       throw new UnsupportedOperationException(s"Noop dispatcher does not support dispatching calls: ${call.name}")
 
     def getFunctionDeclarations: F[List[FunctionDeclaration]] = List.empty.pure[F]
-
-    override def mapK[G[_]](f: F ~> G): Dispatcher[G] = Dispatcher.mapK(this)(f)
 
   @experimental
   inline def generate[F[_]](inline component: Any, inline optionalOtherComponents: Any*): Dispatcher[F] =
@@ -364,11 +358,8 @@ object Dispatcher:
             .getOrElse(report.errorAndAbort("No cats.Applicative given found for F", Position.ofMacroExpansion))
           '{ $app.pure($functionDeclarationsExpr) }
         }
-
-        override def mapK[G[_]](f: F ~> G): Dispatcher[G] = Dispatcher.mapK(this)(f)
     }
 
   def mapK[F[_], G[_]](dispatcher: Dispatcher[F])(f: F ~> G): Dispatcher[G] = new Dispatcher[G]:
-    override def dispatch(call: FunctionCall): G[Dispatcher.Result]    = f(dispatcher.dispatch(call))
-    override def getFunctionDeclarations: G[List[FunctionDeclaration]] = f(dispatcher.getFunctionDeclarations)
-    override def mapK[H[_]](g: G ~> H): Dispatcher[H]                  = Dispatcher.mapK(this)(g)
+    def dispatch(call: FunctionCall): G[Dispatcher.Result]             = f(dispatcher.dispatch(call))
+    def getFunctionDeclarations: G[List[FunctionDeclaration]]          = f(dispatcher.getFunctionDeclarations)
