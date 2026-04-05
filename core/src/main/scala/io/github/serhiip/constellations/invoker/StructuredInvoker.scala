@@ -1,37 +1,45 @@
 package io.github.serhiip.constellations.invoker
 
-import cats.Monad
-import cats.data.NonEmptyChain as NEC
-import cats.syntax.flatMap.*
-import cats.syntax.functor.*
-import cats.syntax.option.*
+import cats.{MonadThrow, Monad}
 import org.typelevel.log4cats.StructuredLogger
 import org.typelevel.otel4s.trace.Tracer
 
-import io.github.serhiip.constellations.Invoker
+import io.github.serhiip.constellations.{Handling, Invoker}
 import io.github.serhiip.constellations.common.*
-import io.github.serhiip.constellations.common.Observability.*
+import io.github.serhiip.constellations.dispatcher.Decoder
 import io.github.serhiip.constellations.schema.ToSchema
-import org.typelevel.otel4s.Attribute
+import cats.data.NonEmptyChain as NEC
+import cats.syntax.all.*
+import io.github.serhiip.constellations.common.Observability.*
 
-abstract class StructuredInvoker[F[_], T: ToSchema](val underlying: Invoker[F, T]):
-  private[StructuredInvoker] val schema       = ToSchema[T].schema
-  def structured(history: NEC[Message]): F[T] = underlying.generate(history, schema.some)
+trait StructuredInvoker[F[_], R, T: ToSchema] extends Invoker[F, T]:
+  protected val schema: Schema = ToSchema[T].schema
 
 object StructuredInvoker:
-  def apply[F[_]: Tracer: StructuredLogger: Monad, T: ToSchema](delegate: StructuredInvoker[F, T]): StructuredInvoker[F, T] =
-    observed(delegate)
+  enum Error(message: String) extends RuntimeException(message):
+    case StructuredDecodingFailed(errors: NEC[Decoder.Error]) extends Error(errors.toNonEmptyList.toList.map(_.show).mkString("; "))
 
-  private def observed[F[_]: Monad: Tracer: StructuredLogger, T: ToSchema](delegate: StructuredInvoker[F, T]): StructuredInvoker[F, T] =
-    new StructuredInvoker[F, T](delegate.underlying):
-      override def structured(history: NEC[Message]): F[T] =
+  def apply[F[_]: MonadThrow, R, T: ToSchema: Decoder.FromStruct](
+      delegate: Invoker[F, R],
+      handling: Handling[F, R]
+  ): StructuredInvoker[F, R, T] = new:
+
+    private val responseAsStruct = delegate.generate andThenF handling.structuredOutput
+
+    override def generate(history: NEC[Message]): F[T] =
+      for
+        struct <- responseAsStruct(history)
+        value  <- Decoder[Struct, T].decode(struct).leftMap(StructuredInvoker.Error.StructuredDecodingFailed.apply).liftTo[F]
+      yield value
+
+  def observed[F[_]: Monad: Tracer: StructuredLogger, R, T: ToSchema](delegate: StructuredInvoker[F, R, T]): StructuredInvoker[F, R, T] =
+    new:
+      override def generate(history: NEC[Message]): F[T] =
         Tracer[F]
-          .span("invoker", "structured")
+          .span("structured-invoker", "generate")
           .logged: logger =>
             for
-              _      <- logger.trace(s"Generating structured with ${history.length} messages in history using ${schema}")
-              span   <- Tracer[F].currentSpanOrNoop
-              _      <- span.addAttribute(Attribute("response_schema", schema.toString))
-              result <- delegate.structured(history)
-              _      <- logger.trace(s"Structured result: $result")
+              _      <- logger.debug(s"Using $schema")
+              result <- delegate.generate(history)
+              _      <- logger.trace(s"Generated: $result")
             yield result
