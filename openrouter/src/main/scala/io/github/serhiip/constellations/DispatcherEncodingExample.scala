@@ -80,7 +80,7 @@ object DispatcherEncodingExample extends IOApp.Simple:
                                                             ),
                                                             decls
                                                           )
-                                            invoker     = Invoker(rawInvoker)
+                                            invoker     <- Invoker.observed(rawInvoker)
                                             handling    = ORHandling[IO]()
                                             files      <- Files[IO](URI.create("file:///tmp/"))
                                             rawExecutor = Stateful[IO, ChatCompletionResponse](

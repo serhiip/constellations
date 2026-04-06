@@ -16,6 +16,8 @@ trait Decoder[P, A]:
   def decode(proto: P, path: String = "root"): ValidatedNec[Decoder.Error, A]
 
 object Decoder:
+  type FromStruct[A] = Decoder[Struct, A]
+
   def apply[P, A](using d: Decoder[P, A]): Decoder[P, A] = d
 
   enum Error(val path: String):

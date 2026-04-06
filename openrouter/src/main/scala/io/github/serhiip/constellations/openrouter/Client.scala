@@ -332,6 +332,45 @@ case class CompletionResponse(
     usage: ChatCompletionUsage
 ) derives ConfiguredCodec
 
+case class EmbeddingsRequest(model: String, input: Json) derives ConfiguredCodec
+
+given Codec[EmbeddingsRequest] =
+  val c = ConfiguredCodec.derived[EmbeddingsRequest]
+  Codec.from(c, c.mapJson(_.deepDropNullValues))
+
+case class EmbeddingData(
+    `object`: String,
+    embedding: List[Float],
+    index: Int
+)
+
+object EmbeddingData:
+  given Codec[EmbeddingData] = Codec.from(
+    Decoder.instance { c =>
+      for
+        obj <- c.downField("object").as[String]
+        emb <- c.downField("embedding").as[List[Double]].map(_.map(_.toFloat))
+        idx <- c.downField("index").as[Int]
+      yield EmbeddingData(obj, emb, idx)
+    },
+    Encoder.instance { d =>
+      Json.obj(
+        "object"    -> Json.fromString(d.`object`),
+        "embedding" -> Json.arr(d.embedding.map(f => Json.fromFloat(f).getOrElse(Json.Null))*),
+        "index"     -> Json.fromInt(d.index)
+      )
+    }
+  )
+
+case class EmbeddingsUsage(promptTokens: Int, totalTokens: Int) derives ConfiguredCodec
+
+case class EmbeddingsResponse(
+    `object`: String,
+    data: List[EmbeddingData],
+    model: String,
+    usage: EmbeddingsUsage
+) derives ConfiguredCodec
+
 case class GenerationStats(
     id: String,
     totalCost: Double,
@@ -384,6 +423,7 @@ object Tool:
 trait Client[F[_]]:
   def createChatCompletion(request: ChatCompletionRequest): F[ChatCompletionResponse]
   def createCompletion(request: CompletionRequest): F[CompletionResponse]
+  def createEmbeddings(request: EmbeddingsRequest): F[EmbeddingsResponse]
   def listModels(): F[ModelsResponse]
   def getGenerationStats(generationId: String): F[GenerationStats]
 
@@ -496,6 +536,26 @@ object Client:
               _      <- logger.trace(
                           s"Completion created with ${result.choices.size} choices, used ${result.usage.totalTokens} tokens"
                         )
+            yield result
+
+      def createEmbeddings(request: EmbeddingsRequest): F[EmbeddingsResponse] =
+        val modelAttr     = Attribute("model", request.model)
+        val operationAttr = Attribute("operation", "embeddings")
+        val attrs         = List(modelAttr, operationAttr)
+        Tracer[F]
+          .span("openrouter-client", "create-embeddings")(attrs*)
+          .logged: logger =>
+            for
+              _      <- logger.trace(s"Creating embeddings for model ${request.model}")
+              _      <- meters.traverse_(_.requestCounter.inc(attrs*))
+              result <- delegate.createEmbeddings(request).onError {
+                          case e: Client.Error => addResponseStatus(e).flatTap(_ => recordClientError(attrs, e))
+                          case _               => meters.traverse_(_.errorCounter.inc(attrs*))
+                        }
+              _      <- addResponseStatus(200)
+              _      <- meters.traverse_(_.requestTokenCounter.add(result.usage.promptTokens.toLong, attrs*))
+              _      <- meters.traverse_(_.responseTokenCounter.add(0L, attrs*))
+              _      <- logger.trace(s"Embeddings created, used ${result.usage.totalTokens} tokens")
             yield result
 
       def listModels(): F[ModelsResponse] =
@@ -640,6 +700,12 @@ object Client:
         client
           .run(Request[F](POST, uri).withHeaders(baseHeaders).withEntity(request))
           .use(decodeResponse[CompletionResponse]("completion"))
+
+      def createEmbeddings(request: EmbeddingsRequest): F[EmbeddingsResponse] =
+        val uri = config.baseUri / "v1" / "embeddings"
+        client
+          .run(Request[F](POST, uri).withHeaders(baseHeaders).withEntity(request))
+          .use(decodeResponse[EmbeddingsResponse]("embeddings"))
 
       def listModels(): F[ModelsResponse] =
         client
@@ -835,5 +901,6 @@ object Client:
   def mapK[F[_], G[_]](client: Client[F])(f: F ~> G): Client[G] = new Client[G]:
     def createChatCompletion(request: ChatCompletionRequest): G[ChatCompletionResponse] = f(client.createChatCompletion(request))
     def createCompletion(request: CompletionRequest): G[CompletionResponse]             = f(client.createCompletion(request))
+    def createEmbeddings(request: EmbeddingsRequest): G[EmbeddingsResponse]              = f(client.createEmbeddings(request))
     def listModels(): G[ModelsResponse]                                                 = f(client.listModels())
     def getGenerationStats(generationId: String): G[GenerationStats]                    = f(client.getGenerationStats(generationId))

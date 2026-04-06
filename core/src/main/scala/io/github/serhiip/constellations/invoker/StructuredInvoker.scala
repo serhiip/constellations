@@ -28,9 +28,9 @@ object StructuredInvoker:
 
     override def generate(history: NEC[Message]): F[T] =
       for
-        struct <- responseAsStruct(history)
-        value  <- Decoder[Struct, T].decode(struct).leftMap(StructuredInvoker.Error.StructuredDecodingFailed.apply).liftTo[F]
-      yield value
+        struct    <- responseAsStruct(history)
+        converted <- Decoder[Struct, T].decode(struct).leftMap(StructuredInvoker.Error.StructuredDecodingFailed.apply).liftTo[F]
+      yield converted
 
   def observed[F[_]: Monad: Tracer: StructuredLogger, R, T: ToSchema](delegate: StructuredInvoker[F, R, T]): StructuredInvoker[F, R, T] =
     new:

@@ -5,6 +5,9 @@ import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 
 import io.github.serhiip.constellations.common.*
+import io.github.serhiip.constellations.dispatcher.Decoder
+import io.github.serhiip.constellations.handling.OpenRouter as ORHandling
+import io.github.serhiip.constellations.invoker.StructuredInvoker
 import io.github.serhiip.constellations.openrouter.*
 import io.circe.Json
 import munit.CatsEffectSuite
@@ -52,6 +55,16 @@ class OpenRouterTest extends CatsEffectSuite:
             usage = ChatCompletionUsage(promptTokens = 10, completionTokens = 5, totalTokens = 15)
           )
         )
+
+    def createEmbeddings(request: EmbeddingsRequest): IO[EmbeddingsResponse] =
+      IO.pure(
+        EmbeddingsResponse(
+          `object` = "list",
+          data = List(EmbeddingData(`object` = "embedding", embedding = List.fill(4)(0f), index = 0)),
+          model = request.model,
+          usage = EmbeddingsUsage(promptTokens = 1, totalTokens = 1)
+        )
+      )
 
     def listModels(): IO[ModelsResponse] =
       IO.pure(
@@ -114,7 +127,7 @@ class OpenRouterTest extends CatsEffectSuite:
         )
       )
 
-  test("chatCompletionStructured should decode structured JSON into domain type") {
+  test("StructuredInvoker with chatCompletion decodes structured JSON into domain type") {
     for
       chatRequestRef       <- Ref.of[IO, Option[ChatCompletionRequest]](none)
       completionRequestRef <- Ref.of[IO, Option[CompletionRequest]](none)
@@ -132,7 +145,7 @@ class OpenRouterTest extends CatsEffectSuite:
                                             index = 0,
                                             message = ChatMessage(
                                               role = "assistant",
-                                              content = Some(Json.fromString("""{"name":"Alice","age":33}"""))
+                                              content = Some(Json.obj("name" -> Json.fromString("Alice"), "age" -> Json.fromInt(33)))
                                             ),
                                             finishReason = "stop".some
                                           )
@@ -140,7 +153,7 @@ class OpenRouterTest extends CatsEffectSuite:
                                         usage = ChatCompletionUsage(promptTokens = 10, completionTokens = 5, totalTokens = 15)
                                       )
                                     )
-                                def createCompletion(request: CompletionRequest): IO[CompletionResponse] =
+                                def createCompletion(request: CompletionRequest): IO[CompletionResponse]             =
                                   completionRequestRef.set(request.some) *>
                                     IO.pure(
                                       CompletionResponse(
@@ -152,8 +165,17 @@ class OpenRouterTest extends CatsEffectSuite:
                                         usage = ChatCompletionUsage(promptTokens = 1, completionTokens = 1, totalTokens = 2)
                                       )
                                     )
-                                def listModels(): IO[ModelsResponse] = IO.pure(ModelsResponse(List.empty))
-                                def getGenerationStats(generationId: String): IO[GenerationStats] =
+                                def createEmbeddings(request: EmbeddingsRequest): IO[EmbeddingsResponse]             =
+                                  IO.pure(
+                                    EmbeddingsResponse(
+                                      `object` = "list",
+                                      data = List(EmbeddingData(`object` = "embedding", embedding = List.fill(4)(0f), index = 0)),
+                                      model = request.model,
+                                      usage = EmbeddingsUsage(promptTokens = 1, totalTokens = 1)
+                                    )
+                                  )
+                                def listModels(): IO[ModelsResponse]                                                 = IO.pure(ModelsResponse(List.empty))
+                                def getGenerationStats(generationId: String): IO[GenerationStats]                    =
                                   IO.pure(
                                     GenerationStats(
                                       id = generationId,
@@ -179,9 +201,9 @@ class OpenRouterTest extends CatsEffectSuite:
                                       nativeTokensCached = 0
                                     )
                                   )
-      invoker               = OpenRouter.chatCompletionStructured[IO, StructuredPerson](
-                                client = client,
-                                config = OpenRouter.Config(model = "gpt-4o")
+      invoker               = StructuredInvoker[IO, ChatCompletionResponse, StructuredPerson](
+                                OpenRouter.chatCompletion[IO](client, OpenRouter.Config(model = "gpt-4o")),
+                                ORHandling[IO]()
                               )
       history               = NEC.one(Message.User(List(ContentPart.Text("Return a person"))))
       result               <- invoker.generate(history)
@@ -831,12 +853,12 @@ class OpenRouterTest extends CatsEffectSuite:
   }
 
   test("MessageHandler.openai.convertToolResultMessage should use string content") {
-    val content = FunctionResponse(
+    val content       = FunctionResponse(
       name = "calculator",
       response = Struct(Map("result" -> Value.number(5.0))),
       functionCallId = "call-123".some
     )
-    val result = MessageHandler.openai.convertToolResultMessage(content)
+    val result        = MessageHandler.openai.convertToolResultMessage(content)
     assertEquals(result.role, "tool")
     assertEquals(result.name, Some("calculator"))
     assertEquals(result.toolCallId, "call-123".some)
@@ -850,7 +872,7 @@ class OpenRouterTest extends CatsEffectSuite:
       response = Struct(Map("result" -> Value.number(5.0))),
       functionCallId = "call-123".some
     )
-    val result = MessageHandler.default.convertToolResultMessage(content)
+    val result  = MessageHandler.default.convertToolResultMessage(content)
     assertEquals(result.role, "tool")
     assertEquals(result.name, Some("calculator"))
     assertEquals(result.toolCallId, "call-123".some)

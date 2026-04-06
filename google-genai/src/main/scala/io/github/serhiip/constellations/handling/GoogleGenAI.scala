@@ -21,9 +21,7 @@ object GoogleGenAI:
       response.functionCalls().asScala.toList.traverse { call =>
         val name = call.name().toScala.liftTo[F](RuntimeException("Missing function call name"))
         val raw  = call.args().toScala.liftTo[F](RuntimeException(s"Missing function call args for: $name"))
-        (name, raw).mapN({ case (name, raw) =>
-          FunctionCall(name, Struct.fromMap(raw.asScala.toMap), call.id().toScala)
-        })
+        (name, raw).mapN({ case (name, raw) => FunctionCall(name, Struct.fromMap(raw.asScala.toMap), call.id().toScala) })
       }
 
     override def finishReason(response: GenerateContentResponse): F[FinishReason] =
@@ -36,13 +34,9 @@ object GoogleGenAI:
     override def structuredOutput(response: GenerateContentResponse): F[Struct] =
       val txt = response.text()
       parse(txt) match
-        case Left(err)   =>
-          RuntimeException(s"Failed to parse structured output JSON: ${err.getMessage}").raiseError[F, Struct]
+        case Left(err)   => RuntimeException(s"Failed to parse structured output JSON: ${err.getMessage}", err).raiseError[F, Struct]
         case Right(json) =>
-          json.as[Struct] match
-            case Left(decErr) =>
-              RuntimeException(s"Failed to decode structured output: ${decErr.getMessage}").raiseError[F, Struct]
-            case Right(s)     => s.pure[F]
+          json.as[Struct].leftMap(err => RuntimeException(s"Failed to parse structured output JSON: ${err.getMessage}", err)).liftTo
 
     override def getImages(response: GenerateContentResponse): F[List[GeneratedImage[F]]] =
       List.empty[GeneratedImage[F]].pure[F]

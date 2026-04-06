@@ -27,6 +27,29 @@ final class ClientTest extends CatsEffectSuite:
 
   private val sampleUsage = ChatCompletionUsage(promptTokens = 50, completionTokens = 15, totalTokens = 65)
 
+  test("createEmbeddings should send correct request and parse response") {
+    val expectedRequest = EmbeddingsRequest(
+      model = "openai/text-embedding-3-small",
+      input = Json.fromString("hello world")
+    )
+
+    val expectedResponse = EmbeddingsResponse(
+      `object` = "list",
+      data = List(
+        EmbeddingData(`object` = "embedding", embedding = List(0.1f, 0.2f, 0.3f), index = 0)
+      ),
+      model = "openai/text-embedding-3-small",
+      usage = EmbeddingsUsage(promptTokens = 2, totalTokens = 2)
+    )
+
+    val stubClient = createStubClient(Response[IO](Status.Ok).withEntity(expectedResponse))
+    val client     = createTestClient(stubClient)
+
+    client.createEmbeddings(expectedRequest).map { response =>
+      assertEquals(response, expectedResponse)
+    }
+  }
+
   test("createCompletion should send correct request and parse response") {
     val expectedRequest = CompletionRequest(
       model = "test-model",
