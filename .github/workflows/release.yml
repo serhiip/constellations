@@ -1,22 +1,30 @@
 name: Release
 on:
   push:
-    tags:
-      - "v*"
-  workflow_dispatch:
+    branches: [main, master]
 
 jobs:
   release:
+    if: "!contains(github.event.head_commit.message, 'Setting version to')"
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.GH_PAT || github.token }}
 
-      - uses: actions/setup-java@v4
+      - name: Configure Git user
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
+          cache: sbt
 
       - uses: sbt/setup-sbt@v1
 
@@ -30,4 +38,4 @@ jobs:
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
           SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
-        run: sbt ci-release | cat
+        run: sbt "release with-defaults"
