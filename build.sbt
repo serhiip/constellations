@@ -30,30 +30,32 @@ ThisBuild / publishTo := {
   else localStaging.value
 }
 
-// PGP Passphrase
 ThisBuild / pgpPassphrase := sys.env.get("PGP_PASSPHRASE").map(_.toArray)
 
-// sbt-release configuration
-releaseIgnoreUntrackedFiles               := true
-ThisBuild / releaseVersionBump            := sbtrelease.Version.Bump.Next
-ThisBuild / releasePublishArtifactsAction := PgpKeys.publishSigned.value
-
-ThisBuild / releaseProcess := Seq[ReleaseStep](
-  checkSnapshotDependencies,
-  inquireVersions,
-  runClean,
-  runTest,
-  setReleaseVersion,
-  commitReleaseVersion,
-  tagRelease,
-  publishArtifacts,
-  releaseStepCommand("sonaRelease"),
-  setNextVersion,
-  commitNextVersion,
-  pushChanges
+// sbt-release plugin defines these at project scope via projectSettings, so ThisBuild is overridden.
+// Must be applied to each published project at project scope to take effect.
+lazy val commonReleaseSettings = Seq[Setting[?]](
+  releasePublishArtifactsAction := PgpKeys.publishSigned.value,
+  releaseVersionBump            := sbtrelease.Version.Bump.Next,
+  releaseIgnoreUntrackedFiles   := true,
+  releaseProcess                := Seq[ReleaseStep](
+    checkSnapshotDependencies,
+    inquireVersions,
+    runClean,
+    runTest,
+    setReleaseVersion,
+    commitReleaseVersion,
+    tagRelease,
+    publishArtifacts,
+    releaseStepCommandAndRemaining("sonaRelease"),
+    setNextVersion,
+    commitNextVersion,
+    pushChanges
+  )
 )
 
 lazy val root = (project in file("."))
+  .settings(commonReleaseSettings)
   .settings(
     name              := "constellations",
     semanticdbVersion := scalafixSemanticdb.revision,
@@ -63,16 +65,18 @@ lazy val root = (project in file("."))
     `constellations-core`,
     `constellations-openrouter`,
     `constellations-google-genai`,
-    `constellations-examples`
+    `constellations-examples`,
   )
 
 lazy val `constellations-core` = (project in file("core"))
+  .settings(commonReleaseSettings)
   .settings(
     name := "constellations-core",
     libraryDependencies ++= Dependencies.constellationsCore
   )
 
 lazy val `constellations-openrouter` = (project in file("openrouter"))
+  .settings(commonReleaseSettings)
   .settings(
     name := "constellations-openrouter",
     libraryDependencies ++= Dependencies.constellationsOpenRouter,
@@ -81,6 +85,7 @@ lazy val `constellations-openrouter` = (project in file("openrouter"))
   .dependsOn(`constellations-core`)
 
 lazy val `constellations-google-genai` = (project in file("google-genai"))
+  .settings(commonReleaseSettings)
   .settings(
     name := "constellations-google-genai",
     libraryDependencies ++= Dependencies.constellationsGoogleGenai
