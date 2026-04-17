@@ -34,7 +34,7 @@ class CalculatorImpl extends Calculator[IO]:
   def add(a: Int, b: Int): IO[Int] = IO(a + b)
 
 // Create dispatcher
-val dispatcher = Dispatcher.generate[IO, Calculator](new CalculatorImpl)
+val dispatcher = Dispatcher.generate[IO](new CalculatorImpl)
 
 // Convert to MCP tools
 CeDispatcher.parallel[IO].use { ceDispatcher =>
