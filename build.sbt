@@ -6,7 +6,14 @@ inThisBuild(
     organization := "io.github.serhiip",
     homepage     := Some(url("https://github.com/serhiip/constellations")),
     licenses     := List("MIT" -> url("https://opensource.org/licenses/MIT")),
-    developers   := List(
+    scmInfo      := Some(
+      ScmInfo(
+        browseUrl  = url("https://github.com/serhiip/constellations"),
+        connection = "scm:git:https://github.com/serhiip/constellations.git",
+        devConnection = Some("scm:git:git@github.com:serhiip/constellations.git")
+      )
+    ),
+    developers := List(
       Developer(
         id = "serhiip",
         name = "Serhii P",
