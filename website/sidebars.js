@@ -60,7 +60,7 @@ const sidebars = {
     {
       type: 'link',
       label: 'API Reference',
-      href: '/constellations/api/index.html',
+      href: 'pathname:///api/index.html',
     },
   ],
 };

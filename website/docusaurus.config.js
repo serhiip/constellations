@@ -70,7 +70,8 @@ const config = {
             label: 'Documentation',
           },
           {
-            href: '/constellations/api/index.html',
+            // pathname:// avoids React Router: Scaladoc lives under static/api (see Docusaurus Link docs / issue #3309)
+            href: 'pathname:///api/index.html',
             label: 'API',
             position: 'left',
           },

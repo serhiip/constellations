@@ -40,7 +40,7 @@ val calculatorImpl = new Calculator[IO]:
 // Generate a dispatcher with automatic schema generation
 @experimental
 def createDispatcher(): Dispatcher[IO] = 
-  Dispatcher.generate[IO, Calculator](calculatorImpl)
+  Dispatcher.generate[IO](calculatorImpl)
 
 val dispatcher = createDispatcher()
 ```

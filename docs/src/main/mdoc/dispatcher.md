@@ -56,8 +56,8 @@ Generate a Dispatcher:
 import scala.annotation.experimental
 
 @experimental
-def createDispatcher(): Dispatcher[IO] = 
-  Dispatcher.generate[IO, Calculator](calculator)
+def createDispatcher(): Dispatcher[IO] =
+  Dispatcher.generate[IO](calculator)
 
 val dispatcher = createDispatcher()
 ```
@@ -111,8 +111,8 @@ import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
 
 // Transform IO to Future
-val futureDispatcher: Dispatcher[Future] = 
-  dispatcher.mapK(new (IO ~> Future) {
+val futureDispatcher: Dispatcher[Future] =
+  Dispatcher.mapK(dispatcher)(new (IO ~> Future) {
     def apply[A](fa: IO[A]): Future[A] = fa.unsafeToFuture()
   })
 ```
