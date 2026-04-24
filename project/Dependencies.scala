@@ -72,10 +72,16 @@ object Dependencies {
     "com.google.cloud" % "google-cloud-nio" % "0.127.34"
   )
 
+  val mcp = Seq(
+    "io.modelcontextprotocol.sdk" % "mcp" % "1.1.1"
+  )
+
   val constellationsCore =
     catsEffect ++ fs2 ++ otel4s ++ logging ++ circe ++ testing ++ otel4sCore
 
   val constellationsOpenRouter = http4s ++ circe ++ testing ++ logging ++ logback
 
   val constellationsGoogleGenai = googleGenai ++ testing
+
+  val constellationsMcp = mcp ++ catsEffect ++ circe ++ testing
 }
