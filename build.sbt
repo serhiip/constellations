@@ -75,7 +75,6 @@ lazy val root = (project in file("."))
     `constellations-openrouter`,
     `constellations-google-genai`,
     `constellations-examples`,
-    `constellations-examples`,
     docs
   )
 
@@ -109,7 +108,7 @@ lazy val `constellations-examples` = (project in file("examples"))
     libraryDependencies ++= Dependencies.logging ++ Dependencies.logback ++ Dependencies.googleCloudNio,
     publish / skip := true
   )
-  .dependsOn(`constellations-core`, `constellations-google-genai`, `constellations-openrouter`, `constellations-mcp`)
+  .dependsOn(`constellations-core`, `constellations-google-genai`, `constellations-openrouter`)
 
 lazy val docs = project
   .in(file("docs"))
@@ -125,7 +124,7 @@ lazy val docs = project
     ),
     // Scaladoc configuration - exclude non-library projects
     ScalaUnidoc / unidoc / unidocProjectFilter :=
-      inProjects(`constellations-core`, `constellations-openrouter`, `constellations-google-genai`, `constellations-mcp`),
+      inProjects(`constellations-core`, `constellations-openrouter`, `constellations-google-genai`),
     syncApiDocs                                := {
       val _           = (Compile / unidoc).value
       val generated   = baseDirectory.value / "target" / s"scala-${scalaVersion.value}" / "unidoc"
@@ -140,4 +139,4 @@ lazy val docs = project
     docusaurusPublishGhpages                   := docusaurusPublishGhpages.dependsOn(mdoc.toTask(""), syncApiDocs).value
   )
   .enablePlugins(MdocPlugin, DocusaurusPlugin, ScalaUnidocPlugin)
-  .dependsOn(`constellations-core`, `constellations-openrouter`, `constellations-google-genai`, `constellations-mcp`)
+  .dependsOn(`constellations-core`, `constellations-openrouter`, `constellations-google-genai`)
