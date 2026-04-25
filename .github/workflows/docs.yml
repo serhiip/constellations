@@ -31,6 +31,11 @@ jobs:
       - name: Generate mdoc and Scaladoc
         run: sbt "docs/mdoc" "docs/syncApiDocs"
 
+      - name: Move API docs out of Docusaurus static assets
+        run: |
+          rm -rf website/.generated-api
+          mv website/static/api website/.generated-api
+
       - name: Install website dependencies
         working-directory: website
         run: npm ci
@@ -38,6 +43,11 @@ jobs:
       - name: Build website
         working-directory: website
         run: npx docusaurus build
+
+      - name: Add API docs to built website
+        run: |
+          rm -rf website/build/api
+          cp -R website/.generated-api website/build/api
 
       - name: Upload Pages artifact
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
