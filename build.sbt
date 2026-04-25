@@ -8,12 +8,12 @@ inThisBuild(
     licenses     := List("MIT" -> url("https://opensource.org/licenses/MIT")),
     scmInfo      := Some(
       ScmInfo(
-        browseUrl  = url("https://github.com/serhiip/constellations"),
+        browseUrl = url("https://github.com/serhiip/constellations"),
         connection = "scm:git:https://github.com/serhiip/constellations.git",
         devConnection = Some("scm:git:git@github.com:serhiip/constellations.git")
       )
     ),
-    developers := List(
+    developers   := List(
       Developer(
         id = "serhiip",
         name = "Serhii P",
@@ -74,7 +74,8 @@ lazy val root = (project in file("."))
     `constellations-core`,
     `constellations-openrouter`,
     `constellations-google-genai`,
-    `constellations-examples`
+    `constellations-examples`,
+    docs
   )
 
 lazy val `constellations-core` = (project in file("core"))
@@ -114,8 +115,7 @@ lazy val docs = project
   .settings(
     name                                       := "constellations-docs",
     moduleName                                 := "constellations-docs",
-    publish / skip                            := true,
-    scalacOptions += "-experimental",
+    publish / skip                             := true,
     mdocIn                                     := baseDirectory.value / "src" / "main" / "mdoc",
     mdocOut                                    := baseDirectory.value / ".." / "website" / "docs",
     mdocVariables                              := Map(
