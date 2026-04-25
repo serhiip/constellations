@@ -74,8 +74,7 @@ lazy val root = (project in file("."))
     `constellations-core`,
     `constellations-openrouter`,
     `constellations-google-genai`,
-    `constellations-examples`,
-    docs
+    `constellations-examples`
   )
 
 lazy val `constellations-core` = (project in file("core"))
@@ -115,6 +114,7 @@ lazy val docs = project
   .settings(
     name                                       := "constellations-docs",
     moduleName                                 := "constellations-docs",
+    publish / skip                            := true,
     scalacOptions += "-experimental",
     mdocIn                                     := baseDirectory.value / "src" / "main" / "mdoc",
     mdocOut                                    := baseDirectory.value / ".." / "website" / "docs",
