@@ -74,6 +74,7 @@ lazy val root = (project in file("."))
     `constellations-core`,
     `constellations-openrouter`,
     `constellations-google-genai`,
+    `constellations-bedrock`,
     `constellations-mcp`,
     `constellations-examples`,
     docs
@@ -103,6 +104,14 @@ lazy val `constellations-google-genai` = (project in file("google-genai"))
   )
   .dependsOn(`constellations-core`)
 
+lazy val `constellations-bedrock` = (project in file("bedrock"))
+  .settings(commonReleaseSettings)
+  .settings(
+    name := "constellations-bedrock",
+    libraryDependencies ++= Dependencies.constellationsBedrock
+  )
+  .dependsOn(`constellations-core`)
+
 lazy val `constellations-mcp` = (project in file("mcp"))
   .settings(commonReleaseSettings)
   .settings(
@@ -114,10 +123,16 @@ lazy val `constellations-mcp` = (project in file("mcp"))
 lazy val `constellations-examples` = (project in file("examples"))
   .settings(
     name           := "constellations-examples",
-    libraryDependencies ++= Dependencies.logging ++ Dependencies.logback ++ Dependencies.googleCloudNio,
+    libraryDependencies ++= Dependencies.logging ++ Dependencies.logback ++ Dependencies.googleCloudNio ++ Dependencies.awsSignin,
     publish / skip := true
   )
-  .dependsOn(`constellations-core`, `constellations-google-genai`, `constellations-openrouter`, `constellations-mcp`)
+  .dependsOn(
+    `constellations-core`,
+    `constellations-google-genai`,
+    `constellations-openrouter`,
+    `constellations-bedrock`,
+    `constellations-mcp`
+  )
 
 lazy val docs = project
   .in(file("docs"))

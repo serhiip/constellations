@@ -76,12 +76,22 @@ object Dependencies {
     "io.modelcontextprotocol.sdk" % "mcp" % "1.1.1"
   )
 
+  val awsBedrock = Seq(
+    "software.amazon.awssdk" % "bedrockruntime" % "2.46.15"
+  )
+
+  val awsSignin = Seq(
+    "software.amazon.awssdk" % "signin" % "2.46.15"
+  )
+
   val constellationsCore =
     catsEffect ++ fs2 ++ otel4s ++ logging ++ circe ++ testing ++ otel4sCore
 
   val constellationsOpenRouter = http4s ++ circe ++ testing ++ logging ++ logback
 
   val constellationsGoogleGenai = googleGenai ++ testing
+
+  val constellationsBedrock = awsBedrock ++ circe ++ testing
 
   val constellationsMcp = mcp ++ catsEffect ++ circe ++ testing
 }
