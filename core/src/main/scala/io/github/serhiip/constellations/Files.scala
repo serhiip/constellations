@@ -50,10 +50,13 @@ object Files:
         // Uses Resource to explicitly bracket the OutputStream lifecycle, ensuring the GCS upload
         // session is fully finalized (flush + close) before returning. This prevents broken pipe
         // errors when multiple files are written sequentially through the GCS NIO provider.
+        // Uses CREATE + TRUNCATE_EXISTING (not CREATE_NEW) so writeStream can overwrite an existing
+        // target. CREATE_NEW maps to GCS's ifGenerationMatch=0 precondition, which fails with a 412
+        // whenever the object already exists.
         val outputStreamResource = Resource.make(
           Sync[F].blocking:
             val nioPath = provider.getPath(target)
-            JFiles.newOutputStream(nioPath, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
+            JFiles.newOutputStream(nioPath, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)
         )(os => Sync[F].blocking(os.close()))
 
         outputStreamResource.use: os =>

@@ -48,15 +48,16 @@ class FilesTest extends CatsEffectSuite:
     yield assertEquals(result, content)
   }
 
-  test("Files.writeStream should fail if target file already exists") {
+  test("Files.writeStream should overwrite target file if it already exists") {
     val path  = fs().getPath("/collision.txt")
     val bytes = fs2.Stream.emits("new content".getBytes).covary[IO]
 
     for
-      _      <- IO(JFiles.writeString(path, "existing content"))
+      _      <- IO(JFiles.writeString(path, "existing content that is longer than the replacement"))
       files  <- Files[IO](fs().getPath("/").toUri)
-      result <- files.writeStream(path.toUri, bytes).attempt
-    yield assert(result.isLeft)
+      _      <- files.writeStream(path.toUri, bytes)
+      result <- IO(JFiles.readString(path))
+    yield assertEquals(result, "new content")
   }
 
   test("Files.writeStream should handle sequential writes to different files") {
