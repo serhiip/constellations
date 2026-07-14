@@ -70,14 +70,14 @@ object GoogleGenAIExample extends IOApp.Simple:
       modelOpt  <- Env[IO].get("GOOGLE_GENAI_MODEL")
       model      = modelOpt.getOrElse("gemini-2.5-pro")
       _          = println("dispatcher start")
-      dispatcher = Dispatcher.generate[IO](timeFunctions, alertFunctions)
+      dispatcher = ToolDispatcher.generate[IO](timeFunctions, alertFunctions)
       _          = println("dispatcher end")
       result    <- Client
                      .resource[IO](Client.Config(project = project, location = location))
                      .use { client =>
                        for
                          decls   <- dispatcher.getFunctionDeclarations
-                         _       <- Logger[IO].info(s"Dispatcher: ${decls.map(_.name).mkString(", ")}")
+                         _       <- Logger[IO].info(s"ToolDispatcher: ${decls.map(_.name).mkString(", ")}")
                          invoker  = GoogleGenAI.chatCompletion(
                                       client,
                                       GoogleGenAI.Config(
@@ -108,7 +108,7 @@ object GoogleGenAIExample extends IOApp.Simple:
     } yield result
 
   private def replLoop(
-      dispatcher: Dispatcher[IO],
+      dispatcher: ToolDispatcher[IO],
       executor: Executor[IO, Stateful.Interruption.type, Executor.Step.ModelResponse],
       memory: Memory[IO, UUID]
   ): IO[Unit] =

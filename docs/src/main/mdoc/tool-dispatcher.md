@@ -1,18 +1,24 @@
-# Dispatcher
+# ToolDispatcher
 
-The Dispatcher is the heart of Constellations' function calling system. It uses Scala 3 macros to automatically route AI function calls to your Scala implementations with compile-time safety.
+ToolDispatcher is the heart of Constellations' function calling system. It uses Scala 3 macros to automatically route AI function calls to your Scala implementations with compile-time safety.
+
+It lives in the published `constellations-common` artifact (pulled transitively by `constellations-core`). For tool-routing-only apps:
+
+```scala
+libraryDependencies += "io.github.serhiip" %% "constellations-common" % "@VERSION@"
+```
 
 ## Overview
 
-The Dispatcher trait provides:
+The ToolDispatcher trait provides:
 - **Automatic schema generation** - JSON schemas from your trait definitions
 - **Type-safe routing** - Compile-time verification of function signatures
 - **Macro-powered dispatch** - Zero runtime reflection overhead
 
 ```scala
-// Core Dispatcher API
-trait Dispatcher[F[_]]:
-  def dispatch(call: FunctionCall): F[Dispatcher.Result]
+// Core ToolDispatcher API
+trait ToolDispatcher[F[_]]:
+  def dispatch(call: FunctionCall): F[ToolDispatcher.Result]
   def getFunctionDeclarations: F[List[FunctionDeclaration]]
 ```
 
@@ -24,7 +30,7 @@ Define your API as a trait with docstrings:
 import scala.annotation.experimental
 import cats.effect.IO
 import io.github.serhiip.constellations.*
-import io.github.serhiip.constellations.Dispatcher
+import io.github.serhiip.constellations.ToolDispatcher
 import io.github.serhiip.constellations.common.*
 
 // Define your functions as a trait
@@ -50,14 +56,14 @@ val calculator = new Calculator[IO]:
     else IO.pure(a / b)
 ```
 
-Generate a Dispatcher:
+Generate a ToolDispatcher:
 
 ```scala mdoc:silent
 import scala.annotation.experimental
 
 @experimental
-def createDispatcher(): Dispatcher[IO] =
-  Dispatcher.generate[IO](calculator)
+def createDispatcher(): ToolDispatcher[IO] =
+  ToolDispatcher.generate[IO](calculator)
 
 val dispatcher = createDispatcher()
 ```
@@ -82,9 +88,9 @@ val call = FunctionCall(
 // Dispatch and get result
 val result = dispatcher.dispatch(call).unsafeRunSync()
 result match
-  case Dispatcher.Result.Response(response) =>
+  case ToolDispatcher.Result.Response(response) =>
     println(s"Response: ${response.response}")
-  case Dispatcher.Result.HumanInTheLoop =>
+  case ToolDispatcher.Result.HumanInTheLoop =>
     println("Human approval required")
 ```
 
@@ -111,8 +117,8 @@ import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
 
 // Transform IO to Future
-val futureDispatcher: Dispatcher[Future] =
-  Dispatcher.mapK(dispatcher)(new (IO ~> Future) {
+val futureDispatcher: ToolDispatcher[Future] =
+  ToolDispatcher.mapK(dispatcher)(new (IO ~> Future) {
     def apply[A](fa: IO[A]): Future[A] = fa.unsafeToFuture()
   })
 ```
@@ -121,21 +127,21 @@ val futureDispatcher: Dispatcher[Future] =
 
 Add tracing and logging:
 
-The Dispatcher can be wrapped with observability (tracing and logging):
+The ToolDispatcher can be wrapped with observability (tracing and logging):
 
 ```scala
 import org.typelevel.otel4s.trace.Tracer
 import org.typelevel.log4cats.StructuredLogger
 
 // Wrap with observability (requires implicit Tracer and Logger)
-val observedDispatcher = Dispatcher[IO](dispatcher)
+val observedDispatcher = ToolDispatcher[IO](dispatcher)
 ```
 
 For testing without observability, use the dispatcher directly or provide no-op implementations.
 
 ## Error Handling
 
-The Dispatcher handles various error cases:
+The ToolDispatcher handles various error cases:
 
 - **Missing function** - Throws `RuntimeException` if function not found
 - **Invalid arguments** - Throws `IllegalArgumentException` with detailed decoding errors

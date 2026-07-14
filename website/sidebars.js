@@ -15,7 +15,7 @@ const sidebars = {
       },
       items: [
         'executor',
-        'dispatcher',
+        'tool-dispatcher',
         'memory',
         'invoker',
         'handling',

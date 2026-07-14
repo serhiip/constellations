@@ -6,7 +6,7 @@ Constellations provides a set of composable abstractions for building AI-powered
 
 The library is built around these key abstractions:
 
-- **Dispatcher** - Routes AI function calls to your Scala implementations
+- **ToolDispatcher** - Routes AI function calls to your Scala implementations
 - **Executor** - Orchestrates multi-step AI conversations  
 - **Memory** - Stores conversation history and execution context
 - **Invoker** - Handles communication with AI models
@@ -19,7 +19,7 @@ A typical Constellations workflow looks like this:
 ```
 User Query → Invoker (AI Model) → Handling (Parse Response) 
     ↓
-[If function calls] → Dispatcher → Your Functions
+[If function calls] → ToolDispatcher → Your Functions
     ↓
 Function Results → Executor (State Management) → Memory (Storage)
     ↓
@@ -74,7 +74,7 @@ The macro automatically generates:
 ## Learn More
 
 - [Executor](executor.md) - Workflow orchestration
-- [Dispatcher](dispatcher.md) - Function routing
+- [ToolDispatcher](tool-dispatcher.md) - Function routing
 - [Memory](memory.md) - Conversation storage
 - [Invoker](invoker.md) - AI model communication
 - [Handling](handling.md) - Response parsing

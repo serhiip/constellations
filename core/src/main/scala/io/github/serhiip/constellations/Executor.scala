@@ -15,8 +15,8 @@ import io.github.serhiip.constellations.common.Observability.*
 import java.net.URI
 
 trait Executor[F[_], E, T]:
-  def execute(dispatcher: Dispatcher[F], memory: Memory[F, ?], query: String, assets: List[URI] = List.empty): F[Either[E, T]]
-  def resume(dispatcher: Dispatcher[F], memory: Memory[F, ?]): F[Either[E, T]]
+  def execute(dispatcher: ToolDispatcher[F], memory: Memory[F, ?], query: String, assets: List[URI] = List.empty): F[Either[E, T]]
+  def resume(dispatcher: ToolDispatcher[F], memory: Memory[F, ?]): F[Either[E, T]]
 
 object Executor:
   enum Step:
@@ -33,7 +33,7 @@ object Executor:
 
   private def observed[F[_]: Monad: Tracer: StructuredLogger, E, T](delegate: Executor[F, E, T]): Executor[F, E, T] =
     new Executor[F, E, T]:
-      def execute(dispatcher: Dispatcher[F], memory: Memory[F, ?], query: String, assets: List[URI]): F[Either[E, T]] =
+      def execute(dispatcher: ToolDispatcher[F], memory: Memory[F, ?], query: String, assets: List[URI]): F[Either[E, T]] =
         Tracer[F]
           .span("executor", "execute")
           .logged: logger =>
@@ -43,7 +43,7 @@ object Executor:
               _      <- logger.trace(s"Result is $result")
             yield result
 
-      def resume(dispatcher: Dispatcher[F], memory: Memory[F, ?]): F[Either[E, T]] =
+      def resume(dispatcher: ToolDispatcher[F], memory: Memory[F, ?]): F[Either[E, T]] =
         Tracer[F]
           .span("executor", "resume")
           .logged: logger =>

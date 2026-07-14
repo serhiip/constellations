@@ -45,7 +45,7 @@ final class Stateful[F[_]: Clock: Parallel: Monad, T](
   import Stateful.*
 
   override def execute(
-      callDispatcher: Dispatcher[F],
+      callDispatcher: ToolDispatcher[F],
       history: Memory[F, ?],
       query: String,
       assets: List[URI]
@@ -57,7 +57,7 @@ final class Stateful[F[_]: Clock: Parallel: Monad, T](
       result   <- resume(callDispatcher, history)
     yield result
 
-  override def resume(callDispatcher: Dispatcher[F], history: Memory[F, ?]): F[Either[Interruption.type, Executor.Step.ModelResponse]] =
+  override def resume(callDispatcher: ToolDispatcher[F], history: Memory[F, ?]): F[Either[Interruption.type, Executor.Step.ModelResponse]] =
     for
       previousSteps     <- history.retrieve
       converted         <- previousSteps.traverse(messageFromStep)
@@ -68,12 +68,12 @@ final class Stateful[F[_]: Clock: Parallel: Monad, T](
     yield result
 
   private def persistentLoop(
-      callDispatcher: Dispatcher[F],
+      callDispatcher: ToolDispatcher[F],
       history: Memory[F, ?]
   ): Ctx[Either[Interruption.type, Executor.Step.ModelResponse]] =
     Ctx.shouldInterrupt.ifM(Ctx.pure(Interruption.asLeft), eval(callDispatcher, history))
 
-  private def eval(callDispatcher: Dispatcher[F], history: Memory[F, ?]): Ctx[Either[Interruption.type, Executor.Step.ModelResponse]] =
+  private def eval(callDispatcher: ToolDispatcher[F], history: Memory[F, ?]): Ctx[Either[Interruption.type, Executor.Step.ModelResponse]] =
     for
       content   <- Ctx.allContent
       response  <- Ctx.liftF(invoker.generate(content))
@@ -105,19 +105,19 @@ final class Stateful[F[_]: Clock: Parallel: Monad, T](
                 }
     yield uris
 
-  private def handleCall(callDispatcher: Dispatcher[F], history: Memory[F, ?])(call: FunctionCall) =
+  private def handleCall(callDispatcher: ToolDispatcher[F], history: Memory[F, ?])(call: FunctionCall) =
     for
       now     <- Ctx.liftF(Clock[F].offsetDateTimeUtc)
       callStep = Executor.Step.Call(call, now)
       _       <- persist(history, callStep)
       result  <- Ctx.liftF(callDispatcher.dispatch(call))
       _       <- result match
-                   case Dispatcher.Result.Response(result) =>
+                   case ToolDispatcher.Result.Response(result) =>
                      for
                        now <- Ctx.liftF(Clock[F].offsetDateTimeUtc)
                        _   <- persist(history, Executor.Step.Response(result = result.copy(functionCallId = call.callId), at = now))
                      yield ()
-                   case Dispatcher.Result.HumanInTheLoop   => Ctx.interrupt
+                   case ToolDispatcher.Result.HumanInTheLoop   => Ctx.interrupt
     yield ()
 
   private def persist(history: Memory[F, ?], step: Executor.Step) = Ctx.add(step) >> Ctx.liftF(history.record(step))

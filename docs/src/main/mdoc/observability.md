@@ -14,11 +14,11 @@ All components include:
 Components are automatically traced:
 
 ```scala
-import io.github.serhiip.constellations.Dispatcher
+import io.github.serhiip.constellations.ToolDispatcher
 import org.typelevel.otel4s.trace.Tracer
 
-// Dispatcher is automatically traced
-val tracedDispatcher = Dispatcher[IO](dispatcher)
+// ToolDispatcher is automatically traced
+val tracedDispatcher = ToolDispatcher[IO](dispatcher)
 ```
 
 ## Logging

@@ -21,7 +21,7 @@ Here's a simple example showing how to define AI-callable functions:
 import scala.annotation.experimental
 import cats.effect.IO
 import io.github.serhiip.constellations.*
-import io.github.serhiip.constellations.Dispatcher
+import io.github.serhiip.constellations.ToolDispatcher
 import io.github.serhiip.constellations.common.*
 
 // Define your functions as a trait
@@ -39,8 +39,8 @@ val calculatorImpl = new Calculator[IO]:
 
 // Generate a dispatcher with automatic schema generation
 @experimental
-def createDispatcher(): Dispatcher[IO] = 
-  Dispatcher.generate[IO](calculatorImpl)
+def createDispatcher(): ToolDispatcher[IO] = 
+  ToolDispatcher.generate[IO](calculatorImpl)
 
 val dispatcher = createDispatcher()
 ```
@@ -62,9 +62,9 @@ import cats.effect.unsafe.implicits.global
 
 val result = dispatcher.dispatch(call).unsafeRunSync()
 result match
-  case Dispatcher.Result.Response(response) =>
+  case ToolDispatcher.Result.Response(response) =>
     println(s"Result: ${response.response}")
-  case Dispatcher.Result.HumanInTheLoop =>
+  case ToolDispatcher.Result.HumanInTheLoop =>
     println("Human approval required")
 ```
 
@@ -72,7 +72,7 @@ result match
 
 Constellations is built around several key abstractions:
 
-1. **Dispatcher** - Routes function calls to your Scala implementations using compile-time macros
+1. **ToolDispatcher** - Routes function calls to your Scala implementations using compile-time macros
 2. **Executor** - Orchestrates AI conversations with memory and state management
 3. **Memory** - Stores conversation history and execution steps
 4. **Invoker** - Handles AI model interactions with retry logic
@@ -82,7 +82,8 @@ Constellations is built around several key abstractions:
 
 The library is organized into several modules:
 
-- **constellations-core** - Core abstractions and type-safe function dispatching
+- **constellations-common** - Shared types, codecs, observability, and `ToolDispatcher`
+- **constellations-core** - Executor, memory, and invoker abstractions (pulls common transitively)
 - **constellations-openrouter** - OpenRouter API integration
 - **constellations-google-genai** - Google GenAI integration
 - **constellations-mcp** - Model Context Protocol server support
@@ -90,6 +91,6 @@ The library is organized into several modules:
 ## Next Steps
 
 - Learn about [Core Concepts](core-concepts.md)
-- Explore the [Dispatcher](dispatcher.md) for automatic function routing
+- Explore the [ToolDispatcher](tool-dispatcher.md) for automatic function routing
 - Set up [OpenRouter](openrouter.md) or [Google GenAI](google-genai.md) integration
 - Check out the [Examples](examples.md) for complete working projects

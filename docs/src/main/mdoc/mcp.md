@@ -5,7 +5,7 @@ Constellations supports the Model Context Protocol (MCP), allowing you to expose
 ## Overview
 
 The MCP module enables you to:
-- **Expose functions as MCP tools** - Use your Dispatcher with MCP servers
+- **Expose functions as MCP tools** - Use your ToolDispatcher with MCP servers
 - **Type-safe tool definitions** - Automatic schema generation
 - **Local tool execution** - Run tools locally for privacy
 - **Multiple tools** - Combine multiple dispatchers into one server
@@ -18,14 +18,17 @@ Add the dependency:
 libraryDependencies += "io.github.serhiip" %% "constellations-mcp" % "@VERSION@"
 ```
 
+This pulls `constellations-common` transitively.
+
 ## Quick Example
 
 Create an MCP server:
 
 ```scala
+import io.github.serhiip.constellations.ToolDispatcher
 import io.github.serhiip.constellations.mcp.*
 import cats.effect.IO
-import cats.effect.std.Dispatcher as CeDispatcher
+import cats.effect.std.Dispatcher
 
 trait Calculator[F[_]]:
   def add(a: Int, b: Int): F[Int]
@@ -33,13 +36,12 @@ trait Calculator[F[_]]:
 class CalculatorImpl extends Calculator[IO]:
   def add(a: Int, b: Int): IO[Int] = IO(a + b)
 
-// Create dispatcher
-val dispatcher = Dispatcher.generate[IO](new CalculatorImpl)
+val toolDispatcher = ToolDispatcher.generate[IO](new CalculatorImpl)
 
-// Convert to MCP tools
-CeDispatcher.parallel[IO].use { ceDispatcher =>
+Dispatcher.parallel[IO].use { dispatcher =>
   for
-    toolSpecs <- McpToolSpec.fromDispatcher(dispatcher, ceDispatcher)
+    mcpToolSpec <- McpToolSpec.core[IO](dispatcher).run(McpToolSpec.defaultConfig)
+    toolSpecs   <- mcpToolSpec.fromToolDispatcher(toolDispatcher)
     // Register with MCP server
   yield ()
 }

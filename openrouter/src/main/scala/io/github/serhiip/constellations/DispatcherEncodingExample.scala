@@ -63,8 +63,8 @@ object DispatcherEncodingExample extends IOApp.Simple:
                                         .resource[IO](apiKey, Client.Config())
                                         .use { client =>
                                           for
-                                            dispatcher <- Dispatcher(
-                                                            Dispatcher.generate[IO](
+                                            dispatcher <- ToolDispatcher(
+                                                            ToolDispatcher.generate[IO](
                                                               ExampleFunctionsImpl[IO],
                                                               DiagnosticFunctionsDefault[IO]
                                                             )
@@ -92,7 +92,7 @@ object DispatcherEncodingExample extends IOApp.Simple:
                                             executor    = Executor(rawExecutor)
                                             rawMemory  <- Memory.inMemory[IO, UUID]
                                             memory      <- Memory(rawMemory)
-                                            _          <- IO.println("Dispatcher encoding example with OpenRouter. Type 'exit' to quit.\n")
+                                            _          <- IO.println("ToolDispatcher encoding example with OpenRouter. Type 'exit' to quit.\n")
                                             _          <- replLoop(dispatcher, executor, memory)
                                           yield ()
                                         }
@@ -100,7 +100,7 @@ object DispatcherEncodingExample extends IOApp.Simple:
     }.handleErrorWith(err => IO.println(s"Error: ${err.getMessage}"))
 
   private def replLoop(
-      dispatcher: Dispatcher[IO],
+      dispatcher: ToolDispatcher[IO],
       executor: Executor[IO, ?, Executor.Step.ModelResponse],
       memory: Memory[IO, UUID]
   ): IO[Unit] =

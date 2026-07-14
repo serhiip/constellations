@@ -28,14 +28,18 @@ libraryDependencies ++= Seq(
 
 ## Modules
 
-- `constellations-core`: dispatching, execution, memory, common types
+- `constellations-common`: shared types, codecs, observability, and `ToolDispatcher`
+- `constellations-core`: execution, memory, invokers (depends on common transitively)
 - `constellations-openrouter`: OpenRouter client and invokers
 - `constellations-google-genai`: Google GenAI client and invokers
+- `constellations-mcp`: Model Context Protocol server support (depends on common)
 - `constellations-examples`: runnable examples
+
+For tool-routing only (without Executor/Memory), depend on `constellations-common` directly.
 
 ## Core concepts
 
-- `Dispatcher[F[_]]`: builds function declarations and routes calls to Scala methods
+- `ToolDispatcher[F[_]]`: builds function declarations and routes calls to Scala methods
 - `Executor[F[_], E, T]`: runs workflows with memory
 - `Invoker[F[_], T]`: calls LLMs and returns model responses
 - `Memory[F[_], Id]`: stores conversation steps
@@ -43,7 +47,7 @@ libraryDependencies ++= Seq(
 
 ## Schema derivation (SchemaMacros + ToSchema)
 
-`Schema.derived` is implemented by `SchemaMacros` in `core/src/main/scala/io/github/serhiip/constellations/schema/SchemaMacros.scala`.
+`Schema.derived` is implemented by `SchemaMacros` in `common/src/main/scala/io/github/serhiip/constellations/schema/SchemaMacros.scala`.
 The macro builds JSON Schema for case classes and sealed traits/enums with support for:
 
 - Primitive types
@@ -80,7 +84,7 @@ trait Calculator[F[_]]:
 val impl = new Calculator[IO]:
   def add(a: Int, b: Int): IO[Int] = IO.pure(a + b)
 
-val dispatcher = Dispatcher.generate[IO](impl)
+val dispatcher = ToolDispatcher.generate[IO](impl)
 
 val call = FunctionCall(
   name = "calculator_add",
@@ -88,8 +92,8 @@ val call = FunctionCall(
 )
 
 dispatcher.dispatch(call).flatMap {
-  case Dispatcher.Result.Response(response) => IO.println(response.response)
-  case Dispatcher.Result.HumanInTheLoop     => IO.println("Human input required")
+  case ToolDispatcher.Result.Response(response) => IO.println(response.response)
+  case ToolDispatcher.Result.HumanInTheLoop     => IO.println("Human input required")
 }
 ```
 
@@ -98,7 +102,7 @@ dispatcher.dispatch(call).flatMap {
 Observed wrappers add tracing and structured logging:
 
 ```scala
-val observedDispatcher = Dispatcher[IO](dispatcher)
+val observedDispatcher = ToolDispatcher[IO](dispatcher)
 val observedExecutor = Executor[IO, Error, Response](executor)
 val observedMemory = Memory[IO, UUID](memory)
 ```
@@ -158,23 +162,28 @@ Constellations enables you to:
 
 ## Modules
 
+### Common Module (`constellations-common`)
+
+Shared types (`Schema`, `Struct`, `Value`, `FunctionCall`, …), Circe codecs, schema macros, observability helpers, and tool dispatch:
+
+- **`ToolDispatcher[F[_]]`** - Macro-generated routing from tool/function calls to Scala methods
+- Decoders/encoders and naming strategies for tool arguments and results
+
 ### Core Module (`constellations-core`)
 
-The core module provides the fundamental abstractions for function calling and conversation management.
+Execution and conversation management (depends on common transitively).
 
 #### Key Components
 
-- **`Dispatcher[F[_]]`** - Automatically dispatches function calls to Scala methods using Scala 3 macros
 - **`Executor[F[_], E, T]`** - Orchestrates AI workflows with memory management
 - **`Memory[F[_], Id]`** - Stores conversation history and execution steps
 - **`Invoker[F[_]]`** - Handles function invocation with error handling
-- **Common types** - `FunctionCall`, `FunctionResponse`, `Schema`, `Value`, `Struct` for type-safe data handling
 
 #### Example Usage
 
 ```scala
 import io.github.serhiip.constellations.*
-import io.github.serhiip.constellations.Dispatcher
+import io.github.serhiip.constellations.ToolDispatcher
 
 // Define your functions as a trait
 trait Calculator[F[_]]:
@@ -187,7 +196,7 @@ val calculatorImpl = new Calculator[IO]:
   def multiply(a: Int, b: Int): IO[Int] = IO.pure(a * b)
 
 // Generate a dispatcher (automatically creates JSON schemas and routing)
-val dispatcher = Dispatcher.generate[IO](calculatorImpl)
+val dispatcher = ToolDispatcher.generate[IO](calculatorImpl)
 
 // Use the dispatcher
 val functionCall = FunctionCall(
@@ -196,9 +205,9 @@ val functionCall = FunctionCall(
 )
 
 dispatcher.dispatch(functionCall).flatMap {
-  case Dispatcher.Result.Response(response) =>
+  case ToolDispatcher.Result.Response(response) =>
     IO.println(s"Result: ${response.response}")
-  case Dispatcher.Result.HumanInTheLoop =>
+  case ToolDispatcher.Result.HumanInTheLoop =>
     IO.println("Human input required")
 }
 ```
@@ -272,7 +281,7 @@ The macro automatically generates:
 
 #### SchemaMacros and ToSchema
 
-`Schema.derived` is implemented by `SchemaMacros` in `core/src/main/scala/io/github/serhiip/constellations/schema/SchemaMacros.scala`. The macro inspects case classes and sealed traits/enums to build JSON Schema trees, including support for:
+`Schema.derived` is implemented by `SchemaMacros` in `common/src/main/scala/io/github/serhiip/constellations/schema/SchemaMacros.scala`. The macro inspects case classes and sealed traits/enums to build JSON Schema trees, including support for:
 
 - Primitive types (`String`, `Int`, `Boolean`, etc.)
 - `Option` (marks fields as nullable)
@@ -303,7 +312,7 @@ All components include comprehensive observability:
 
 ```scala
 // Components are automatically wrapped with tracing and logging
-val observedDispatcher = Dispatcher[IO](dispatcher)
+val observedDispatcher = ToolDispatcher[IO](dispatcher)
 val observedExecutor = Executor[IO, Error, Response](executor)
 val observedMemory = Memory[IO, UUID](memory)
 ```
@@ -348,9 +357,9 @@ enum Value:
   case ListValue(value: List[Value])
 ```
 
-## Dispatcher: Automatic Function Calling
+## ToolDispatcher: Automatic Function Calling
 
-The `Dispatcher` is the heart of Constellations, enabling seamless integration between AI models and your Scala code. It automatically handles:
+The `ToolDispatcher` is the heart of Constellations, enabling seamless integration between AI models and your Scala code. It automatically handles:
 
 ### 1. Automatic Function Calling
 
@@ -358,7 +367,7 @@ Define your API as a Scala trait with methods returning `F[_]`:
 
 ```scala
 import io.github.serhiip.constellations.*
-import io.github.serhiip.constellations.Dispatcher
+import io.github.serhiip.constellations.ToolDispatcher
 import cats.effect.IO
 
 trait WeatherService[F[_]]:
@@ -380,7 +389,7 @@ class WeatherServiceImpl extends WeatherService[IO]:
     IO.pure(List("New York", "London", "Tokyo"))
 
 // Generate dispatcher (macros do all the work!)
-val dispatcher = Dispatcher.generate[IO](new WeatherServiceImpl)
+val dispatcher = ToolDispatcher.generate[IO](new WeatherServiceImpl)
 ```
 
 The macro automatically:
@@ -514,7 +523,7 @@ object AssistantApp extends IOApp.Simple:
 
         _ <- Client.resource[IO](apiKey, Client.Config()).use { client =>
           // Generate dispatcher from trait
-          Dispatcher(Dispatcher.generate[IO](
+          ToolDispatcher(ToolDispatcher.generate[IO](
             AssistantFunctionsImpl[IO]
           )).flatMap { dispatcher =>
             for
@@ -552,7 +561,7 @@ object AssistantApp extends IOApp.Simple:
     }.handleErrorWith(err => IO.println(s"Error: ${err.getMessage}"))
 
   private def replLoop(
-      dispatcher: Dispatcher[IO],
+      dispatcher: ToolDispatcher[IO],
       executor: Executor[IO, ?, Executor.Step.ModelResponse],
       memory: Memory[IO, java.util.UUID]
   ): IO[Unit] =
@@ -618,7 +627,7 @@ class DatabaseMemory[F[_]: Async, Id](repo: UserRepository[F, Id])
 ```scala
 class CustomExecutor[F[_]: Async: Tracer: Logger](
   client: Client[F],
-  dispatcher: Dispatcher[F]
+  dispatcher: ToolDispatcher[F]
 ) extends Executor[F, AppError, ChatResponse]:
 
   def execute(query: String): F[Either[AppError, ChatResponse]] =

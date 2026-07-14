@@ -6,7 +6,7 @@ import java.util.UUID
 import scala.compiletime.{constValue, erasedValue, summonInline}
 import scala.deriving.Mirror
 
-import io.github.serhiip.constellations.Dispatcher
+import io.github.serhiip.constellations.ToolDispatcher
 import io.github.serhiip.constellations.common.{FunctionResponse, Struct, Value}
 
 object SumType:
@@ -138,19 +138,19 @@ object StructEncoder extends LowPriorityStructEncoder:
   def apply[A](using encoder: StructEncoder[A]): StructEncoder[A] = encoder
 
 trait ResultEncoder[A]:
-  def encode(name: String, value: A): Dispatcher.Result
+  def encode(name: String, value: A): ToolDispatcher.Result
 
 trait LowPriorityResultEncoder:
   given [A](using encoder: StructEncoder[A]): ResultEncoder[A] with
-    def encode(name: String, value: A): Dispatcher.Result =
-      Dispatcher.Result.Response(FunctionResponse(name, encoder.encode(value)))
+    def encode(name: String, value: A): ToolDispatcher.Result =
+      ToolDispatcher.Result.Response(FunctionResponse(name, encoder.encode(value)))
 
 object ResultEncoder extends LowPriorityResultEncoder:
   def apply[A](using encoder: ResultEncoder[A]): ResultEncoder[A] = encoder
 
-  given ResultEncoder[Dispatcher.Result] with
-    def encode(name: String, value: Dispatcher.Result): Dispatcher.Result = value
+  given ResultEncoder[ToolDispatcher.Result] with
+    def encode(name: String, value: ToolDispatcher.Result): ToolDispatcher.Result = value
 
   given ResultEncoder[FunctionResponse] with
-    def encode(name: String, value: FunctionResponse): Dispatcher.Result =
-      Dispatcher.Result.Response(value)
+    def encode(name: String, value: FunctionResponse): ToolDispatcher.Result =
+      ToolDispatcher.Result.Response(value)

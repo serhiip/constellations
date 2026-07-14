@@ -17,18 +17,18 @@ import io.github.serhiip.constellations.common.Observability.*
 import io.github.serhiip.constellations.dispatcher.*
 import io.github.serhiip.constellations.dispatcher.naming.SnakeCaseNamingStrategy.*
 
-trait Dispatcher[F[_]]:
-  def dispatch(call: FunctionCall): F[Dispatcher.Result]
+trait ToolDispatcher[F[_]]:
+  def dispatch(call: FunctionCall): F[ToolDispatcher.Result]
   def getFunctionDeclarations: F[List[FunctionDeclaration]]
 
-object Dispatcher:
+object ToolDispatcher:
   enum Result:
     case Response(result: FunctionResponse)
     case HumanInTheLoop
 
   def apply[F[_]: Tracer: LoggerFactory: MonadThrow: Meter: Applicative](
-      delegate: Dispatcher[F]
-  ): F[Dispatcher[F]] =
+      delegate: ToolDispatcher[F]
+  ): F[ToolDispatcher[F]] =
     Meters.create[F].flatMap(observed(delegate, _))
 
   final case class Meters[F[_]](dispatchSuccess: Counter[F, Long], dispatchError: Counter[F, Long])
@@ -36,19 +36,19 @@ object Dispatcher:
   object Meters:
     def create[F[_]: Meter: Applicative]: F[Meters[F]] =
       (
-        Meter[F].counter[Long](Observability.Metrics.name("dispatcher_dispatch_success_count")).create,
-        Meter[F].counter[Long](Observability.Metrics.name("dispatcher_dispatch_error_count")).create
+        Meter[F].counter[Long](Observability.Metrics.name("tool_dispatcher_dispatch_success_count")).create,
+        Meter[F].counter[Long](Observability.Metrics.name("tool_dispatcher_dispatch_error_count")).create
       ).mapN(Meters(_, _))
 
   private def observed[F[_]: MonadThrow: Tracer: LoggerFactory](
-      delegate: Dispatcher[F],
+      delegate: ToolDispatcher[F],
       meters: Meters[F]
-  ): F[Dispatcher[F]] =
+  ): F[ToolDispatcher[F]] =
     LoggerFactory[F].create.map { logger =>
       given StructuredLogger[F] = logger
-      new Dispatcher[F]:
-        def dispatch(call: FunctionCall): F[Dispatcher.Result] =
-          val traced = Tracer[F].span("dispatcher", "dispatch")(dispatchSpanAttributes(call)*).logged { logger =>
+      new ToolDispatcher[F]:
+        def dispatch(call: FunctionCall): F[ToolDispatcher.Result] =
+          val traced = Tracer[F].span("tool-dispatcher", "dispatch")(dispatchSpanAttributes(call)*).logged { logger =>
             for
               _      <- logger.trace(s"Dispatching call: ${call.name}")
               result <- delegate.dispatch(call)
@@ -58,7 +58,7 @@ object Dispatcher:
           traced.withOperationCounters(meters.dispatchSuccess, meters.dispatchError)
 
         def getFunctionDeclarations: F[List[FunctionDeclaration]] =
-          Tracer[F].span("dispatcher", "get-function-declarations").logged { logger =>
+          Tracer[F].span("tool-dispatcher", "get-function-declarations").logged { logger =>
             for
               decls <- delegate.getFunctionDeclarations
               span  <- Tracer[F].currentSpanOrNoop
@@ -68,32 +68,32 @@ object Dispatcher:
           }
     }
 
-  def noop[F[_]: cats.Applicative]: Dispatcher[F] = new Dispatcher[F]:
-    def dispatch(call: FunctionCall): F[Dispatcher.Result] =
+  def noop[F[_]: cats.Applicative]: ToolDispatcher[F] = new ToolDispatcher[F]:
+    def dispatch(call: FunctionCall): F[ToolDispatcher.Result] =
       throw new UnsupportedOperationException(s"Noop dispatcher does not support dispatching calls: ${call.name}")
 
     def getFunctionDeclarations: F[List[FunctionDeclaration]] = List.empty.pure[F]
 
-  inline def to[F[_], T[_[_]]]: T[F] => Dispatcher[F] = ${ macroImplTo[F, T] }
+  inline def to[F[_], T[_[_]]]: T[F] => ToolDispatcher[F] = ${ macroImplTo[F, T] }
 
-  inline def generate[F[_]](inline component: Any, inline optionalOtherComponents: Any*): Dispatcher[F] =
+  inline def generate[F[_]](inline component: Any, inline optionalOtherComponents: Any*): ToolDispatcher[F] =
     ${ macroImpl[F]('component, 'optionalOtherComponents) }
 
-  private def macroImplTo[F[_]: Type, T[F[_]]: Type](using quotes: Quotes): Expr[T[F] => Dispatcher[F]] =
+  private def macroImplTo[F[_]: Type, T[F[_]]: Type](using quotes: Quotes): Expr[T[F] => ToolDispatcher[F]] =
     MacroSupport.buildFromTrait[F, T]
 
-  private def macroImpl[F[_]: Type](componentExpr: Expr[Any], optionalExpr: Expr[Seq[Any]])(using quotes: Quotes): Expr[Dispatcher[F]] =
+  private def macroImpl[F[_]: Type](componentExpr: Expr[Any], optionalExpr: Expr[Seq[Any]])(using quotes: Quotes): Expr[ToolDispatcher[F]] =
     MacroSupport.buildFromComponents[F](componentExpr, optionalExpr)
 
   private object MacroSupport:
-    def buildFromTrait[F[_]: Type, T[F[_]]: Type](using Quotes): Expr[T[F] => Dispatcher[F]] =
+    def buildFromTrait[F[_]: Type, T[F[_]]: Type](using Quotes): Expr[T[F] => ToolDispatcher[F]] =
       import quotes.reflect.*
       val traitSym = TypeRepr.of[T].typeSymbol
       if !traitSym.flags.is(Flags.Trait) then report.errorAndAbort(s"${traitSym.fullName} is not a trait.", Position.ofMacroExpansion)
 
       val methodType = MethodType(List("instance"))(
         _ => List(TypeRepr.of[T[F]]),
-        _ => TypeRepr.of[Dispatcher[F]]
+        _ => TypeRepr.of[ToolDispatcher[F]]
       )
 
       val lambda = Lambda(
@@ -107,9 +107,9 @@ object Dispatcher:
           buildDispatcherExpr[F](List((instanceTerm, traitSym))).asTerm.changeOwner(owner)
       )
 
-      lambda.asExprOf[T[F] => Dispatcher[F]]
+      lambda.asExprOf[T[F] => ToolDispatcher[F]]
 
-    def buildFromComponents[F[_]: Type](componentExpr: Expr[Any], optionalExpr: Expr[Seq[Any]])(using Quotes): Expr[Dispatcher[F]] =
+    def buildFromComponents[F[_]: Type](componentExpr: Expr[Any], optionalExpr: Expr[Seq[Any]])(using Quotes): Expr[ToolDispatcher[F]] =
       import quotes.reflect.*
       val components    = componentExpr.asTerm :: extractComponents(optionalExpr)
       val componentInfo = components.map { term =>
@@ -255,7 +255,7 @@ object Dispatcher:
     def processMethodForDispatch[F[_]: Type](using Quotes)(
         repr: quotes.reflect.TypeRepr,
         from: quotes.reflect.Term
-    )(method: quotes.reflect.Symbol): (String, Expr[FunctionCall => F[Dispatcher.Result]]) =
+    )(method: quotes.reflect.Symbol): (String, Expr[FunctionCall => F[ToolDispatcher.Result]]) =
       import quotes.reflect.*
       val qualifiedName: String              = s"${componentName(repr.typeSymbol.name)}_${methodName(method.name)}"
       def paramType(param: Symbol): TypeRepr =
@@ -402,14 +402,14 @@ object Dispatcher:
             case Apply(TypeApply(Select(_, "apply"), _), args) => args
             case other                                         =>
               report.errorAndAbort(
-                "Dispatcher.generate requires explicit component arguments. Avoid passing a Seq or collection.",
+                "ToolDispatcher.generate requires explicit component arguments. Avoid passing a Seq or collection.",
                 other.pos
               )
           loop(expr.asTerm, Map.empty)
 
     def buildDispatcherExpr[F[_]: Type](using Quotes)(
         componentInfo: List[(quotes.reflect.Term, quotes.reflect.Symbol)]
-    ): Expr[Dispatcher[F]] =
+    ): Expr[ToolDispatcher[F]] =
       import quotes.reflect.*
       val functionDeclarationsExpr =
         componentInfo
@@ -420,13 +420,13 @@ object Dispatcher:
       val callables = componentInfo.flatMap { case (term, traitSym) => processMethodsForDispatch[F](traitSym, term) }
 
       '{
-        new Dispatcher[F]:
+        new ToolDispatcher[F]:
 
-          private val methodMap: Map[String, FunctionCall => F[Dispatcher.Result]] = Map(
+          private val methodMap: Map[String, FunctionCall => F[ToolDispatcher.Result]] = Map(
             ${ Expr.ofList(callables.map { case (k, v) => '{ ${ Expr(k) } -> ${ v } } }) }*
           )
 
-          def dispatch(call: FunctionCall): F[Dispatcher.Result] =
+          def dispatch(call: FunctionCall): F[ToolDispatcher.Result] =
             methodMap.getOrElse(call.name, throw RuntimeException(s"No handler for ${call.name}"))(call)
 
           def getFunctionDeclarations: F[List[FunctionDeclaration]] = ${
@@ -437,8 +437,8 @@ object Dispatcher:
           }
       }
 
-  def mapK[F[_], G[_]](dispatcher: Dispatcher[F])(f: F ~> G): Dispatcher[G] = new Dispatcher[G]:
-    def dispatch(call: FunctionCall): G[Dispatcher.Result]    = f(dispatcher.dispatch(call))
+  def mapK[F[_], G[_]](dispatcher: ToolDispatcher[F])(f: F ~> G): ToolDispatcher[G] = new ToolDispatcher[G]:
+    def dispatch(call: FunctionCall): G[ToolDispatcher.Result]    = f(dispatcher.dispatch(call))
     def getFunctionDeclarations: G[List[FunctionDeclaration]] = f(dispatcher.getFunctionDeclarations)
 
   private def getFunctionDeclarationsSpanAttributes(decls: List[FunctionDeclaration]): List[Attribute[?]] =

@@ -3,12 +3,12 @@ package io.github.serhiip.constellations.mcp
 import scala.jdk.CollectionConverters.*
 
 import cats.effect.IO
-import cats.effect.std.Dispatcher as CeDispatcher
+import cats.effect.std.Dispatcher
 import munit.CatsEffectSuite
 
 import io.modelcontextprotocol.spec.McpSchema
 
-import io.github.serhiip.constellations.Dispatcher
+import io.github.serhiip.constellations.ToolDispatcher
 
 class McpToolSpecTest extends CatsEffectSuite:
 
@@ -18,13 +18,13 @@ class McpToolSpecTest extends CatsEffectSuite:
   object Calculator extends Calculator[IO]:
     def add(a: Int, b: Int): IO[Int] = IO.pure(a + b)
 
-  test("fromDispatcher exposes dispatcher methods as MCP tools") {
-    CeDispatcher
+  test("fromToolDispatcher exposes dispatcher methods as MCP tools") {
+    Dispatcher
       .parallel[IO]
-      .use: ceDispatcher =>
+      .use: dispatcher =>
         for
-          mcpToolSpec <- McpToolSpec.core[IO](ceDispatcher).run(McpToolSpec.defaultConfig)
-          tools       <- mcpToolSpec.fromDispatcher(Dispatcher.generate[IO](Calculator))
+          mcpToolSpec <- McpToolSpec.core[IO](dispatcher).run(McpToolSpec.defaultConfig)
+          tools       <- mcpToolSpec.fromToolDispatcher(ToolDispatcher.generate[IO](Calculator))
           tool         = tools.head
         yield
           assertEquals(tools.size, 1)
@@ -33,12 +33,12 @@ class McpToolSpecTest extends CatsEffectSuite:
   }
 
   test("generated tool dispatches MCP arguments through the dispatcher") {
-    CeDispatcher
+    Dispatcher
       .parallel[IO]
-      .use: ceDispatcher =>
+      .use: dispatcher =>
         for
-          mcpToolSpec <- McpToolSpec.core[IO](ceDispatcher).run(McpToolSpec.defaultConfig)
-          tools       <- mcpToolSpec.fromDispatcher(Dispatcher.generate[IO](Calculator))
+          mcpToolSpec <- McpToolSpec.core[IO](dispatcher).run(McpToolSpec.defaultConfig)
+          tools       <- mcpToolSpec.fromToolDispatcher(ToolDispatcher.generate[IO](Calculator))
           request      =
             McpSchema.CallToolRequest("Calculator_add", Map[String, Object]("a" -> Integer.valueOf(1), "b" -> Integer.valueOf(2)).asJava)
           result      <- IO.blocking(tools.head.callHandler().apply(null, request).block())

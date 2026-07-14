@@ -92,8 +92,11 @@ object Dependencies {
     "org.mockito" % "mockito-core" % "5.14.2" % Test
   )
 
+  val constellationsCommon =
+    catsEffect ++ otel4s ++ otel4sCore ++ logging ++ circe ++ testing
+
   val constellationsCore =
-    catsEffect ++ fs2 ++ otel4s ++ logging ++ circe ++ testing ++ otel4sCore
+    fs2 ++ otel4s ++ testing
 
   val constellationsOpenRouter = http4s ++ circe ++ testing ++ logging ++ logback
 

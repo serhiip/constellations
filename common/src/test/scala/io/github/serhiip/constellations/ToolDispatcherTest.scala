@@ -60,7 +60,7 @@ class GreetingApiStub extends GreetingApi[IO]:
   def greet(name: String): IO[String] =
     IO.pure(s"Hello, $name")
 
-class DispatcherTest extends CatsEffectSuite:
+class ToolDispatcherTest extends CatsEffectSuite:
 
   private def convertValue(value: Any): Value = value match
     case s: String    => Value.string(s)
@@ -90,21 +90,21 @@ class DispatcherTest extends CatsEffectSuite:
     val structFields = args.map { case (key, value) => key -> convertValue(value) }
     FunctionCall(name, Struct(structFields))
 
-  private def extractResponseStruct(response: Dispatcher.Result): Struct =
+  private def extractResponseStruct(response: ToolDispatcher.Result): Struct =
     response match
-      case Dispatcher.Result.Response(result) => result.response
-      case Dispatcher.Result.HumanInTheLoop   => throw new RuntimeException("Unexpected HumanInTheLoop result")
+      case ToolDispatcher.Result.Response(result) => result.response
+      case ToolDispatcher.Result.HumanInTheLoop   => throw new RuntimeException("Unexpected HumanInTheLoop result")
 
-  private def extractString(response: Dispatcher.Result): String =
+  private def extractString(response: ToolDispatcher.Result): String =
     extractResponseStruct(response).fields("value") match
       case Value.StringValue(s) => s
       case other                => throw new RuntimeException(s"Unexpected response format: $other")
 
   val impl       = new TestApiImpl
-  val dispatcher = Dispatcher.generate[IO](impl)
-  val typedDispatcher = Dispatcher.to[IO, TestApi](impl)
+  val dispatcher = ToolDispatcher.generate[IO](impl)
+  val typedDispatcher = ToolDispatcher.to[IO, TestApi](impl)
   val greeting   = new GreetingApiStub
-  val multiDispatcher = Dispatcher.generate[IO](impl, greeting)
+  val multiDispatcher = ToolDispatcher.generate[IO](impl, greeting)
 
   test("dispatcher should successfully call a method with various parameter types") {
     val call = createFunctionCall("TestApi_mixed_types", Map("int_val" -> 42, "str_val" -> "test", "bool_val" -> true))

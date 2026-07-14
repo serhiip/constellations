@@ -71,6 +71,7 @@ lazy val root = (project in file("."))
     publish / skip    := true
   )
   .aggregate(
+    `constellations-common`,
     `constellations-core`,
     `constellations-openrouter`,
     `constellations-google-genai`,
@@ -81,12 +82,20 @@ lazy val root = (project in file("."))
     docs
   )
 
+lazy val `constellations-common` = (project in file("common"))
+  .settings(commonReleaseSettings)
+  .settings(
+    name := "constellations-common",
+    libraryDependencies ++= Dependencies.constellationsCommon
+  )
+
 lazy val `constellations-core` = (project in file("core"))
   .settings(commonReleaseSettings)
   .settings(
     name := "constellations-core",
     libraryDependencies ++= Dependencies.constellationsCore
   )
+  .dependsOn(`constellations-common`)
 
 lazy val `constellations-openrouter` = (project in file("openrouter"))
   .settings(commonReleaseSettings)
@@ -127,7 +136,7 @@ lazy val `constellations-mcp` = (project in file("mcp"))
     name := "constellations-mcp",
     libraryDependencies ++= Dependencies.constellationsMcp
   )
-  .dependsOn(`constellations-core`)
+  .dependsOn(`constellations-common`)
 
 lazy val `constellations-examples` = (project in file("examples"))
   .settings(
@@ -159,6 +168,7 @@ lazy val docs = project
     // Scaladoc configuration - exclude non-library projects
     ScalaUnidoc / unidoc / unidocProjectFilter :=
       inProjects(
+        `constellations-common`,
         `constellations-core`,
         `constellations-openrouter`,
         `constellations-google-genai`,
@@ -179,6 +189,7 @@ lazy val docs = project
   )
   .enablePlugins(MdocPlugin, DocusaurusPlugin, ScalaUnidocPlugin)
   .dependsOn(
+    `constellations-common`,
     `constellations-core`,
     `constellations-openrouter`,
     `constellations-google-genai`,
