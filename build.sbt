@@ -74,6 +74,7 @@ lazy val root = (project in file("."))
     `constellations-core`,
     `constellations-openrouter`,
     `constellations-google-genai`,
+    `constellations-gcp-rag-engine`,
     `constellations-bedrock`,
     `constellations-mcp`,
     `constellations-examples`,
@@ -104,6 +105,14 @@ lazy val `constellations-google-genai` = (project in file("google-genai"))
   )
   .dependsOn(`constellations-core`)
 
+lazy val `constellations-gcp-rag-engine` = (project in file("gcp-rag-engine"))
+  .settings(commonReleaseSettings)
+  .settings(
+    name := "constellations-gcp-rag-engine",
+    libraryDependencies ++= Dependencies.constellationsGcpRagEngine
+  )
+  .dependsOn(`constellations-core`)
+
 lazy val `constellations-bedrock` = (project in file("bedrock"))
   .settings(commonReleaseSettings)
   .settings(
@@ -129,6 +138,7 @@ lazy val `constellations-examples` = (project in file("examples"))
   .dependsOn(
     `constellations-core`,
     `constellations-google-genai`,
+    `constellations-gcp-rag-engine`,
     `constellations-openrouter`,
     `constellations-bedrock`,
     `constellations-mcp`
@@ -148,7 +158,12 @@ lazy val docs = project
     ),
     // Scaladoc configuration - exclude non-library projects
     ScalaUnidoc / unidoc / unidocProjectFilter :=
-      inProjects(`constellations-core`, `constellations-openrouter`, `constellations-google-genai`),
+      inProjects(
+        `constellations-core`,
+        `constellations-openrouter`,
+        `constellations-google-genai`,
+        `constellations-gcp-rag-engine`
+      ),
     syncApiDocs                                := {
       val _           = (Compile / unidoc).value
       val generated   = baseDirectory.value / "target" / s"scala-${scalaVersion.value}" / "unidoc"
@@ -163,4 +178,9 @@ lazy val docs = project
     docusaurusPublishGhpages                   := docusaurusPublishGhpages.dependsOn(mdoc.toTask(""), syncApiDocs).value
   )
   .enablePlugins(MdocPlugin, DocusaurusPlugin, ScalaUnidocPlugin)
-  .dependsOn(`constellations-core`, `constellations-openrouter`, `constellations-google-genai`)
+  .dependsOn(
+    `constellations-core`,
+    `constellations-openrouter`,
+    `constellations-google-genai`,
+    `constellations-gcp-rag-engine`
+  )

@@ -32,8 +32,10 @@ private[constellations] object Observability:
     )
 
   object Metrics:
-    inline def name(name: String): String = s"$namePrefix/$name"
+    inline def name(name: String): String                                              = s"$namePrefix/$name"
+    inline def component(component: String)(operation: String)(metric: String): String = name(s"${component}_${operation}_$metric")
 
   extension [F[_]: MonadThrow, A](fa: F[A])
-    def withOperationCounters(success: Counter[F, Long], error: Counter[F, Long]): F[A] =
-      fa.onError(_ => error.inc()).flatTap(_ => success.inc())
+    def withOperationCounters(success: Counter[F, Long], error: Counter[F, Long], attributes: Attribute[?]*): F[A] =
+      val attrs = attributes.toList
+      fa.onError(_ => error.inc(attrs)).flatTap(_ => success.inc(attrs))

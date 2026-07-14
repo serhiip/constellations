@@ -68,6 +68,10 @@ object Dependencies {
     "com.google.genai" % "google-genai" % "1.18.0"
   )
 
+  val googleCloudAiplatform = Seq(
+    "com.google.cloud" % "google-cloud-aiplatform" % "3.94.0"
+  )
+
   val googleCloudNio = Seq(
     "com.google.cloud" % "google-cloud-nio" % "0.127.34"
   )
@@ -84,12 +88,18 @@ object Dependencies {
     "software.amazon.awssdk" % "signin" % "2.46.15"
   )
 
+  val mockito = Seq(
+    "org.mockito" % "mockito-core" % "5.14.2" % Test
+  )
+
   val constellationsCore =
     catsEffect ++ fs2 ++ otel4s ++ logging ++ circe ++ testing ++ otel4sCore
 
   val constellationsOpenRouter = http4s ++ circe ++ testing ++ logging ++ logback
 
   val constellationsGoogleGenai = googleGenai ++ testing
+
+  val constellationsGcpRagEngine = googleCloudAiplatform ++ testing ++ mockito
 
   val constellationsBedrock = awsBedrock ++ circe ++ testing
 

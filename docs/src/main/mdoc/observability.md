@@ -32,6 +32,16 @@ import org.typelevel.log4cats.StructuredLogger
 logger.info("Processing function call")(...)
 ```
 
+## Similarity metrics
+
+`Similarity.observed` records success/error counters and a latency histogram for `findClosest`:
+
+- `constellations/similarity_find_closest_success_count`
+- `constellations/similarity_find_closest_error_count`
+- `constellations/similarity_find_closest_duration` (unit `s`, buckets from 100ms to 15s)
+
+Compose with `Similarity.observed` (e.g. `Similarity.observed(RagEngine.similarity(...))`) for traced/metered RAG search.
+
 ## Coming Soon
 
 Detailed configuration examples for OpenTelemetry backends.

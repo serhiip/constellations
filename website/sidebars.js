@@ -40,6 +40,7 @@ const sidebars = {
       items: [
         'openrouter',
         'google-genai',
+        'gcp-rag-engine',
       ],
     },
     

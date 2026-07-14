@@ -1,11 +1,22 @@
 <configuration>
   <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
     <encoder>
-      <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+      <pattern>%highlight(%-5level) %cyan(%d{HH:mm:ss.SSS}) %gray([%-15.15thread]) %magenta(%-24.24logger{24}) %msg%n</pattern>
     </encoder>
   </appender>
 
-  <root level="TRACE">
-    <appender-ref ref="STDOUT" />
+  <!-- Application / example logging -->
+  <logger name="io.github.serhiip.constellations" level="INFO"/>
+
+  <!-- Silence noisy gRPC / Netty transport debug -->
+  <logger name="io.grpc" level="WARN"/>
+  <logger name="io.netty" level="WARN"/>
+  <logger name="io.grpc.netty" level="WARN"/>
+  <logger name="io.grpc.netty.shaded" level="WARN"/>
+  <logger name="com.google.api.client" level="WARN"/>
+  <logger name="com.google.auth" level="WARN"/>
+
+  <root level="INFO">
+    <appender-ref ref="STDOUT"/>
   </root>
 </configuration>
