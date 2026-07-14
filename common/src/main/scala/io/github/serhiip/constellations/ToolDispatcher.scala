@@ -26,7 +26,7 @@ object ToolDispatcher:
     case Response(result: FunctionResponse)
     case HumanInTheLoop
 
-  def apply[F[_]: Tracer: LoggerFactory: MonadThrow: Meter: Applicative](
+  def apply[F[_]: Tracer: LoggerFactory: MonadThrow: Meter](
       delegate: ToolDispatcher[F]
   ): F[ToolDispatcher[F]] =
     Meters.create[F].flatMap(observed(delegate, _))

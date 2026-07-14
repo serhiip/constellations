@@ -37,6 +37,11 @@ libraryDependencies ++= Seq(
 
 For tool-routing only (without Executor/Memory), depend on `constellations-common` directly.
 
+## Scala versions
+
+- `constellations-common` is built with **Scala 3.3.8** (LTS) so `ToolDispatcher` works on 3.3.8+ and 3.7.x
+- Other modules (`core`, providers, `mcp`, …) require **Scala 3.7.x**
+
 ## Core concepts
 
 - `ToolDispatcher[F[_]]`: builds function declarations and routes calls to Scala methods

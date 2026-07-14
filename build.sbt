@@ -85,7 +85,8 @@ lazy val root = (project in file("."))
 lazy val `constellations-common` = (project in file("common"))
   .settings(commonReleaseSettings)
   .settings(
-    name := "constellations-common",
+    name         := "constellations-common",
+    scalaVersion := "3.3.8",
     libraryDependencies ++= Dependencies.constellationsCommon
   )
 

@@ -13,6 +13,11 @@ libraryDependencies ++= Seq(
 )
 ```
 
+Scala versions:
+
+- `constellations-common` (including `ToolDispatcher`) is built with **Scala 3.3.8** (LTS) and works on 3.3.8+
+- Other modules require **Scala 3.7.x**
+
 ## Quick Example
 
 Here's a simple example showing how to define AI-callable functions:
