@@ -85,6 +85,23 @@ val multi: ToolDispatcher[IO] =
 
 Declarations from each trait are merged; tool names stay unique via the trait prefix.
 
+### Combining dispatchers
+
+Use `combine` to merge already-built `ToolDispatcher` values (for example a local dispatcher plus an MCP one). It loads declarations once, builds a name→dispatcher index, and returns **`F[ToolDispatcher[F]]`**. Earlier dispatchers win on name clashes.
+
+```scala mdoc:silent
+val local: ToolDispatcher[IO] =
+  ToolDispatcher.generate[IO](calculator)
+
+val greetingOnly: ToolDispatcher[IO] =
+  ToolDispatcher.generate[IO](greeting)
+
+// merged: IO[ToolDispatcher[IO]]
+val mergedIO = ToolDispatcher.combine(local, greetingOnly)
+```
+
+This is different from multi-arg `generate`, which merges trait *components* at compile time. Wrap the result with `ToolDispatcher.observed(...)` if you want a single observability layer on the composite.
+
 ## Naming contract
 
 | Scala | Tool / JSON name |
@@ -158,7 +175,7 @@ Decode errors currently surface as thrown exceptions when building the call (out
 
 ## Observability
 
-`ToolDispatcher.apply` wraps a delegate with tracing, logging, and success/error counters. It returns **`F[ToolDispatcher[F]]`** and needs:
+`ToolDispatcher.observed` wraps a delegate with tracing, logging, and success/error counters. It returns **`F[ToolDispatcher[F]]`** and needs:
 
 - `Tracer[F]`
 - `LoggerFactory[F]`
@@ -176,7 +193,7 @@ import io.github.serhiip.constellations.ToolDispatcher
 def observe[F[_]: Tracer: LoggerFactory: Meter: MonadThrow](
     raw: ToolDispatcher[F]
 ): F[ToolDispatcher[F]] =
-  ToolDispatcher(raw)
+  ToolDispatcher.observed(raw)
 ```
 
 | Kind | Name |

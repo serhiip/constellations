@@ -80,11 +80,11 @@ dispatcher.dispatch(call).flatMap {
 
 ### Observability
 
-`ToolDispatcher.apply` returns `F[ToolDispatcher[F]]` and needs `Tracer`, `LoggerFactory`, `Meter`, and `MonadThrow`:
+`ToolDispatcher.observed` returns `F[ToolDispatcher[F]]` and needs `Tracer`, `LoggerFactory`, `Meter`, and `MonadThrow`:
 
 ```scala
 for
-  observed <- ToolDispatcher(dispatcher)
+  observed <- ToolDispatcher.observed(dispatcher)
 yield observed
 ```
 

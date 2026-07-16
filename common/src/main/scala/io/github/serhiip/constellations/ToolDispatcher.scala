@@ -26,19 +26,15 @@ object ToolDispatcher:
     case Response(result: FunctionResponse)
     case HumanInTheLoop
 
-  def apply[F[_]: Tracer: LoggerFactory: MonadThrow: Meter](
-      delegate: ToolDispatcher[F]
-  ): F[ToolDispatcher[F]] =
+  def observed[F[_]: Tracer: LoggerFactory: MonadThrow: Meter](delegate: ToolDispatcher[F]): F[ToolDispatcher[F]] =
     Meters.create[F].flatMap(observed(delegate, _))
 
   final case class Meters[F[_]](dispatchSuccess: Counter[F, Long], dispatchError: Counter[F, Long])
 
   object Meters:
     def create[F[_]: Meter: Applicative]: F[Meters[F]] =
-      (
-        Meter[F].counter[Long](Observability.Metrics.name("tool_dispatcher_dispatch_success_count")).create,
-        Meter[F].counter[Long](Observability.Metrics.name("tool_dispatcher_dispatch_error_count")).create
-      ).mapN(Meters(_, _))
+      val metric = Metrics.component("tool_dispatcher")("dispatch")
+      (Meter[F].counter[Long](metric("success_count")).create, Meter[F].counter[Long](metric("error_count")).create).mapN(Meters.apply)
 
   private def observed[F[_]: MonadThrow: Tracer: LoggerFactory](
       delegate: ToolDispatcher[F],
@@ -50,7 +46,7 @@ object ToolDispatcher:
         def dispatch(call: FunctionCall): F[ToolDispatcher.Result] =
           val traced = Tracer[F].span("tool-dispatcher", "dispatch")(dispatchSpanAttributes(call)*).logged { logger =>
             for
-              _      <- logger.trace(s"Dispatching call: ${call.name}")
+              _      <- logger.debug(s"Dispatching call: ${call.name} with args ${call.args}")
               result <- delegate.dispatch(call)
               _      <- logger.trace(s"Dispatch result: $result")
             yield result
@@ -68,11 +64,25 @@ object ToolDispatcher:
           }
     }
 
-  def noop[F[_]: cats.Applicative]: ToolDispatcher[F] = new ToolDispatcher[F]:
+  def noop[F[_]: Applicative]: ToolDispatcher[F] = new ToolDispatcher[F]:
     def dispatch(call: FunctionCall): F[ToolDispatcher.Result] =
       throw new UnsupportedOperationException(s"Noop dispatcher does not support dispatching calls: ${call.name}")
 
     def getFunctionDeclarations: F[List[FunctionDeclaration]] = List.empty.pure[F]
+
+  def combine[F[_]: MonadThrow](dispatchers: ToolDispatcher[F]*): F[ToolDispatcher[F]] =
+    dispatchers
+      .traverse(d => d.getFunctionDeclarations.tupleLeft(d))
+      .map: owned =>
+        val (declarations, index) =
+          owned.foldLeft(List.empty[FunctionDeclaration] -> Map.empty[String, ToolDispatcher[F]]):
+            case ((decls, idx), (dispatcher, ds)) =>
+              val fresh = ds.filterNot(d => idx.contains(d.name))
+              (decls ++ fresh, idx ++ fresh.map(_.name -> dispatcher))
+        new:
+          def getFunctionDeclarations: F[List[FunctionDeclaration]] = declarations.pure[F]
+          def dispatch(call: FunctionCall): F[Result]               =
+            index.get(call.name).liftTo[F](RuntimeException(s"No handler for ${call.name}")).flatMap(_.dispatch(call))
 
   inline def to[F[_], T[_[_]]]: T[F] => ToolDispatcher[F] = ${ macroImplTo[F, T] }
 
@@ -91,10 +101,7 @@ object ToolDispatcher:
       val traitSym = TypeRepr.of[T].typeSymbol
       if !traitSym.flags.is(Flags.Trait) then report.errorAndAbort(s"${traitSym.fullName} is not a trait.", Position.ofMacroExpansion)
 
-      val methodType = MethodType(List("instance"))(
-        _ => List(TypeRepr.of[T[F]]),
-        _ => TypeRepr.of[ToolDispatcher[F]]
-      )
+      val methodType = MethodType(List("instance"))(_ => List(TypeRepr.of[T[F]]), _ => TypeRepr.of[ToolDispatcher[F]])
 
       val lambda = Lambda(
         Symbol.spliceOwner,
@@ -438,8 +445,8 @@ object ToolDispatcher:
       }
 
   def mapK[F[_], G[_]](dispatcher: ToolDispatcher[F])(f: F ~> G): ToolDispatcher[G] = new ToolDispatcher[G]:
-    def dispatch(call: FunctionCall): G[ToolDispatcher.Result]    = f(dispatcher.dispatch(call))
-    def getFunctionDeclarations: G[List[FunctionDeclaration]] = f(dispatcher.getFunctionDeclarations)
+    def dispatch(call: FunctionCall): G[ToolDispatcher.Result] = f(dispatcher.dispatch(call))
+    def getFunctionDeclarations: G[List[FunctionDeclaration]]  = f(dispatcher.getFunctionDeclarations)
 
   private def getFunctionDeclarationsSpanAttributes(decls: List[FunctionDeclaration]): List[Attribute[?]] =
     Attribute("function_declaration_count", decls.size.toLong) ::
@@ -459,12 +466,12 @@ object ToolDispatcher:
 
   private def valueAsAttributes(value: Value, path: String): List[Attribute[?]] =
     value match
-      case Value.NullValue            => List(Attribute(path, "null"))
-      case Value.NumberValue(n)       => List(Attribute(path, n.toString))
-      case Value.StringValue(s)       => List(Attribute(path, s))
-      case Value.BoolValue(b)         => List(Attribute(path, b.toString))
-      case Value.StructValue(inner)   => structFieldsAsAttributes(inner, path)
-      case Value.ListValue(elements)  =>
+      case Value.NullValue           => List(Attribute(path, "null"))
+      case Value.NumberValue(n)      => List(Attribute(path, n.toString))
+      case Value.StringValue(s)      => List(Attribute(path, s))
+      case Value.BoolValue(b)        => List(Attribute(path, b.toString))
+      case Value.StructValue(inner)  => structFieldsAsAttributes(inner, path)
+      case Value.ListValue(elements) =>
         elements.zipWithIndex.toList.flatMap { case (elem, idx) =>
           valueAsAttributes(elem, s"$path.$idx")
         }

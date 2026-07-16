@@ -63,7 +63,7 @@ object DispatcherEncodingExample extends IOApp.Simple:
                                         .resource[IO](apiKey, Client.Config())
                                         .use { client =>
                                           for
-                                            dispatcher <- ToolDispatcher(
+                                            dispatcher <- ToolDispatcher.observed(
                                                             ToolDispatcher.generate[IO](
                                                               ExampleFunctionsImpl[IO],
                                                               DiagnosticFunctionsDefault[IO]

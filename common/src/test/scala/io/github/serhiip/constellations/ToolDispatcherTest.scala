@@ -218,6 +218,52 @@ class ToolDispatcherTest extends CatsEffectSuite:
       assertEquals(extractString(greetingResponse), "Hello, Ada")
   }
 
+  test("combine should route calls across dispatchers") {
+    val testOnly     = ToolDispatcher.generate[IO](impl)
+    val greetingOnly = ToolDispatcher.generate[IO](greeting)
+    val testCall     = createFunctionCall("TestApi_no_params")
+    val greetingCall = createFunctionCall("GreetingApi_greet", Map("name" -> "Ada"))
+    for
+      merged           <- ToolDispatcher.combine(testOnly, greetingOnly)
+      testResponse     <- merged.dispatch(testCall)
+      greetingResponse <- merged.dispatch(greetingCall)
+      names            <- merged.getFunctionDeclarations.map(_.map(_.name).toSet)
+    yield
+      assertEquals(extractString(testResponse), "no params")
+      assertEquals(extractString(greetingResponse), "Hello, Ada")
+      assert(names.contains("TestApi_no_params"))
+      assert(names.contains("GreetingApi_greet"))
+  }
+
+  test("combine should prefer the leftmost dispatcher on name clashes") {
+    val leftGreeting = new GreetingApi[IO]:
+      def greet(name: String): IO[String] = IO.pure(s"left:$name")
+    val rightGreeting = new GreetingApi[IO]:
+      def greet(name: String): IO[String] = IO.pure(s"right:$name")
+    val left  = ToolDispatcher.generate[IO](leftGreeting)
+    val right = ToolDispatcher.generate[IO](rightGreeting)
+    val call  = createFunctionCall("GreetingApi_greet", Map("name" -> "Ada"))
+    for
+      merged <- ToolDispatcher.combine(left, right)
+      result <- merged.dispatch(call)
+      decls  <- merged.getFunctionDeclarations
+    yield
+      assertEquals(extractString(result), "left:Ada")
+      assertEquals(decls.count(_.name == "GreetingApi_greet"), 1)
+  }
+
+  test("combine should fail for an unknown method") {
+    val testOnly = ToolDispatcher.generate[IO](impl)
+    val greetingOnly = ToolDispatcher.generate[IO](greeting)
+    val call = createFunctionCall("Unknown_tool")
+    for
+      merged <- ToolDispatcher.combine(testOnly, greetingOnly)
+      attempt <- merged.dispatch(call).attempt
+    yield
+      assert(attempt.isLeft)
+      assertEquals(attempt.left.toOption.get.getMessage, "No handler for Unknown_tool")
+  }
+
   test("dispatcher to should dispatch for single trait") {
     val call = createFunctionCall("TestApi_no_params")
     typedDispatcher.dispatch(call).map(response => assertEquals(extractString(response), "no params"))

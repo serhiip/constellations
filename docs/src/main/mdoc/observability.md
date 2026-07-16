@@ -4,7 +4,7 @@ Constellations components can be wrapped with OpenTelemetry tracing, log4cats lo
 
 ## ToolDispatcher
 
-`ToolDispatcher.apply` returns **`F[ToolDispatcher[F]]`**. Required givens: `Tracer`, `LoggerFactory`, `Meter`, `MonadThrow`.
+`ToolDispatcher.observed` returns **`F[ToolDispatcher[F]]`**. Required givens: `Tracer`, `LoggerFactory`, `Meter`, `MonadThrow`.
 
 ```scala mdoc:compile-only
 import cats.MonadThrow
@@ -17,7 +17,7 @@ import io.github.serhiip.constellations.ToolDispatcher
 def withObservability[F[_]: Tracer: LoggerFactory: Meter: MonadThrow](
     raw: ToolDispatcher[F]
 ): F[ToolDispatcher[F]] =
-  ToolDispatcher(raw)
+  ToolDispatcher.observed(raw)
 ```
 
 | Kind | Name |
