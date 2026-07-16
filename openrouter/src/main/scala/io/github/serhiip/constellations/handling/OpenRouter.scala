@@ -1,14 +1,16 @@
 package io.github.serhiip.constellations.handling
 
-import cats.effect.Sync
+import java.util.Base64
+
+import cats.MonadThrow
 import cats.syntax.all.*
+import fs2.{Chunk, Stream}
+import io.circe.parser.*
 
 import io.github.serhiip.constellations.*
 import io.github.serhiip.constellations.common.*
-import io.github.serhiip.constellations.openrouter.*
-import io.circe.parser.*
 import io.github.serhiip.constellations.common.Codecs.given
-import java.util.Base64
+import io.github.serhiip.constellations.openrouter.*
 
 object OpenRouter:
 
@@ -20,8 +22,49 @@ object OpenRouter:
       case MalformedImageDataUrl(url) => s"Malformed image data URL: $url"
       case DecodeError(message)       => s"Failed to decode image: $message"
 
-  def apply[F[_]: Sync](): Handling[F, ChatCompletionResponse] = new:
+  def apply(): Handling[ChatCompletionResponse] = summon
 
+  given Handling[ChatCompletionResponse] with
+    override def structuredOutput(response: ChatCompletionResponse): Either[Throwable, Struct] =
+      response.choices.headOption match
+        case Some(ChatCompletionChoice(_, ChatMessage(_, Some(content), _, _, _, _), _)) =>
+          content.as[Struct].leftMap(e => RuntimeException(s"Failed to parse structured output: ${e.getMessage}"))
+        case Some(ChatCompletionChoice(_, ChatMessage(_, None, _, _, _, _), _))          => Struct.empty.asRight
+        case None                                                                        => Struct.empty.asRight
+
+    override def getTextFromResponse(response: ChatCompletionResponse): Option[String] =
+      response.choices.headOption match
+        case Some(ChatCompletionChoice(_, ChatMessage(_, Some(content), _, _, _, _), _)) => content.asString.filterNot(_.isBlank)
+        case _                                                                           => none
+
+    override def getFunctionCalls(response: ChatCompletionResponse): Either[Throwable, List[FunctionCall]] =
+      response.choices.headOption match
+        case Some(ChatCompletionChoice(_, ChatMessage(_, _, Some(toolCalls), _, _, _), _)) =>
+          toolCalls.traverse { toolCall =>
+            val argsJson = Option(toolCall.function.arguments).filterNot(_.isBlank).getOrElse("{}")
+            parse(argsJson).bimap(
+              error => RuntimeException(s"Failed to parse tool call arguments: ${error.getMessage}"),
+              json =>
+                val fields = json.asObject
+                  .map(_.toMap.view.mapValues(_.toString).mapValues(Value.string).toMap)
+                  .getOrElse(Map.empty)
+                FunctionCall(toolCall.function.name, Struct(fields), toolCall.id.some)
+            )
+          }
+        case Some(ChatCompletionChoice(_, ChatMessage(_, _, None, _, _, _), _)) | None     => List.empty[FunctionCall].asRight
+
+    override def finishReason(response: ChatCompletionResponse): FinishReason =
+      response.choices.headOption match
+        case Some(ChatCompletionChoice(_, _, Some(finishReason))) =>
+          finishReason match
+            case "tool_calls"     => FinishReason.ToolCalls
+            case "stop"           => FinishReason.Stop
+            case "length"         => FinishReason.Length
+            case "content_filter" => FinishReason.ContentFilter
+            case _                => FinishReason.Error
+        case Some(ChatCompletionChoice(_, _, None)) | None        => FinishReason.Error
+
+  given [F[_]: MonadThrow]: AssetsHandling[F, ChatCompletionResponse] with
     private val DataUrl = raw"^data:(image/[-+.\w]+);base64,(.*)$$".r
 
     private def extFromMediaType(mediaType: String): String =
@@ -37,59 +80,12 @@ object OpenRouter:
         case DataUrl(mime, data) =>
           Either
             .catchNonFatal(Base64.getMimeDecoder.decode(data))
-            .map { bytes =>
-              GeneratedImage(mime, extFromMediaType(mime), fs2.Stream.chunk(fs2.Chunk.array(bytes)).covary[F])
-            }
+            .map(bytes => GeneratedImage(mime, extFromMediaType(mime), Stream.chunk(Chunk.array(bytes)).covary[F]))
             .leftMap(e => Error.DecodeError(e.getMessage))
         case _                   => Error.MalformedImageDataUrl(raw).asLeft
-
-    override def structuredOutput(response: ChatCompletionResponse): F[Struct] =
-      response.choices.headOption match
-        case Some(ChatCompletionChoice(_, ChatMessage(_, Some(content), _, _, _, _), _)) =>
-          content.as[Struct] match
-            case Right(s) => s.pure[F]
-            case Left(e)  =>
-              RuntimeException(s"Failed to parse structured output: ${e.getMessage}").raiseError[F, Struct]
-        case Some(ChatCompletionChoice(_, ChatMessage(_, None, _, _, _, _), _))          => Struct.empty.pure[F]
-        case None                                                                        => Struct.empty.pure[F]
-
-    override def getTextFromResponse(response: ChatCompletionResponse): F[Option[String]] =
-      response.choices.headOption match
-        case Some(ChatCompletionChoice(_, ChatMessage(_, Some(content), _, _, _, _), _)) => content.asString.filterNot(_.isBlank).pure[F]
-        case _                                                                           => none[String].pure[F]
-
-    override def getFunctinoCalls(response: ChatCompletionResponse): F[List[FunctionCall]] =
-      response.choices.headOption match
-        case Some(ChatCompletionChoice(_, ChatMessage(_, _, Some(toolCalls), _, _, _), _)) =>
-          toolCalls.traverse { toolCall =>
-            val argsJson = Option(toolCall.function.arguments).filterNot(_.isBlank).getOrElse("{}")
-            parse(argsJson) match
-              case Right(json) =>
-                val fields = json.asObject
-                  .map(_.toMap.view.mapValues(_.toString).mapValues(Value.string).toMap)
-                  .getOrElse(Map.empty)
-                FunctionCall(toolCall.function.name, Struct(fields), toolCall.id.some).pure[F]
-              case Left(error) =>
-                RuntimeException(s"Failed to parse tool call arguments: ${error.getMessage}")
-                  .raiseError[F, FunctionCall]
-          }
-        case Some(ChatCompletionChoice(_, ChatMessage(_, _, None, _, _, _), _)) | None     => List.empty[FunctionCall].pure[F]
-
-    override def finishReason(response: ChatCompletionResponse): F[FinishReason] =
-      response.choices.headOption match
-        case Some(ChatCompletionChoice(_, _, Some(finishReason))) =>
-          finishReason match
-            case "tool_calls"     => FinishReason.ToolCalls.pure[F]
-            case "stop"           => FinishReason.Stop.pure[F]
-            case "length"         => FinishReason.Length.pure[F]
-            case "content_filter" => FinishReason.ContentFilter.pure[F]
-            case _                => FinishReason.Error.pure[F]
-        case Some(ChatCompletionChoice(_, _, None)) | None        => FinishReason.Error.pure[F]
 
     override def getImages(response: ChatCompletionResponse): F[List[GeneratedImage[F]]] =
       response.choices.headOption
         .flatMap(_.message.images)
         .getOrElse(List.empty)
-        .traverse { imageUrlContent =>
-          decodeImage(imageUrlContent.imageUrl.url).liftTo[F]
-        }
+        .traverse(imageUrlContent => decodeImage(imageUrlContent.imageUrl.url).liftTo[F])

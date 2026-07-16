@@ -1,64 +1,83 @@
-# Value and Types
+# Values and schemas
 
-Constellations provides type-safe data structures for AI interactions.
+Shared data model in **`constellations-common`**: JSON-like values for tool args/results, and JSON Schema for declarations and structured output.
 
-## Value
+## Value and Struct
 
-The `Value` enum represents JSON-like values with type safety:
-
-```scala
-enum Value:
-  case NullValue
-  case NumberValue(value: Double)
-  case StringValue(value: String)
-  case BoolValue(value: Boolean)
-  case StructValue(value: Struct)
-  case ListValue(value: List[Value])
-```
-
-## Struct
-
-`Struct` is a container for structured data:
-
-```scala
-case class Struct(fields: Map[String, Value])
-```
-
-## Schema
-
-`Schema` represents JSON Schema for type definitions:
-
-```scala
-case class Schema(
-  tpe: SchemaType,
-  format: Option[String],
-  description: Option[String],
-  nullable: Option[Boolean],
-  // ... more fields
-)
-
-enum SchemaType:
-  case String, Number, Integer, Boolean, Array, Object
-```
-
-## Factory Methods
-
-Create values easily:
-
-```scala
-import io.github.serhiip.constellations.common.Value
-import io.github.serhiip.constellations.common.Struct
+```scala mdoc:silent
+import io.github.serhiip.constellations.common.*
 
 val stringVal = Value.string("hello")
 val numberVal = Value.number(42)
 val boolVal = Value.bool(true)
-val structVal = Value.struct(
-  "name" -> Value.string("John"),
-  "age" -> Value.number(30)
-)
 val listVal = Value.list(Value.string("a"), Value.string("b"))
+val structVal = Value.struct(
+  Struct(
+    "name" -> Value.string("Ada"),
+    "age" -> Value.number(36)
+  )
+)
+
+val empty = Struct.empty
+val fromPairs = Struct("ok" -> Value.bool(true))
 ```
 
-## Coming Soon
+`Value` cases: `NullValue`, `NumberValue`, `StringValue`, `BoolValue`, `StructValue`, `ListValue`.
 
-Detailed documentation on automatic encoding/decoding and schema generation.
+## Manual Schema builders
+
+```scala mdoc:silent
+val personSchema: Schema = Schema.obj(
+  description = Some("A person"),
+  properties = Map(
+    "name" -> Schema.string(description = Some("Full name")),
+    "age" -> Schema.integer(minimum = Some(0))
+  ),
+  required = List("name", "age")
+)
+```
+
+Helpers: `Schema.string`, `.number`, `.integer`, `.boolean`, `.array`, `.obj`.
+
+## Schema.derived and ToSchema
+
+Derive JSON Schema from case classes and sealed hierarchies:
+
+```scala mdoc:silent
+import io.github.serhiip.constellations.common.{Schema, llmHint}
+import io.github.serhiip.constellations.schema.ToSchema
+
+final case class Person(
+    @llmHint(description = Some("Full name"))
+    name: String,
+    age: Int
+)
+
+val derived: Schema = Schema.derived[Person]
+val viaTypeclass: Schema = ToSchema[Person].schema
+```
+
+Supported:
+
+- Primitives: `String`, `Int`, `Long`, `Double`, `Float`, `Boolean`
+- `Option` (nullable / not required)
+- `List` / `Seq`
+- Nested case classes
+- Sealed traits and Scala 3 enums
+
+### `@llmHint`
+
+Overrides metadata and constraints on fields (description, min/max, pattern, enum values, etc.). Used by **`Schema.derived` / `ToSchema`**.
+
+### ToolDispatcher vs Schema.derived
+
+| Feature | ToolDispatcher param schemas | `Schema.derived` |
+|---------|------------------------------|------------------|
+| Descriptions | Method / parameter **docstrings** | `@llmHint` + docstrings |
+| Trigger | Macros in `generate` / `to` | Explicit `Schema.derived[A]` |
+
+## Related
+
+- [Encoding & decoding](encoding-decoding.md) — convert `Value` ↔ Scala types
+- [ToolDispatcher](tool-dispatcher.md) — uses schemas in `FunctionDeclaration`
+- [Messages](messages.md) — conversation types that carry `FunctionCall` / `FunctionResponse`

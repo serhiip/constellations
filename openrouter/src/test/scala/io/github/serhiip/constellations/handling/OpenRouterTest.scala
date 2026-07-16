@@ -1,8 +1,9 @@
 package io.github.serhiip.constellations.handling
 
-import cats.effect.IO
-import munit.CatsEffectSuite
 import cats.syntax.all.*
+import io.circe.Json
+import munit.FunSuite
+
 import io.github.serhiip.constellations.common.*
 import io.github.serhiip.constellations.openrouter.{
   ChatCompletionChoice,
@@ -12,13 +13,12 @@ import io.github.serhiip.constellations.openrouter.{
   ToolCall => OrToolCall,
   ToolCallFunction => OrToolCallFunction
 }
-import io.circe.Json
 
-class OpenRouterTest extends CatsEffectSuite:
+class OpenRouterTest extends FunSuite:
+
+  private val handling = OpenRouter()
 
   test("OpenRouter handling should work with IO effect type") {
-    val handling = OpenRouter[IO]()
-
     val response = ChatCompletionResponse(
       id = "test-id",
       `object` = "chat.completion",
@@ -37,19 +37,12 @@ class OpenRouterTest extends CatsEffectSuite:
       usage = ChatCompletionUsage(promptTokens = 10, completionTokens = 5, totalTokens = 15)
     )
 
-    for
-      text   <- handling.getTextFromResponse(response)
-      reason <- handling.finishReason(response)
-      calls  <- handling.getFunctinoCalls(response)
-    yield
-      assertEquals(text, Some("Hello, world!"))
-      assertEquals(reason, FinishReason.Stop)
-      assertEquals(calls, List.empty[FunctionCall])
+    assertEquals(handling.getTextFromResponse(response), Some("Hello, world!"))
+    assertEquals(handling.finishReason(response), FinishReason.Stop)
+    assertEquals(handling.getFunctionCalls(response), List.empty[FunctionCall].asRight)
   }
 
   test("OpenRouter handling should handle missing content") {
-    val handling = OpenRouter[IO]()
-
     val response = ChatCompletionResponse(
       id = "test-id",
       `object` = "chat.completion",
@@ -68,14 +61,10 @@ class OpenRouterTest extends CatsEffectSuite:
       usage = ChatCompletionUsage(promptTokens = 10, completionTokens = 0, totalTokens = 10)
     )
 
-    handling.getTextFromResponse(response).map { text =>
-      assertEquals(text, None)
-    }
+    assertEquals(handling.getTextFromResponse(response), None)
   }
 
   test("OpenRouter handling should handle empty choices") {
-    val handling = OpenRouter[IO]()
-
     val response = ChatCompletionResponse(
       id = "test-id",
       `object` = "chat.completion",
@@ -85,19 +74,12 @@ class OpenRouterTest extends CatsEffectSuite:
       usage = ChatCompletionUsage(promptTokens = 10, completionTokens = 0, totalTokens = 10)
     )
 
-    for
-      text   <- handling.getTextFromResponse(response)
-      reason <- handling.finishReason(response)
-      calls  <- handling.getFunctinoCalls(response)
-    yield
-      assertEquals(text, None)
-      assertEquals(reason, FinishReason.Error)
-      assertEquals(calls, List.empty[FunctionCall])
+    assertEquals(handling.getTextFromResponse(response), None)
+    assertEquals(handling.finishReason(response), FinishReason.Error)
+    assertEquals(handling.getFunctionCalls(response), List.empty[FunctionCall].asRight)
   }
 
   test("OpenRouter handling should parse tool calls with empty or blank arguments as empty Struct") {
-    val handling = OpenRouter[IO]()
-
     val response = ChatCompletionResponse(
       id = "test-id",
       `object` = "chat.completion",
@@ -125,17 +107,14 @@ class OpenRouterTest extends CatsEffectSuite:
       usage = ChatCompletionUsage(promptTokens = 10, completionTokens = 5, totalTokens = 15)
     )
 
-    for calls <- handling.getFunctinoCalls(response)
-    yield
-      assertEquals(calls.length, 1)
-      assertEquals(calls.head.name, "get_current_time")
-      assertEquals(calls.head.args.fields, Map.empty)
-      assertEquals(calls.head.callId, Some("call_abc"))
+    val calls = handling.getFunctionCalls(response).toOption.get
+    assertEquals(calls.length, 1)
+    assertEquals(calls.head.name, "get_current_time")
+    assertEquals(calls.head.args.fields, Map.empty)
+    assertEquals(calls.head.callId, Some("call_abc"))
   }
 
   test("OpenRouter handling should handle different finish reasons") {
-    val handling = OpenRouter[IO]()
-
     val testCases = List(
       ("tool_calls", FinishReason.ToolCalls),
       ("stop", FinishReason.Stop),
@@ -144,7 +123,7 @@ class OpenRouterTest extends CatsEffectSuite:
       ("unknown", FinishReason.Error)
     )
 
-    testCases.traverse { case (reasonStr, expectedReason) =>
+    testCases.foreach { case (reasonStr, expectedReason) =>
       val response = ChatCompletionResponse(
         id = "test-id",
         `object` = "chat.completion",
@@ -163,8 +142,6 @@ class OpenRouterTest extends CatsEffectSuite:
         usage = ChatCompletionUsage(promptTokens = 10, completionTokens = 5, totalTokens = 15)
       )
 
-      handling.finishReason(response).map { reason =>
-        assertEquals(reason, expectedReason)
-      }
-    }.void
+      assertEquals(handling.finishReason(response), expectedReason)
+    }
   }

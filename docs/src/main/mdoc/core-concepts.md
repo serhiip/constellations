@@ -1,80 +1,59 @@
 # Core Concepts
 
-Constellations provides a set of composable abstractions for building AI-powered applications. This page introduces the core concepts and shows how they work together.
+Constellations splits into a **common** foundation (tools and types) and **core** orchestration (the agent loop).
 
-## Overview
+## Common vs core
 
-The library is built around these key abstractions:
+| Layer | Module | What you get |
+|-------|--------|----------------|
+| **Common** | `constellations-common` | `ToolDispatcher`, `Value` / `Struct` / `Schema`, encoders/decoders, messages |
+| **Core** | `constellations-core` | `Executor`, `Memory`, `Invoker`, `Handling`, `Similarity` |
 
-- **ToolDispatcher** - Routes AI function calls to your Scala implementations
-- **Executor** - Orchestrates multi-step AI conversations  
-- **Memory** - Stores conversation history and execution context
-- **Invoker** - Handles communication with AI models
-- **Handling** - Parses AI responses and extracts structured data
-
-## The Big Picture
-
-A typical Constellations workflow looks like this:
+Start with [ToolDispatcher](tool-dispatcher.md) if you only need to expose Scala methods as LLM tools. Add core when you want a multi-step conversation loop with memory.
 
 ```
-User Query → Invoker (AI Model) → Handling (Parse Response) 
-    ↓
-[If function calls] → ToolDispatcher → Your Functions
-    ↓
-Function Results → Executor (State Management) → Memory (Storage)
-    ↓
-Continue conversation...
+                    constellations-common
+                 +--------------------------+
+                 | ToolDispatcher + types   |
+                 +------------^-------------+
+                              |
+User -> Invoker -> Handling --+--> ToolDispatcher -> your F[_] methods
+         |                    |
+         v                    |
+      Executor <-- Memory ----+
+         |
+         v
+   continue chat...
 ```
 
-## Type Safety
+## Key abstractions
 
-All components are built on Cats Effect for pure functional programming:
+- **[ToolDispatcher](tool-dispatcher.md)** — macro-generated tool routing (common)
+- **[Values & schemas](value-and-types.md)** / **[Encoding](encoding-decoding.md)** — shared data model (common)
+- **[Messages](messages.md)** — chat + tool messages (common)
+- **Executor** — orchestrates steps with memory (core)
+- **Memory** — stores conversation history (core)
+- **Invoker** — calls the LLM (core + providers)
+- **Handling** — parses model responses into text / tool calls (core + providers)
+
+## Type safety
+
+Effects are expressed with Cats Effect:
 
 ```scala mdoc:compile-only
 import cats.effect.IO
 import cats.effect.std.Console
 
-// Everything is type-safe and effectful
-val program: IO[Unit] = for
-  _ <- Console[IO].println("Hello from Constellations!")
-yield ()
+val program: IO[Unit] =
+  Console[IO].println("Hello from Constellations!")
 ```
 
-## Automatic Schema Generation
+## Schema generation
 
-One of Constellations' most powerful features is automatic schema generation:
+Traits used with `ToolDispatcher.generate` get JSON schemas and declarations from method signatures and docstrings. Standalone derivation uses `Schema.derived` / `ToSchema` — see [Values & schemas](value-and-types.md).
 
-```scala mdoc:silent
-trait WeatherService[F[_]]:
-  /** Gets current weather for a location */
-  def getWeather(city: String, country: Option[String]): F[WeatherData]
-  
-  /** Gets weather forecast for multiple days */
-  def getForecast(city: String, days: Int): F[List[ForecastDay]]
+## Learn more
 
-case class WeatherData(
-  temperature: Double,
-  conditions: String,
-  humidity: Int
-)
-
-case class ForecastDay(
-  date: String,
-  high: Double,
-  low: Double,
-  conditions: String
-)
-```
-
-The macro automatically generates:
-- JSON Schema for function parameters
-- Function declarations with descriptions
-- Type-safe routing logic
-
-## Learn More
-
-- [Executor](executor.md) - Workflow orchestration
-- [ToolDispatcher](tool-dispatcher.md) - Function routing
-- [Memory](memory.md) - Conversation storage
-- [Invoker](invoker.md) - AI model communication
-- [Handling](handling.md) - Response parsing
+- Common: [ToolDispatcher](tool-dispatcher.md), [Encoding & decoding](encoding-decoding.md), [Observability](observability.md)
+- Core: [Executor](executor.md), [Memory](memory.md), [Invoker](invoker.md), [Handling](handling.md)
+- Providers: [OpenRouter](openrouter.md), [Google GenAI](google-genai.md)

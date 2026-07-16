@@ -6,7 +6,7 @@ import cats.syntax.all.*
 
 import io.github.serhiip.constellations.common.*
 import io.github.serhiip.constellations.dispatcher.Decoder
-import io.github.serhiip.constellations.handling.OpenRouter as ORHandling
+import io.github.serhiip.constellations.handling.OpenRouter.given
 import io.github.serhiip.constellations.invoker.StructuredInvoker
 import io.github.serhiip.constellations.openrouter.*
 import io.circe.Json
@@ -202,8 +202,7 @@ class OpenRouterTest extends CatsEffectSuite:
                                     )
                                   )
       invoker               = StructuredInvoker[IO, ChatCompletionResponse, StructuredPerson](
-                                OpenRouter.chatCompletion[IO](client, OpenRouter.Config(model = "gpt-4o")),
-                                ORHandling[IO]()
+                                OpenRouter.chatCompletion[IO](client, OpenRouter.Config(model = "gpt-4o"))
                               )
       history               = NEC.one(Message.User(List(ContentPart.Text("Return a person"))))
       result               <- invoker.generate(history)

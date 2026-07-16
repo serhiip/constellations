@@ -1,47 +1,49 @@
 # Observability
 
-Constellations provides comprehensive observability with OpenTelemetry integration.
+Constellations components can be wrapped with OpenTelemetry tracing, log4cats logging, and metrics.
 
-## Overview
+## ToolDispatcher
 
-All components include:
-- **Distributed tracing** - Trace requests across components
-- **Structured logging** - Contextual log messages
-- **Metrics** - Performance and usage counters
+`ToolDispatcher.apply` returns **`F[ToolDispatcher[F]]`**. Required givens: `Tracer`, `LoggerFactory`, `Meter`, `MonadThrow`.
 
-## Tracing
-
-Components are automatically traced:
-
-```scala
-import io.github.serhiip.constellations.ToolDispatcher
+```scala mdoc:compile-only
+import cats.MonadThrow
+import cats.effect.IO
+import org.typelevel.log4cats.LoggerFactory
+import org.typelevel.otel4s.metrics.Meter
 import org.typelevel.otel4s.trace.Tracer
+import io.github.serhiip.constellations.ToolDispatcher
 
-// ToolDispatcher is automatically traced
-val tracedDispatcher = ToolDispatcher[IO](dispatcher)
+def withObservability[F[_]: Tracer: LoggerFactory: Meter: MonadThrow](
+    raw: ToolDispatcher[F]
+): F[ToolDispatcher[F]] =
+  ToolDispatcher(raw)
 ```
 
-## Logging
+| Kind | Name |
+|------|------|
+| Span | `constellations-tool-dispatcher-dispatch` |
+| Span | `constellations-tool-dispatcher-get-function-declarations` |
+| Counter | `constellations/tool_dispatcher_dispatch_success_count` |
+| Counter | `constellations/tool_dispatcher_dispatch_error_count` |
 
-Structured logging with trace context:
-
-```scala
-import org.typelevel.log4cats.StructuredLogger
-
-// Logs include trace IDs automatically
-logger.info("Processing function call")(...)
-```
+Logs are enriched with trace/span IDs when a span is active.
 
 ## Similarity metrics
 
-`Similarity.observed` records success/error counters and a latency histogram for `findClosest`:
+`Similarity.observed` (in **core**) records success/error counters and a latency histogram for `findClosest`:
 
 - `constellations/similarity_find_closest_success_count`
 - `constellations/similarity_find_closest_error_count`
-- `constellations/similarity_find_closest_duration` (unit `s`, buckets from 100ms to 15s)
+- `constellations/similarity_find_closest_duration` (unit `s`)
 
-Compose with `Similarity.observed` (e.g. `Similarity.observed(RagEngine.similarity(...))`) for traced/metered RAG search.
+Example: `Similarity.observed(RagEngine.similarity(...))` for metered RAG search.
 
-## Coming Soon
+## Logging
 
-Detailed configuration examples for OpenTelemetry backends.
+Use log4cats `StructuredLogger` / `LoggerFactory`. Observed wrappers attach trace context to loggers automatically.
+
+## Related
+
+- [ToolDispatcher](tool-dispatcher.md) — full tool routing guide
+- [GCP RAG Engine](gcp-rag-engine.md) — similarity integration

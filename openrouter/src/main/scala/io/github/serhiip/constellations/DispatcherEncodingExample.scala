@@ -17,7 +17,7 @@ import org.typelevel.otel4s.trace.Tracer.Implicits.noop
 
 import io.github.serhiip.constellations.dispatcher.ValueEncoder
 import io.github.serhiip.constellations.executor.Stateful
-import io.github.serhiip.constellations.handling.OpenRouter as ORHandling
+import io.github.serhiip.constellations.handling.OpenRouter.given
 import io.github.serhiip.constellations.invoker.OpenRouter
 import io.github.serhiip.constellations.openrouter.{ChatCompletionResponse, Client}
 
@@ -81,11 +81,9 @@ object DispatcherEncodingExample extends IOApp.Simple:
                                                             decls
                                                           )
                                             invoker     <- Invoker.observed(rawInvoker)
-                                            handling    = ORHandling[IO]()
                                             files      <- Files[IO](URI.create("file:///tmp/"))
                                             rawExecutor = Stateful[IO, ChatCompletionResponse](
                                                             Stateful.Config(functionCallLimit = 5),
-                                                            handling,
                                                             invoker,
                                                             files
                                                           )

@@ -1,42 +1,47 @@
 package io.github.serhiip.constellations.handling
 
+import scala.jdk.CollectionConverters.*
+import scala.jdk.OptionConverters.*
+
+import cats.Applicative
 import cats.syntax.all.*
+import com.google.genai.types.{FinishReason$Known as GKnown, GenerateContentResponse}
+import io.circe.parser.parse
 
 import io.github.serhiip.constellations.*
 import io.github.serhiip.constellations.common.*
-import com.google.genai.types.{FinishReason$Known as GKnown, GenerateContentResponse}
-import scala.jdk.CollectionConverters.*
-import scala.jdk.OptionConverters.*
-import cats.MonadThrow
-import io.circe.parser.parse
 import io.github.serhiip.constellations.common.Codecs.given
 
 object GoogleGenAI:
 
-  def apply[F[_]: MonadThrow]: Handling[F, GenerateContentResponse] = new:
-    override def getTextFromResponse(response: GenerateContentResponse): F[Option[String]] =
-      Option(response.text()).pure[F]
+  def apply(): Handling[GenerateContentResponse] = summon
 
-    override def getFunctinoCalls(response: GenerateContentResponse): F[List[FunctionCall]] =
+  given Handling[GenerateContentResponse] with
+    override def getTextFromResponse(response: GenerateContentResponse): Option[String] =
+      Option(response.text())
+
+    override def getFunctionCalls(response: GenerateContentResponse): Either[Throwable, List[FunctionCall]] =
       response.functionCalls().asScala.toList.traverse { call =>
-        val name = call.name().toScala.liftTo[F](RuntimeException("Missing function call name"))
-        val raw  = call.args().toScala.liftTo[F](RuntimeException(s"Missing function call args for: $name"))
-        (name, raw).mapN({ case (name, raw) => FunctionCall(name, Struct.fromMap(raw.asScala.toMap), call.id().toScala) })
+        for
+          name <- call.name().toScala.toRight(RuntimeException("Missing function call name"))
+          raw  <- call.args().toScala.toRight(RuntimeException(s"Missing function call args for: $name"))
+        yield FunctionCall(name, Struct.fromMap(raw.asScala.toMap), call.id().toScala)
       }
 
-    override def finishReason(response: GenerateContentResponse): F[FinishReason] =
+    override def finishReason(response: GenerateContentResponse): FinishReason =
       response.finishReason().knownEnum() match
-        case GKnown.STOP       => FinishReason.Stop.pure[F]
-        case GKnown.MAX_TOKENS => FinishReason.Length.pure[F]
-        case GKnown.SAFETY     => FinishReason.ContentFilter.pure[F]
-        case other             => RuntimeException(s"Unknown finish reason: $other").raiseError[F, FinishReason]
+        case GKnown.STOP       => FinishReason.Stop
+        case GKnown.MAX_TOKENS => FinishReason.Length
+        case GKnown.SAFETY     => FinishReason.ContentFilter
+        case _                 => FinishReason.Error
 
-    override def structuredOutput(response: GenerateContentResponse): F[Struct] =
+    override def structuredOutput(response: GenerateContentResponse): Either[Throwable, Struct] =
       val txt = response.text()
       parse(txt) match
-        case Left(err)   => RuntimeException(s"Failed to parse structured output JSON: ${err.getMessage}", err).raiseError[F, Struct]
+        case Left(err)   => RuntimeException(s"Failed to parse structured output JSON: ${err.getMessage}", err).asLeft
         case Right(json) =>
-          json.as[Struct].leftMap(err => RuntimeException(s"Failed to parse structured output JSON: ${err.getMessage}", err)).liftTo
+          json.as[Struct].leftMap(err => RuntimeException(s"Failed to parse structured output JSON: ${err.getMessage}", err))
 
+  given [F[_]: Applicative]: AssetsHandling[F, GenerateContentResponse] with
     override def getImages(response: GenerateContentResponse): F[List[GeneratedImage[F]]] =
       List.empty[GeneratedImage[F]].pure[F]

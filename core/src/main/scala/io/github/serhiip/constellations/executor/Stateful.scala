@@ -8,8 +8,7 @@ import cats.kernel.Monoid
 import cats.syntax.all.*
 import io.github.serhiip.constellations.*
 import io.github.serhiip.constellations.common.*
-import cats.Parallel
-import cats.Monad
+import cats.{MonadThrow, Parallel}
 
 object Stateful:
 
@@ -17,12 +16,12 @@ object Stateful:
 
   case object Interruption
 
-  def apply[F[_]: Clock: Parallel: Monad, T](
+  def apply[F[_]: Clock: Parallel: MonadThrow, T: Handling](
       config: Config,
-      responseHandling: Handling[F, T],
       invoker: Invoker[F, T],
       files: Files[F]
-  ): Stateful[F, T] = new Stateful[F, T](config, responseHandling, invoker, files)
+  )(using AssetsHandling[F, T]): Stateful[F, T] =
+    new Stateful[F, T](config, summon, summon, invoker, files)
 
   private case class State(iteration: Int, steps: Chain[Executor.Step], shouldInterrupt: Boolean)
   private object State:
@@ -30,14 +29,15 @@ object Stateful:
       override def combine(x: State, y: State): State =
         State(
           iteration = x.iteration + y.iteration,
-          steps = Chain.concat(x.steps, y.steps),
+          steps = x.steps |+| y.steps,
           shouldInterrupt = x.shouldInterrupt || y.shouldInterrupt
         )
       override def empty: State                       = State(0, Chain.empty, false)
 
-final class Stateful[F[_]: Clock: Parallel: Monad, T](
+final class Stateful[F[_]: Clock: Parallel: MonadThrow, T](
     config: Stateful.Config,
-    responseHandling: Handling[F, T],
+    responseHandling: Handling[T],
+    assetsHandling: AssetsHandling[F, T],
     invoker: Invoker[F, T],
     files: Files[F]
 ) extends Executor[F, Stateful.Interruption.type, Executor.Step.ModelResponse]:
@@ -77,24 +77,23 @@ final class Stateful[F[_]: Clock: Parallel: Monad, T](
     for
       content   <- Ctx.allContent
       response  <- Ctx.liftF(invoker.generate(content))
-      _         <- Ctx.tellF(responseHandling.finishReason(response).map(Chain.one))
+      _         <- Ctx.tell(Chain.one(responseHandling.finishReason(response)))
       uris      <- Ctx.liftF(persistImages(response))
-      calls     <- Ctx.liftF(responseHandling.getFunctinoCalls(response))
+      calls     <- Ctx.liftF(responseHandling.getFunctionCalls(response).liftTo[F])
       _         <- Chain.fromSeq(calls).traverse(handleCall(callDispatcher, history))
       iteration <- Ctx.getIteration
       reply     <- if (calls.nonEmpty && iteration < config.functionCallLimit) then {
                      Ctx.increment >> persistentLoop(callDispatcher, history)
                    } else {
-                     for
-                       text <- Ctx.liftF(responseHandling.getTextFromResponse(response))
-                       now  <- Ctx.liftF(Clock[F].offsetDateTimeUtc)
+                     val text = responseHandling.getTextFromResponse(response)
+                     for now <- Ctx.liftF(Clock[F].offsetDateTimeUtc)
                      yield Executor.Step.ModelResponse(text, now, uris).asRight
                    }
     yield reply
 
   private def persistImages(response: T): F[List[URI]] =
     for
-      images <- responseHandling.getImages(response)
+      images <- assetsHandling.getImages(response)
       now    <- Clock[F].offsetDateTimeUtc
       uris   <- images.zipWithIndex.parTraverse { (image, idx) =>
                   val fileName = s"generated-image-${now.toInstant.toEpochMilli}-$idx.${image.extension}"

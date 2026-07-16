@@ -1,28 +1,21 @@
 # MCP Server
 
-Constellations supports the Model Context Protocol (MCP), allowing you to expose your functions as tools that can be used by AI assistants like Claude.
-
-## Overview
-
-The MCP module enables you to:
-- **Expose functions as MCP tools** - Use your ToolDispatcher with MCP servers
-- **Type-safe tool definitions** - Automatic schema generation
-- **Local tool execution** - Run tools locally for privacy
-- **Multiple tools** - Combine multiple dispatchers into one server
+Constellations can expose a [`ToolDispatcher`](tool-dispatcher.md) as [Model Context Protocol](https://modelcontextprotocol.io/) tools for assistants like Claude.
 
 ## Setup
-
-Add the dependency:
 
 ```scala
 libraryDependencies += "io.github.serhiip" %% "constellations-mcp" % "@VERSION@"
 ```
 
-This pulls `constellations-common` transitively.
+This depends on **`constellations-common`** (Scala **3.3.8+** for the common JAR; the MCP module itself is built for **3.7.x**).
 
-## Quick Example
+## Quick example
 
-Create an MCP server:
+1. Build a `ToolDispatcher` from your traits (`generate` / `to`)
+2. Create `McpToolSpec` with a Cats Effect `Dispatcher`
+3. Call `fromToolDispatcher` to get MCP tool specifications
+4. Register them on an MCP server
 
 ```scala
 import io.github.serhiip.constellations.ToolDispatcher
@@ -33,29 +26,30 @@ import cats.effect.std.Dispatcher
 trait Calculator[F[_]]:
   def add(a: Int, b: Int): F[Int]
 
-class CalculatorImpl extends Calculator[IO]:
-  def add(a: Int, b: Int): IO[Int] = IO(a + b)
+val calculator = new Calculator[IO]:
+  def add(a: Int, b: Int): IO[Int] = IO.pure(a + b)
 
-val toolDispatcher = ToolDispatcher.generate[IO](new CalculatorImpl)
+val toolDispatcher = ToolDispatcher.generate[IO](calculator)
 
 Dispatcher.parallel[IO].use { dispatcher =>
   for
     mcpToolSpec <- McpToolSpec.core[IO](dispatcher).run(McpToolSpec.defaultConfig)
     toolSpecs   <- mcpToolSpec.fromToolDispatcher(toolDispatcher)
-    // Register with MCP server
-  yield ()
+  yield toolSpecs
 }
 ```
 
-## Complete Server
+Tool names follow the usual naming contract (`Calculator_add`). See [ToolDispatcher](tool-dispatcher.md).
 
-Run the example server:
+## Complete server
 
 ```bash
 sbt "examples/runMain io.github.serhiip.constellations.examples.mcp.McpServerExample"
 ```
 
-## Configuration with Claude Desktop
+See also `examples/.../examples/mcp/README.md`.
+
+## Claude Desktop
 
 Add to `claude_desktop_config.json`:
 
@@ -70,6 +64,7 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
-## Coming Soon
+## Related
 
-More MCP server examples and integration patterns.
+- [ToolDispatcher](tool-dispatcher.md)
+- [Getting started](getting-started.md) — install `constellations-common` for tools-only apps

@@ -11,8 +11,8 @@ import org.typelevel.log4cats.StructuredLogger
 import io.github.serhiip.constellations.dispatcher.ValueEncoder
 import io.github.serhiip.constellations.executor.Stateful
 import io.github.serhiip.constellations.google.Client
-import io.github.serhiip.constellations.handling.GoogleGenAI as HandlingGoogle
 import com.google.genai.types.GenerateContentResponse
+import io.github.serhiip.constellations.handling.GoogleGenAI.given
 import io.github.serhiip.constellations.invoker.GoogleGenAI
 import org.typelevel.log4cats.slf4j.Slf4jFactory
 import cats.effect.Clock
@@ -88,12 +88,10 @@ object GoogleGenAIExample extends IOApp.Simple:
                                       ),
                                       decls
                                     )
-                         handling = HandlingGoogle[IO]
                          files   <- Files[IO](URI.create("file:///tmp/"))
                          executor = Executor(
                                       Stateful[IO, GenerateContentResponse](
                                         Stateful.Config(functionCallLimit = 5),
-                                        handling,
                                         invoker,
                                         files
                                       )

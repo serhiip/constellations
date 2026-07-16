@@ -1,13 +1,24 @@
 /** @type {import('@docusaurus/plugin-content-docs').SidebarsConfig} */
 const sidebars = {
   tutorialSidebar: [
-    // Getting started at top level
     'getting-started',
-    
-    // Core concepts section with comprehensive submenu
+
     {
       type: 'category',
-      label: 'Core Concepts',
+      label: 'Common',
+      collapsed: false,
+      items: [
+        'tool-dispatcher',
+        'value-and-types',
+        'encoding-decoding',
+        'messages',
+        'observability',
+      ],
+    },
+
+    {
+      type: 'category',
+      label: 'Core',
       collapsed: false,
       link: {
         type: 'doc',
@@ -15,18 +26,13 @@ const sidebars = {
       },
       items: [
         'executor',
-        'tool-dispatcher',
         'memory',
         'invoker',
         'handling',
-        'value-and-types',
-        'messages',
         'files',
-        'observability',
       ],
     },
-    
-    // LLM Providers section with submenu
+
     {
       type: 'category',
       label: 'LLM Providers',
@@ -43,11 +49,9 @@ const sidebars = {
         'gcp-rag-engine',
       ],
     },
-    
-    // MCP Server (standalone page)
+
     'mcp',
-    
-    // Examples section
+
     {
       type: 'category',
       label: 'Examples',
@@ -56,8 +60,7 @@ const sidebars = {
         'examples',
       ],
     },
-    
-    // API Reference
+
     {
       type: 'link',
       label: 'API Reference',

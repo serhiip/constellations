@@ -1,10 +1,20 @@
 # Getting Started
 
-Welcome to Constellations - a type-safe library for building AI-powered applications with function calling capabilities in Scala 3.
+Welcome to Constellations — a type-safe Scala 3 toolkit for AI function calling, schema derivation, and observability.
 
 ## Installation
 
-Add the following to your `build.sbt`:
+### Tools only (`constellations-common`)
+
+For routing LLM tool calls to Scala methods without Executor/Memory:
+
+```scala
+libraryDependencies += "io.github.serhiip" %% "constellations-common" % "@VERSION@"
+```
+
+### Full stack
+
+For conversation loops plus a provider:
 
 ```scala
 libraryDependencies ++= Seq(
@@ -13,47 +23,40 @@ libraryDependencies ++= Seq(
 )
 ```
 
-Scala versions:
+`constellations-core` pulls `constellations-common` transitively.
+
+### Scala versions
 
 - `constellations-common` (including `ToolDispatcher`) is built with **Scala 3.3.8** (LTS) and works on 3.3.8+
-- Other modules require **Scala 3.7.x**
+- Other modules (`core`, providers, `mcp`, …) require **Scala 3.7.x**
 
-## Quick Example
+## Quick example
 
-Here's a simple example showing how to define AI-callable functions:
+Define an effectful trait, generate a `ToolDispatcher`, then dispatch a call named `{Trait}_{snake_case_method}`:
 
 ```scala mdoc:silent
-import scala.annotation.experimental
 import cats.effect.IO
-import io.github.serhiip.constellations.*
 import io.github.serhiip.constellations.ToolDispatcher
 import io.github.serhiip.constellations.common.*
 
-// Define your functions as a trait
 trait Calculator[F[_]]:
   /** Adds two numbers together */
   def add(a: Int, b: Int): F[Int]
-  
+
   /** Multiplies two numbers */
   def multiply(a: Int, b: Int): F[Int]
 
-// Create an implementation
 val calculatorImpl = new Calculator[IO]:
   def add(a: Int, b: Int): IO[Int] = IO.pure(a + b)
   def multiply(a: Int, b: Int): IO[Int] = IO.pure(a * b)
 
-// Generate a dispatcher with automatic schema generation
-@experimental
-def createDispatcher(): ToolDispatcher[IO] = 
+val dispatcher: ToolDispatcher[IO] =
   ToolDispatcher.generate[IO](calculatorImpl)
-
-val dispatcher = createDispatcher()
 ```
 
-Now you can use the dispatcher to handle AI function calls:
-
 ```scala mdoc
-// Create a function call
+import cats.effect.unsafe.implicits.global
+
 val call = FunctionCall(
   name = "Calculator_add",
   args = Struct(Map(
@@ -61,9 +64,6 @@ val call = FunctionCall(
     "b" -> Value.number(3)
   ))
 )
-
-// Execute and get the result
-import cats.effect.unsafe.implicits.global
 
 val result = dispatcher.dispatch(call).unsafeRunSync()
 result match
@@ -73,29 +73,22 @@ result match
     println("Human approval required")
 ```
 
-## Core Concepts
+Scalar results are wrapped as a struct with a `value` field (here `{"value": 8.0}`).
 
-Constellations is built around several key abstractions:
+## Modules
 
-1. **ToolDispatcher** - Routes function calls to your Scala implementations using compile-time macros
-2. **Executor** - Orchestrates AI conversations with memory and state management
-3. **Memory** - Stores conversation history and execution steps
-4. **Invoker** - Handles AI model interactions with retry logic
-5. **Handling** - Parses AI responses and extracts function calls
+| Module | Role |
+|--------|------|
+| **constellations-common** | Types, codecs, schema derivation, `ToolDispatcher` |
+| **constellations-core** | Executor, memory, invoker abstractions |
+| **constellations-openrouter** / **google-genai** / … | LLM providers |
+| **constellations-mcp** | Expose tools via Model Context Protocol |
 
-## Project Structure
+## Next steps
 
-The library is organized into several modules:
-
-- **constellations-common** - Shared types, codecs, observability, and `ToolDispatcher`
-- **constellations-core** - Executor, memory, and invoker abstractions (pulls common transitively)
-- **constellations-openrouter** - OpenRouter API integration
-- **constellations-google-genai** - Google GenAI integration
-- **constellations-mcp** - Model Context Protocol server support
-
-## Next Steps
-
-- Learn about [Core Concepts](core-concepts.md)
-- Explore the [ToolDispatcher](tool-dispatcher.md) for automatic function routing
-- Set up [OpenRouter](openrouter.md) or [Google GenAI](google-genai.md) integration
-- Check out the [Examples](examples.md) for complete working projects
+- [ToolDispatcher](tool-dispatcher.md) — naming, `generate` / `to`, observability
+- [Encoding & decoding](encoding-decoding.md) — how arguments and results are converted
+- [Values & schemas](value-and-types.md) — `Value`, `Struct`, `Schema.derived`
+- [Core concepts](core-concepts.md) — how common fits the executor loop
+- [OpenRouter](openrouter.md) / [Google GenAI](google-genai.md) — providers
+- [Examples](examples.md) — runnable samples
