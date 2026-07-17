@@ -3,10 +3,20 @@ package io.github.serhiip.constellations
 import java.time.OffsetDateTime
 import java.util.UUID
 
-
+import cats.Applicative
 import cats.effect.IO
+import cats.syntax.all.*
 import io.github.serhiip.constellations.common.*
+import io.github.serhiip.constellations.dispatcher.{Decoder, ValueEncoder}
 import munit.CatsEffectSuite
+
+final case class Ping(value: String) derives ValueEncoder
+
+trait PingApi[F[_]]:
+  def ping(): F[Ping]
+
+trait ScheduleApi[F[_]]:
+  def at(when: OffsetDateTime): F[String]
 
 trait TestApi[F[_]]:
   def mixedTypes(intVal: Int, strVal: String, boolVal: Boolean): F[String]
@@ -165,13 +175,13 @@ class ToolDispatcherTest extends CatsEffectSuite:
 
   test("dispatcher should report a single missing required parameter") {
     val call = createFunctionCall("TestApi_mixed_types", Map("str_val" -> "test", "bool_val" -> true))
-    val ex   = intercept[IllegalArgumentException](dispatcher.dispatch(call)) // TODO: should raise inside IO
+    val ex   = intercept[ToolDispatcher.Error.ArgumentDecodingFailed](dispatcher.dispatch(call)) // TODO: should raise inside IO
     assertEquals(ex.getMessage, "Failed to decode arguments for method 'TestApi_mixed_types': Error at path 'int_val': Field is missing.")
   }
 
   test("dispatcher should accumulate and report multiple decoding errors") {
     val call = createFunctionCall("TestApi_mixed_types", Map("bool_val" -> "not-a-bool"))
-    val ex   = intercept[IllegalArgumentException](dispatcher.dispatch(call)) // TODO: should raise inside IO
+    val ex   = intercept[ToolDispatcher.Error.ArgumentDecodingFailed](dispatcher.dispatch(call)) // TODO: should raise inside IO
     assertEquals(
       ex.getMessage,
       "Failed to decode arguments for method 'TestApi_mixed_types': Error at path 'int_val': Field is missing., Error at path 'str_val': Field is missing., Error at path 'bool_val': Expected type Boolean, but got StringValue."
@@ -193,7 +203,7 @@ class ToolDispatcherTest extends CatsEffectSuite:
 
   test("dispatcher should handle wrong type for nested struct") {
     val call = createFunctionCall("TestApi_nested_struct", Map("person" -> "not a person"))
-    val ex   = intercept[IllegalArgumentException](dispatcher.dispatch(call)) // TODO: should raise inside IO
+    val ex   = intercept[ToolDispatcher.Error.ArgumentDecodingFailed](dispatcher.dispatch(call)) // TODO: should raise inside IO
     assert(ex.getMessage.contains("Expected type Struct, but got StringValue"))
   }
 
@@ -203,7 +213,7 @@ class ToolDispatcherTest extends CatsEffectSuite:
       "active" -> true
     )
     val call         = createFunctionCall("TestApi_nested_struct", Map("person" -> personStruct))
-    val ex           = intercept[IllegalArgumentException](dispatcher.dispatch(call)) // TODO: should raise inside IO
+    val ex           = intercept[ToolDispatcher.Error.ArgumentDecodingFailed](dispatcher.dispatch(call)) // TODO: should raise inside IO
     assert(ex.getMessage.contains("Error at path 'person.age': Field is missing"))
   }
 
@@ -262,6 +272,61 @@ class ToolDispatcherTest extends CatsEffectSuite:
     yield
       assert(attempt.isLeft)
       assertEquals(attempt.left.toOption.get.getMessage, "No handler for Unknown_tool")
+  }
+
+  test("dispatcher should accept OffsetDateTime parameters") {
+    val when = OffsetDateTime.parse("2025-01-20T12:34:56.123+02:00")
+    val api  = new ScheduleApi[IO]:
+      def at(when: OffsetDateTime): IO[String] = IO.pure(when.toString)
+    val scheduleDispatcher = ToolDispatcher.generate[IO](api)
+    val call               = createFunctionCall("ScheduleApi_at", Map("when" -> when.toString))
+    for
+      result <- scheduleDispatcher.dispatch(call)
+      decls  <- scheduleDispatcher.getFunctionDeclarations
+    yield
+      assertEquals(extractString(result), when.toString)
+      assertEquals(
+        decls.find(_.name == "ScheduleApi_at").flatMap(_.parameters),
+        Some(
+          Schema.obj(
+            properties = Map("when" -> Schema.string(format = Some("date-time"))),
+            required = List("when")
+          )
+        )
+      )
+  }
+
+  test("dispatcher should throw ArgumentDecodingFailed for invalid OffsetDateTime strings") {
+    val api = new ScheduleApi[IO]:
+      def at(when: OffsetDateTime): IO[String] = IO.pure(when.toString)
+    val scheduleDispatcher = ToolDispatcher.generate[IO](api)
+    val call               = createFunctionCall("ScheduleApi_at", Map("when" -> "not-a-timestamp"))
+    val ex                 = intercept[ToolDispatcher.Error.ArgumentDecodingFailed](scheduleDispatcher.dispatch(call))
+    assertEquals(ex.method, "ScheduleApi_at")
+    assert(
+      ex.errors.exists {
+        case Decoder.Error.InvalidStringValue("when", "not-a-timestamp", "OffsetDateTime", Some(_)) => true
+        case _                                                                                      => false
+      }
+    )
+    assert(ex.getMessage.contains("Cannot parse 'not-a-timestamp' into OffsetDateTime"))
+  }
+
+  test("generate should expand when F is an abstract type parameter") {
+    def make[F[_]: Applicative](api: PingApi[F]): ToolDispatcher[F] =
+      ToolDispatcher.generate[F](api)
+
+    val api = new PingApi[IO]:
+      def ping(): IO[Ping] = Ping("pong").pure[IO]
+
+    val polymorphic = make(api)
+    val call        = createFunctionCall("PingApi_ping")
+    for
+      result <- polymorphic.dispatch(call)
+      decls  <- polymorphic.getFunctionDeclarations
+    yield
+      assertEquals(extractString(result), "pong")
+      assert(decls.exists(_.name == "PingApi_ping"))
   }
 
   test("dispatcher to should dispatch for single trait") {

@@ -1,11 +1,13 @@
 package io.github.serhiip.constellations
 
+import java.time.OffsetDateTime
+
 import scala.quoted.*
 
 import cats.data.NonEmptyChain
 import cats.data.Validated.{Invalid, Valid}
 import cats.syntax.all.*
-import cats.{Applicative, Functor, MonadThrow, Show, ~>}
+import cats.{Applicative, Functor, MonadThrow, ~>}
 
 import org.typelevel.log4cats.{LoggerFactory, StructuredLogger}
 import org.typelevel.otel4s.Attribute
@@ -25,6 +27,13 @@ object ToolDispatcher:
   enum Result:
     case Response(result: FunctionResponse)
     case HumanInTheLoop
+
+  enum Error extends RuntimeException:
+    case ArgumentDecodingFailed(method: String, errors: NonEmptyChain[Decoder.Error])
+
+    override def getMessage: String = this match
+      case ArgumentDecodingFailed(method, errors) =>
+        s"Failed to decode arguments for method '$method': ${errors.mkString_(delim = ", ")}"
 
   def observed[F[_]: Tracer: LoggerFactory: MonadThrow: Meter](delegate: ToolDispatcher[F]): F[ToolDispatcher[F]] =
     Meters.create[F].flatMap(observed(delegate, _))
@@ -140,6 +149,7 @@ object ToolDispatcher:
       val errorPos = posOpt.getOrElse(Position.ofMacroExpansion)
       tpe.widen.simplified match
         case t if t =:= TypeRepr.of[String]                                                => '{ Schema.string() }
+        case t if t =:= TypeRepr.of[OffsetDateTime]                                        => '{ Schema.string(format = Some("date-time")) }
         case t if t =:= TypeRepr.of[Int]                                                   => '{ Schema.integer() }
         case t if t =:= TypeRepr.of[Long]                                                  => '{ Schema.integer() }
         case t if t =:= TypeRepr.of[Double]                                                => '{ Schema.number() }
@@ -311,17 +321,30 @@ object ToolDispatcher:
                   }
                 val applied    = Apply(Select(from, method), terms)
                 val resultType = applied.tpe.widen.simplified
-                resultType.asType match
-                  case '[F[t]] =>
-                    val functor =
-                      Expr
-                        .summon[Functor[F]]
-                        .getOrElse(report.errorAndAbort("No cats.Functor given found for F", Position.ofMacroExpansion))
-                    val encoder = '{ scala.compiletime.summonInline[ResultEncoder[t]] }
-                    '{
-                      $functor.map(${ applied.asExprOf[F[t]] })(value => $encoder.encode(callName, value))
-                    }
-                  case _       =>
+                val effect     = TypeRepr.of[F]
+                val argTpeOpt  = resultType match
+                  case AppliedType(tycon, List(arg)) if tycon =:= effect || tycon.dealias.simplified =:= effect.dealias.simplified =>
+                    Some(arg)
+
+                  case _ => None
+                argTpeOpt match
+                  case Some(argTpe) =>
+                    argTpe.asType match
+                      case '[t] =>
+                        val functor =
+                          Expr
+                            .summon[Functor[F]]
+                            .getOrElse(report.errorAndAbort("No cats.Functor given found for F", Position.ofMacroExpansion))
+                        val encoder = '{ scala.compiletime.summonInline[ResultEncoder[t]] }
+                        '{
+                          $functor.map(${ applied.asExprOf[F[t]] })(value => $encoder.encode(callName, value))
+                        }
+                      case _    =>
+                        report.errorAndAbort(
+                          s"Unsupported return type argument '${argTpe.show}' for method '${method.fullName}'",
+                          Symbol.spliceOwner.pos.get
+                        )
+                  case None         =>
                     report.errorAndAbort(
                       s"Unsupported return type '${resultType.show}' for method '${method.fullName}': expected F[...]",
                       Symbol.spliceOwner.pos.get
@@ -333,11 +356,7 @@ object ToolDispatcher:
             $validatedArgsExpr
               .map(args => $callExpr(args, call.name))
               .valueOr: errors =>
-                given Show[Decoder.Error] = Decoder.given_Show_Error
-                val errorString           = errors.mkString_(delim = ", ")
-                throw new IllegalArgumentException(
-                  s"Failed to decode arguments for method '${${ Expr(qualifiedName) }}': $errorString"
-                )
+                throw Error.ArgumentDecodingFailed(${ Expr(qualifiedName) }, errors)
           }
         }
       }
