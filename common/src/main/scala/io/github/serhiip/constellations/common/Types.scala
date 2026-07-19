@@ -219,11 +219,29 @@ object FunctionDeclaration:
   def fromMethod(className: String, methodName: String, description: String, parameters: Schema): FunctionDeclaration =
     FunctionDeclaration(s"${className}_${methodName}", Some(description), Some(parameters))
 
-final case class FunctionResponse(name: String, response: Struct, functionCallId: Option[String])
+final case class FunctionResponse(call: FunctionCall, response: Struct)
 
 object FunctionResponse:
   def apply(name: String, response: Struct): FunctionResponse =
-    new FunctionResponse(name, response, none)
+    FunctionResponse(FunctionCall(name, Struct.empty), response)
 
   def fromMethod(className: String, methodName: String, response: Struct): FunctionResponse =
     FunctionResponse(s"${className}_${methodName}", response)
+
+  def error(call: FunctionCall, message: String, systemInstruction: String): FunctionResponse =
+    FunctionResponse(
+      call,
+      Struct(
+        "error"              -> Value.string(message),
+        "system_instruction" -> Value.string(systemInstruction)
+      )
+    )
+
+  def skipped(call: FunctionCall, systemInstruction: String): FunctionResponse =
+    FunctionResponse(
+      call,
+      Struct(
+        "skipped"            -> Value.bool(true),
+        "system_instruction" -> Value.string(systemInstruction)
+      )
+    )

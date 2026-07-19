@@ -7,7 +7,7 @@ import scala.compiletime.{constValue, erasedValue, summonInline}
 import scala.deriving.Mirror
 
 import io.github.serhiip.constellations.ToolDispatcher
-import io.github.serhiip.constellations.common.{FunctionResponse, Struct, Value}
+import io.github.serhiip.constellations.common.{FunctionCall, FunctionResponse, Struct, Value}
 
 object SumType:
   private[dispatcher] val discriminatorField = "_type"
@@ -138,19 +138,21 @@ object StructEncoder extends LowPriorityStructEncoder:
   def apply[A](using encoder: StructEncoder[A]): StructEncoder[A] = encoder
 
 trait ResultEncoder[A]:
-  def encode(name: String, value: A): ToolDispatcher.Result
+  def encode(call: FunctionCall, value: A): ToolDispatcher.Result
 
 trait LowPriorityResultEncoder:
   given [A](using encoder: StructEncoder[A]): ResultEncoder[A] with
-    def encode(name: String, value: A): ToolDispatcher.Result =
-      ToolDispatcher.Result.Response(FunctionResponse(name, encoder.encode(value)))
+    def encode(call: FunctionCall, value: A): ToolDispatcher.Result =
+      ToolDispatcher.Result.Response(FunctionResponse(call, encoder.encode(value)))
 
 object ResultEncoder extends LowPriorityResultEncoder:
   def apply[A](using encoder: ResultEncoder[A]): ResultEncoder[A] = encoder
 
   given ResultEncoder[ToolDispatcher.Result] with
-    def encode(name: String, value: ToolDispatcher.Result): ToolDispatcher.Result = value
+    def encode(call: FunctionCall, value: ToolDispatcher.Result): ToolDispatcher.Result = value match
+      case ToolDispatcher.Result.Response(fr) => ToolDispatcher.Result.Response(fr.copy(call = call))
+      case ToolDispatcher.Result.HumanInTheLoop => ToolDispatcher.Result.HumanInTheLoop
 
   given ResultEncoder[FunctionResponse] with
-    def encode(name: String, value: FunctionResponse): ToolDispatcher.Result =
-      ToolDispatcher.Result.Response(value)
+    def encode(call: FunctionCall, value: FunctionResponse): ToolDispatcher.Result =
+      ToolDispatcher.Result.Response(FunctionResponse(call, value.response))

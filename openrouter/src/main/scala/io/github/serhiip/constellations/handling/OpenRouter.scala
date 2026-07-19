@@ -42,13 +42,9 @@ object OpenRouter:
         case Some(ChatCompletionChoice(_, ChatMessage(_, _, Some(toolCalls), _, _, _), _)) =>
           toolCalls.traverse { toolCall =>
             val argsJson = Option(toolCall.function.arguments).filterNot(_.isBlank).getOrElse("{}")
-            parse(argsJson).bimap(
+            decode[Struct](argsJson).bimap(
               error => RuntimeException(s"Failed to parse tool call arguments: ${error.getMessage}"),
-              json =>
-                val fields = json.asObject
-                  .map(_.toMap.view.mapValues(_.toString).mapValues(Value.string).toMap)
-                  .getOrElse(Map.empty)
-                FunctionCall(toolCall.function.name, Struct(fields), toolCall.id.some)
+              struct => FunctionCall(toolCall.function.name, struct, toolCall.id.some)
             )
           }
         case Some(ChatCompletionChoice(_, ChatMessage(_, _, None, _, _, _), _)) | None     => List.empty[FunctionCall].asRight

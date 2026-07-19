@@ -338,7 +338,12 @@ class OpenRouterTest extends CatsEffectSuite:
                              List(
                                Message.User(List(ContentPart.Text("Calculate 2+3"))),
                                Message.Tool(FunctionCall("calculator", calculatorArgs, "call-123".some)),
-                               Message.ToolResult(FunctionResponse("calculator", calculatorResult, "call-123".some))
+                               Message.ToolResult(
+                                 FunctionResponse(
+                                   FunctionCall("calculator", calculatorArgs, "call-123".some),
+                                   calculatorResult
+                                 )
+                               )
                              )
                            )
                            .get
@@ -671,9 +676,12 @@ class OpenRouterTest extends CatsEffectSuite:
                                     ),
                                     Message.ToolResult(
                                       FunctionResponse(
-                                        name = "calculator",
-                                        response = Struct(Map("result" -> Value.number(5.0))),
-                                        functionCallId = "call-123".some
+                                        FunctionCall(
+                                          name = "calculator",
+                                          args = Struct(Map("a" -> Value.number(2.0), "b" -> Value.number(3.0))),
+                                          callId = "call-123".some
+                                        ),
+                                        Struct(Map("result" -> Value.number(5.0)))
                                       )
                                     )
                                   )
@@ -748,9 +756,12 @@ class OpenRouterTest extends CatsEffectSuite:
                                     ),
                                     Message.ToolResult(
                                       FunctionResponse(
-                                        name = "calculator",
-                                        response = Struct(Map("result" -> Value.number(5.0))),
-                                        functionCallId = "call-123".some
+                                        FunctionCall(
+                                          name = "calculator",
+                                          args = Struct(Map("a" -> Value.number(2.0), "b" -> Value.number(3.0))),
+                                          callId = "call-123".some
+                                        ),
+                                        Struct(Map("result" -> Value.number(5.0)))
                                       )
                                     )
                                   )
@@ -840,9 +851,8 @@ class OpenRouterTest extends CatsEffectSuite:
 
   test("MessageHandler.gemini.convertToolResultMessage should not include name field") {
     val content = FunctionResponse(
-      name = "calculator",
-      response = Struct(Map("result" -> Value.number(5.0))),
-      functionCallId = "call-123".some
+      FunctionCall("calculator", Struct.empty, "call-123".some),
+      Struct(Map("result" -> Value.number(5.0)))
     )
     val result  = MessageHandler.gemini.convertToolResultMessage(content)
     assertEquals(result.role, "tool")
@@ -853,9 +863,8 @@ class OpenRouterTest extends CatsEffectSuite:
 
   test("MessageHandler.openai.convertToolResultMessage should use string content") {
     val content       = FunctionResponse(
-      name = "calculator",
-      response = Struct(Map("result" -> Value.number(5.0))),
-      functionCallId = "call-123".some
+      FunctionCall("calculator", Struct.empty, "call-123".some),
+      Struct(Map("result" -> Value.number(5.0)))
     )
     val result        = MessageHandler.openai.convertToolResultMessage(content)
     assertEquals(result.role, "tool")
@@ -867,9 +876,8 @@ class OpenRouterTest extends CatsEffectSuite:
 
   test("MessageHandler.default.convertToolResultMessage should include name field") {
     val content = FunctionResponse(
-      name = "calculator",
-      response = Struct(Map("result" -> Value.number(5.0))),
-      functionCallId = "call-123".some
+      FunctionCall("calculator", Struct.empty, "call-123".some),
+      Struct(Map("result" -> Value.number(5.0)))
     )
     val result  = MessageHandler.default.convertToolResultMessage(content)
     assertEquals(result.role, "tool")

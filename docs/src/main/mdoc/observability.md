@@ -20,14 +20,23 @@ def withObservability[F[_]: Tracer: LoggerFactory: Meter: MonadThrow](
   ToolDispatcher.observed(raw)
 ```
 
-| Kind | Name |
-|------|------|
-| Span | `constellations-tool-dispatcher-dispatch` |
-| Span | `constellations-tool-dispatcher-get-function-declarations` |
-| Counter | `constellations/tool_dispatcher_dispatch_success_count` |
-| Counter | `constellations/tool_dispatcher_dispatch_error_count` |
+| Kind    | Name                                                        |
+| ------- | ----------------------------------------------------------- |
+| Span    | `constellations-tool-dispatcher-dispatch`                   |
+| Span    | `constellations-tool-dispatcher-dispatch-all`               |
+| Span    | `constellations-tool-dispatcher-get-function-declarations`  |
+| Counter | `constellations/tool_dispatcher_dispatch_success_count`     |
+| Counter | `constellations/tool_dispatcher_dispatch_error_count`       |
+| Counter | `constellations/tool_dispatcher_dispatch_all_success_count` |
+| Counter | `constellations/tool_dispatcher_dispatch_all_error_count`   |
 
 Logs are enriched with trace/span IDs when a span is active.
+
+## Stateful agent-error retries
+
+`Stateful.apply` (observed) adds agent-error attributes to the **current** span and logs. Use `Stateful.pure` in tests.
+
+Attributes on the active span for a failed batch: `retries_left`, `error` (comma-separated kinds: `argument-decoding-failed` / `unknown-function`), `agent_error_count`. Retry attempts are logged at warn; exhaustion at error.
 
 ## Similarity metrics
 

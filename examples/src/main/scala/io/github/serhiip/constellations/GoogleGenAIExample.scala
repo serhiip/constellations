@@ -107,7 +107,7 @@ object GoogleGenAIExample extends IOApp.Simple:
 
   private def replLoop(
       dispatcher: ToolDispatcher[IO],
-      executor: Executor[IO, Stateful.Interruption.type, Executor.Step.ModelResponse],
+      executor: Executor[IO, Stateful.Failure, Executor.Step.ModelResponse],
       memory: Memory[IO, UUID]
   ): IO[Unit] =
     for
@@ -118,7 +118,9 @@ object GoogleGenAIExample extends IOApp.Simple:
                 executor
                   .execute(dispatcher, memory, line)
                   .flatMap {
-                    case Right(resp) => IO.println(s"AI: ${resp.text.getOrElse("no response")}")
-                    case Left(_)     => IO.println("AI: [interrupted]")
+                    case Right(resp)                                          => IO.println(s"AI: ${resp.text.getOrElse("no response")}")
+                    case Left(Stateful.Failure.Interrupted)                   => IO.println("AI: [interrupted]")
+                    case Left(Stateful.Failure.AgentRetriesExhausted(errors)) =>
+                      IO.println(s"AI: [agent retries exhausted] ${errors.map(_.getMessage).mkString_("; ")}")
                   } >> replLoop(dispatcher, executor, memory)
     yield ()

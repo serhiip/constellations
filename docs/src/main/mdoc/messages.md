@@ -38,9 +38,8 @@ val toolMsg = Message.Tool(call)
 
 // After ToolDispatcher.dispatch:
 val response = FunctionResponse(
-  name = "Calculator_add",
-  response = Struct("value" -> Value.number(4)),
-  functionCallId = Some("call_1")
+  call = call,
+  response = Struct("value" -> Value.number(4))
 )
 
 val toolResult = Message.ToolResult(response)

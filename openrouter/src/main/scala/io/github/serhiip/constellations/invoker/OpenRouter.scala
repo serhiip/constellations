@@ -159,7 +159,7 @@ protected object MessageHandler:
       ChatMessage(
         role = "tool",
         content = Some(Json.fromString(content.response.asJson.noSpaces)),
-        toolCallId = content.functionCallId
+        toolCallId = content.call.callId
       )
 
   def openai: MessageHandler = new:
@@ -170,8 +170,8 @@ protected object MessageHandler:
       ChatMessage(
         role = "tool",
         content = Some(Json.fromString(content.response.asJson.noSpaces)),
-        toolCallId = content.functionCallId,
-        name = Some(content.name)
+        toolCallId = content.call.callId,
+        name = Some(content.call.name)
       )
 
   def default: MessageHandler = new:
@@ -182,6 +182,6 @@ protected object MessageHandler:
       ChatMessage(
         role = "tool",
         content = Some(content.response.asJson),
-        toolCallId = content.functionCallId,
-        name = Some(content.name)
+        toolCallId = content.call.callId,
+        name = Some(content.call.name)
       )

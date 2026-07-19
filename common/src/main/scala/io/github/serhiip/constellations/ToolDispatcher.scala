@@ -4,8 +4,8 @@ import java.time.OffsetDateTime
 
 import scala.quoted.*
 
-import cats.data.NonEmptyChain
 import cats.data.Validated.{Invalid, Valid}
+import cats.data.{NonEmptyChain, Validated, ValidatedNec}
 import cats.syntax.all.*
 import cats.{Applicative, Functor, MonadThrow, ~>}
 
@@ -21,29 +21,35 @@ import io.github.serhiip.constellations.dispatcher.naming.SnakeCaseNamingStrateg
 
 trait ToolDispatcher[F[_]]:
   def dispatch(call: FunctionCall): F[ToolDispatcher.Result]
+  def dispatchAll(calls: List[FunctionCall]): F[ValidatedNec[AgentError, List[ToolDispatcher.Result]]]
   def getFunctionDeclarations: F[List[FunctionDeclaration]]
+  def prepare(call: FunctionCall): ValidatedNec[AgentError, F[ToolDispatcher.Result]]
 
 object ToolDispatcher:
   enum Result:
     case Response(result: FunctionResponse)
     case HumanInTheLoop
 
-  enum Error extends RuntimeException:
-    case ArgumentDecodingFailed(method: String, errors: NonEmptyChain[Decoder.Error])
-
-    override def getMessage: String = this match
-      case ArgumentDecodingFailed(method, errors) =>
-        s"Failed to decode arguments for method '$method': ${errors.mkString_(delim = ", ")}"
-
   def observed[F[_]: Tracer: LoggerFactory: MonadThrow: Meter](delegate: ToolDispatcher[F]): F[ToolDispatcher[F]] =
     Meters.create[F].flatMap(observed(delegate, _))
 
-  final case class Meters[F[_]](dispatchSuccess: Counter[F, Long], dispatchError: Counter[F, Long])
+  final case class Meters[F[_]](
+      dispatchSuccess: Counter[F, Long],
+      dispatchError: Counter[F, Long],
+      dispatchAllSuccess: Counter[F, Long],
+      dispatchAllError: Counter[F, Long]
+  )
 
   object Meters:
     def create[F[_]: Meter: Applicative]: F[Meters[F]] =
-      val metric = Metrics.component("tool_dispatcher")("dispatch")
-      (Meter[F].counter[Long](metric("success_count")).create, Meter[F].counter[Long](metric("error_count")).create).mapN(Meters.apply)
+      val dispatch    = Metrics.component("tool_dispatcher")("dispatch")
+      val dispatchAll = Metrics.component("tool_dispatcher")("dispatch_all")
+      (
+        Meter[F].counter[Long](dispatch("success_count")).create,
+        Meter[F].counter[Long](dispatch("error_count")).create,
+        Meter[F].counter[Long](dispatchAll("success_count")).create,
+        Meter[F].counter[Long](dispatchAll("error_count")).create
+      ).mapN(Meters.apply)
 
   private def observed[F[_]: MonadThrow: Tracer: LoggerFactory](
       delegate: ToolDispatcher[F],
@@ -52,6 +58,8 @@ object ToolDispatcher:
     LoggerFactory[F].create.map { logger =>
       given StructuredLogger[F] = logger
       new ToolDispatcher[F]:
+        def prepare(call: FunctionCall): ValidatedNec[AgentError, F[ToolDispatcher.Result]] = delegate.prepare(call)
+
         def dispatch(call: FunctionCall): F[ToolDispatcher.Result] =
           val traced = Tracer[F].span("tool-dispatcher", "dispatch")(dispatchSpanAttributes(call)*).logged { logger =>
             for
@@ -61,6 +69,21 @@ object ToolDispatcher:
             yield result
           }
           traced.withOperationCounters(meters.dispatchSuccess, meters.dispatchError)
+
+        def dispatchAll(calls: List[FunctionCall]): F[ValidatedNec[AgentError, List[ToolDispatcher.Result]]] =
+          val traced =
+            Tracer[F].span("tool-dispatcher", "dispatch-all")(Attribute("function_call_count", calls.size.toLong)).logged { logger =>
+              for
+                _      <- logger.debug(s"Dispatching ${calls.size} call(s): ${calls.map(_.name).mkString(",")}")
+                result <- delegate.dispatchAll(calls)
+                _      <- logger.trace(s"DispatchAll result: $result")
+              yield result
+            }
+          traced.attempt.flatMap {
+            case Right(Valid(results)) => meters.dispatchAllSuccess.add(1).as(results.validNec)
+            case Right(Invalid(errs))  => meters.dispatchAllError.add(1).as(errs.invalid)
+            case Left(error)           => meters.dispatchAllError.add(1) >> error.raiseError
+          }
 
         def getFunctionDeclarations: F[List[FunctionDeclaration]] =
           Tracer[F].span("tool-dispatcher", "get-function-declarations").logged { logger =>
@@ -74,24 +97,37 @@ object ToolDispatcher:
     }
 
   def noop[F[_]: Applicative]: ToolDispatcher[F] = new ToolDispatcher[F]:
+    def prepare(call: FunctionCall): ValidatedNec[AgentError, F[ToolDispatcher.Result]] =
+      AgentError.UnknownFunction(call).invalidNec
+
     def dispatch(call: FunctionCall): F[ToolDispatcher.Result] =
       throw new UnsupportedOperationException(s"Noop dispatcher does not support dispatching calls: ${call.name}")
+
+    def dispatchAll(calls: List[FunctionCall]): F[ValidatedNec[AgentError, List[ToolDispatcher.Result]]] =
+      calls.traverse(prepare).traverse(_.sequence)
 
     def getFunctionDeclarations: F[List[FunctionDeclaration]] = List.empty.pure[F]
 
   def combine[F[_]: MonadThrow](dispatchers: ToolDispatcher[F]*): F[ToolDispatcher[F]] =
-    dispatchers
-      .traverse(d => d.getFunctionDeclarations.tupleLeft(d))
-      .map: owned =>
-        val (declarations, index) =
-          owned.foldLeft(List.empty[FunctionDeclaration] -> Map.empty[String, ToolDispatcher[F]]):
-            case ((decls, idx), (dispatcher, ds)) =>
-              val fresh = ds.filterNot(d => idx.contains(d.name))
-              (decls ++ fresh, idx ++ fresh.map(_.name -> dispatcher))
-        new:
-          def getFunctionDeclarations: F[List[FunctionDeclaration]] = declarations.pure[F]
-          def dispatch(call: FunctionCall): F[Result]               =
-            index.get(call.name).liftTo[F](RuntimeException(s"No handler for ${call.name}")).flatMap(_.dispatch(call))
+    dispatchers.toList.traverse(d => d.getFunctionDeclarations.tupleLeft(d)).map(combineOwned[F])
+
+  private def combineOwned[F[_]: MonadThrow](owned: List[(ToolDispatcher[F], List[FunctionDeclaration])]): ToolDispatcher[F] =
+    new:
+      private val (declarations, index) =
+        owned.foldLeft(List.empty[FunctionDeclaration] -> Map.empty[String, ToolDispatcher[F]]):
+          case ((decls, idx), (dispatcher, ds)) =>
+            val fresh = ds.filterNot(d => idx.contains(d.name))
+            (decls ++ fresh, idx ++ fresh.map(_.name -> dispatcher))
+
+      def prepare(call: FunctionCall): ValidatedNec[AgentError, F[Result]] =
+        index.get(call.name).fold(AgentError.UnknownFunction(call).invalidNec)(_.prepare(call))
+
+      def dispatch(call: FunctionCall): F[Result] = prepare(call).valueOr(_.head.raiseError)
+
+      def dispatchAll(calls: List[FunctionCall]): F[ValidatedNec[AgentError, List[Result]]] =
+        calls.traverse(prepare).traverse(_.sequence)
+
+      def getFunctionDeclarations: F[List[FunctionDeclaration]] = declarations.pure[F]
 
   inline def to[F[_], T[_[_]]]: T[F] => ToolDispatcher[F] = ${ macroImplTo[F, T] }
 
@@ -127,12 +163,68 @@ object ToolDispatcher:
 
     def buildFromComponents[F[_]: Type](componentExpr: Expr[Any], optionalExpr: Expr[Seq[Any]])(using Quotes): Expr[ToolDispatcher[F]] =
       import quotes.reflect.*
-      val components    = componentExpr.asTerm :: extractComponents(optionalExpr)
-      val componentInfo = components.map { term =>
-        val traitSym = resolveComponentTrait[F](term.tpe, term.pos)
-        (term, traitSym)
-      }
-      buildDispatcherExpr[F](componentInfo)
+      optionalExpr match
+        case Varargs(args) =>
+          val components    = componentExpr.asTerm :: args.toList.map(_.asTerm)
+          val componentInfo = components.map(term => (term, resolveComponentTrait[F](term.tpe, term.pos)))
+          buildDispatcherExpr[F](componentInfo)
+        case _             =>
+          buildFromComponentAndCollection[F](componentExpr, optionalExpr)
+
+    /** Handles the spread form `generate(component, collection*)` where the elements are only known at runtime
+      */
+    def buildFromComponentAndCollection[F[_]: Type](componentExpr: Expr[Any], optionalExpr: Expr[Seq[Any]])(using
+        Quotes
+    ): Expr[ToolDispatcher[F]] =
+      import quotes.reflect.*
+      val mandatoryTerm  = componentExpr.asTerm
+      val mandatoryTrait = resolveComponentTrait[F](mandatoryTerm.tpe, mandatoryTerm.pos)
+
+      def unwrap(term: Term): Term = term match
+        case Inlined(_, _, inner) => unwrap(inner)
+        case Typed(inner, _)      => unwrap(inner)
+        case other                => other
+
+      val collectionTerm = unwrap(optionalExpr.asTerm)
+      val collectionTpe  = collectionTerm.tpe.widen
+      val elementType    = collectionTpe.baseType(TypeRepr.of[Seq[Any]].typeSymbol) match
+        case AppliedType(_, List(arg)) => arg
+        case _                         =>
+          report.errorAndAbort(
+            s"ToolDispatcher.generate can only spread a Seq of components; got ${collectionTpe.show}.",
+            collectionTerm.pos
+          )
+      val elementTrait   = resolveComponentTrait[F](elementType, collectionTerm.pos)
+
+      val monadThrow     =
+        Expr.summon[MonadThrow[F]].getOrElse(report.errorAndAbort("No cats.MonadThrow given found for F", Position.ofMacroExpansion))
+      val baseDispatcher = buildDispatcherExpr[F](List((mandatoryTerm, mandatoryTrait)))
+      val baseDecls      = getMethodDeclarations(mandatoryTrait)
+      val elemDecls      = getMethodDeclarations(elementTrait)
+
+      elementType.asType match
+        case '[e] =>
+          val collectionExpr = collectionTerm.asExprOf[Seq[e]]
+          val methodType     = MethodType(List("instance"))(_ => List(TypeRepr.of[e]), _ => TypeRepr.of[ToolDispatcher[F]])
+          val elementLambda  = Lambda(
+            Symbol.spliceOwner,
+            methodType,
+            (owner, params) =>
+              val instanceTerm = params.headOption match
+                case Some(term: Term) => term
+                case Some(other)      => report.errorAndAbort(s"Expected a term parameter, got: ${other.show}", other.pos)
+                case None             => report.errorAndAbort("Expected a single parameter for dispatcher lambda.", Position.ofMacroExpansion)
+              buildDispatcherExpr[F](List((instanceTerm, elementTrait))).asTerm.changeOwner(owner)
+          ).asExprOf[e => ToolDispatcher[F]]
+          '{
+            given MonadThrow[F] = $monadThrow
+            val base            = $baseDispatcher
+            val makeElement     = $elementLambda
+            val elemDeclList    = $elemDecls
+            val owned           =
+              (base, $baseDecls) :: $collectionExpr.toList.map(instance => (makeElement(instance), elemDeclList))
+            ToolDispatcher.combineOwned[F](owned)
+          }
 
     def getCaseClassFields(using Quotes)(tpe: quotes.reflect.TypeRepr): List[(String, quotes.reflect.TypeRepr, Boolean, Option[String])] =
       import quotes.reflect.*
@@ -272,7 +364,7 @@ object ToolDispatcher:
     def processMethodForDispatch[F[_]: Type](using Quotes)(
         repr: quotes.reflect.TypeRepr,
         from: quotes.reflect.Term
-    )(method: quotes.reflect.Symbol): (String, Expr[FunctionCall => F[ToolDispatcher.Result]]) =
+    )(method: quotes.reflect.Symbol): (String, Expr[FunctionCall => ValidatedNec[AgentError, F[ToolDispatcher.Result]]]) =
       import quotes.reflect.*
       val qualifiedName: String              = s"${componentName(repr.typeSymbol.name)}_${methodName(method.name)}"
       def paramType(param: Symbol): TypeRepr =
@@ -312,7 +404,7 @@ object ToolDispatcher:
           val validatedArgsExpr = '{ ${ Expr.ofList(argExprs) }.sequence }
 
           def callExpr =
-            '{ (args: List[Any], callName: String) =>
+            '{ (args: List[Any], call: FunctionCall) =>
               ${
                 val terms      =
                   params.zipWithIndex.map { case (param, idx) =>
@@ -337,7 +429,7 @@ object ToolDispatcher:
                             .getOrElse(report.errorAndAbort("No cats.Functor given found for F", Position.ofMacroExpansion))
                         val encoder = '{ scala.compiletime.summonInline[ResultEncoder[t]] }
                         '{
-                          $functor.map(${ applied.asExprOf[F[t]] })(value => $encoder.encode(callName, value))
+                          $functor.map(${ applied.asExprOf[F[t]] })(value => $encoder.encode(call, value))
                         }
                       case _    =>
                         report.errorAndAbort(
@@ -354,9 +446,8 @@ object ToolDispatcher:
 
           '{
             $validatedArgsExpr
-              .map(args => $callExpr(args, call.name))
-              .valueOr: errors =>
-                throw Error.ArgumentDecodingFailed(${ Expr(qualifiedName) }, errors)
+              .leftMap(errors => NonEmptyChain.one(AgentError.ArgumentDecodingFailed(call, errors)))
+              .map(args => $callExpr(args, call))
           }
         }
       }
@@ -408,31 +499,6 @@ object ToolDispatcher:
             pos
           )
 
-    def extractComponents(using Quotes)(expr: Expr[Seq[Any]]): List[quotes.reflect.Term] =
-      import quotes.reflect.*
-      expr match
-        case Varargs(args) => args.toList.map(_.asTerm)
-        case _             =>
-          def loop(term: Term, env: Map[Symbol, Term]): List[Term] = term match
-            case Inlined(_, _, inner)                          => loop(inner, env)
-            case Typed(inner, _)                               => loop(inner, env)
-            case Block(stats, inner)                           =>
-              val newBindings = stats.collect {
-                case valDef: ValDef if valDef.rhs.nonEmpty =>
-                  valDef.symbol -> valDef.rhs.get
-              }.toMap
-              loop(inner, env ++ newBindings)
-            case ident: Ident if env.contains(ident.symbol)    => loop(env(ident.symbol), env)
-            case Repeated(elems, _)                            => elems
-            case Apply(Select(_, "apply"), args)               => args
-            case Apply(TypeApply(Select(_, "apply"), _), args) => args
-            case other                                         =>
-              report.errorAndAbort(
-                "ToolDispatcher.generate requires explicit component arguments. Avoid passing a Seq or collection.",
-                other.pos
-              )
-          loop(expr.asTerm, Map.empty)
-
     def buildDispatcherExpr[F[_]: Type](using Quotes)(
         componentInfo: List[(quotes.reflect.Term, quotes.reflect.Symbol)]
     ): Expr[ToolDispatcher[F]] =
@@ -443,29 +509,42 @@ object ToolDispatcher:
           .reduceLeftOption((left, right) => '{ $left ++ $right })
           .getOrElse('{ List.empty[FunctionDeclaration] })
 
-      val callables = componentInfo.flatMap { case (term, traitSym) => processMethodsForDispatch[F](traitSym, term) }
+      val callables  = componentInfo.flatMap { case (term, traitSym) => processMethodsForDispatch[F](traitSym, term) }
+      val monadThrow =
+        Expr.summon[MonadThrow[F]].getOrElse(report.errorAndAbort("No cats.MonadThrow given found for F", Position.ofMacroExpansion))
+      val app        =
+        Expr.summon[cats.Applicative[F]].getOrElse(report.errorAndAbort("No cats.Applicative given found for F", Position.ofMacroExpansion))
 
       '{
         new ToolDispatcher[F]:
+          given Applicative[F] = $app
 
-          private val methodMap: Map[String, FunctionCall => F[ToolDispatcher.Result]] = Map(
+          private val preparers: Map[String, FunctionCall => ValidatedNec[AgentError, F[ToolDispatcher.Result]]] = Map(
             ${ Expr.ofList(callables.map { case (k, v) => '{ ${ Expr(k) } -> ${ v } } }) }*
           )
 
-          def dispatch(call: FunctionCall): F[ToolDispatcher.Result] =
-            methodMap.getOrElse(call.name, throw RuntimeException(s"No handler for ${call.name}"))(call)
+          def prepare(call: FunctionCall): ValidatedNec[AgentError, F[ToolDispatcher.Result]] =
+            preparers.get(call.name).fold(AgentError.UnknownFunction(call).invalidNec)(_(call))
 
-          def getFunctionDeclarations: F[List[FunctionDeclaration]] = ${
-            val app = Expr
-              .summon[cats.Applicative[F]]
-              .getOrElse(report.errorAndAbort("No cats.Applicative given found for F", Position.ofMacroExpansion))
-            '{ $app.pure($functionDeclarationsExpr) }
-          }
+          def dispatch(call: FunctionCall): F[ToolDispatcher.Result] =
+            prepare(call).fold(errs => $monadThrow.raiseError(errs.head), identity)
+
+          def dispatchAll(calls: List[FunctionCall]): F[ValidatedNec[AgentError, List[ToolDispatcher.Result]]] =
+            calls.traverse(prepare).fold(_.invalid.pure, _.sequence.map(Valid.apply))
+
+          def getFunctionDeclarations: F[List[FunctionDeclaration]] = $app.pure($functionDeclarationsExpr)
       }
 
   def mapK[F[_], G[_]](dispatcher: ToolDispatcher[F])(f: F ~> G): ToolDispatcher[G] = new ToolDispatcher[G]:
+    def prepare(call: FunctionCall): ValidatedNec[AgentError, G[ToolDispatcher.Result]] =
+      dispatcher.prepare(call).map(f(_))
+
     def dispatch(call: FunctionCall): G[ToolDispatcher.Result] = f(dispatcher.dispatch(call))
-    def getFunctionDeclarations: G[List[FunctionDeclaration]]  = f(dispatcher.getFunctionDeclarations)
+
+    def dispatchAll(calls: List[FunctionCall]): G[ValidatedNec[AgentError, List[ToolDispatcher.Result]]] =
+      f(dispatcher.dispatchAll(calls))
+
+    def getFunctionDeclarations: G[List[FunctionDeclaration]] = f(dispatcher.getFunctionDeclarations)
 
   private def getFunctionDeclarationsSpanAttributes(decls: List[FunctionDeclaration]): List[Attribute[?]] =
     Attribute("function_declaration_count", decls.size.toLong) ::

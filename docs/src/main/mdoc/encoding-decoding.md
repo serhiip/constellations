@@ -46,7 +46,7 @@ A  →  ValueEncoder[A]  →  StructEncoder[A]  →  ResultEncoder[A]  →  Tool
 
 - **`ValueEncoder[A]`** — Scala value → `Value`
 - **`StructEncoder[A]`** — if the value is already a struct, use it; otherwise wrap as `Struct("value" → …)`
-- **`ResultEncoder[A]`** — builds `ToolDispatcher.Result.Response(FunctionResponse(...))`
+- **`ResultEncoder[A]`** — `encode(call, value)` builds `ToolDispatcher.Result.Response(FunctionResponse(call, …))`
 
 So a method returning `F[Int]` yields a response like `{"value": 8.0}`.
 
@@ -64,9 +64,9 @@ val encoded: Value = ValueEncoder[Weather].encode(Weather(21.5, "Kyiv"))
 
 | Return type | Encoding |
 |-------------|----------|
-| Ordinary `A` with `ValueEncoder` | `Result.Response` with wrapped/struct body |
-| `FunctionResponse` | `Result.Response` as-is |
-| `ToolDispatcher.Result` | Passed through (`HumanInTheLoop` or `Response`) |
+| Ordinary `A` with `ValueEncoder` | `Result.Response(FunctionResponse(call, …))` with wrapped/struct body |
+| `FunctionResponse` | `Result.Response` keeping the returned body, forcing the dispatch `call` |
+| `ToolDispatcher.Result` | `HumanInTheLoop` as-is; `Response` gets the dispatch `call` |
 
 ## Circe `Codecs`
 

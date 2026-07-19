@@ -1,7 +1,7 @@
 package io.github.serhiip.constellations.common
 
 import io.circe.syntax.*
-import io.circe.{Decoder, Encoder, Json}
+import io.circe.{Decoder, Encoder, Json, HCursor}
 
 object Codecs:
 
@@ -70,7 +70,9 @@ object Codecs:
         schema.minItems.map(m => "minItems" -> Json.fromLong(m)),
         schema.maxItems.map(m => "maxItems" -> Json.fromLong(m)),
         Option.when(schema.enm.nonEmpty)("enum"              -> Json.fromValues(schema.enm.map(Json.fromString))),
-        Option.when(schema.properties.nonEmpty)("properties" -> Json.obj(schema.properties.map { case (key, value) => key -> value.asJson }.toSeq*)),
+        Option.when(schema.properties.nonEmpty)("properties" -> Json.obj(schema.properties.map { case (key, value) =>
+          key -> value.asJson
+        }.toSeq*)),
         Option.when(schema.required.nonEmpty)("required"     -> Json.fromValues(schema.required.map(Json.fromString))),
         schema.minProperties.map(m => "minProperties" -> Json.fromLong(m)),
         schema.maxProperties.map(m => "maxProperties" -> Json.fromLong(m)),
@@ -137,32 +139,15 @@ object Codecs:
       Json.obj(fields*)
 
   given Decoder[FunctionDeclaration] with
-    def apply(c: io.circe.HCursor): Decoder.Result[FunctionDeclaration] = for
+    def apply(c: HCursor): Decoder.Result[FunctionDeclaration] = for
       name        <- c.get[String]("name")
       description <- c.get[Option[String]]("description")
       parameters  <- c.get[Option[Schema]]("parameters")
     yield FunctionDeclaration(name, description, parameters)
 
-  given Encoder[FunctionResponse] with
-    def apply(response: FunctionResponse): Json = Json.obj(
-      "name"           -> Json.fromString(response.name),
-      "response"       -> response.response.asJson,
-      "functionCallId" -> response.functionCallId.asJson
-    )
-
-  given Decoder[FunctionResponse] with
-    def apply(c: io.circe.HCursor): Decoder.Result[FunctionResponse] = for
-      name           <- c.get[String]("name")
-      response       <- c.get[Struct]("response")
-      functionCallId <- c.get[Option[String]]("functionCallId")
-    yield FunctionResponse(name, response, functionCallId)
-
   given Encoder[FunctionCall] with
-    def apply(call: FunctionCall): Json = Json.obj(
-      "name"   -> Json.fromString(call.name),
-      "args"   -> call.args.asJson,
-      "callId" -> call.callId.asJson
-    )
+    def apply(call: FunctionCall): Json =
+      Json.obj("name" -> Json.fromString(call.name), "args" -> call.args.asJson, "callId" -> call.callId.asJson)
 
   given Decoder[FunctionCall] with
     def apply(c: io.circe.HCursor): Decoder.Result[FunctionCall] = for

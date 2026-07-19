@@ -114,6 +114,46 @@ class OpenRouterTest extends FunSuite:
     assertEquals(calls.head.callId, Some("call_abc"))
   }
 
+  test("OpenRouter handling should decode typed tool-call arguments without quoting strings") {
+    val response = ChatCompletionResponse(
+      id = "test-id",
+      `object` = "chat.completion",
+      created = 1234567890L,
+      model = "test-model",
+      choices = List(
+        ChatCompletionChoice(
+          index = 0,
+          message = ChatMessage(
+            role = "assistant",
+            content = None,
+            toolCalls = Some(
+              List(
+                OrToolCall(
+                  id = "call-schedule",
+                  `type` = "function",
+                  function = OrToolCallFunction(
+                    name = "ScheduleApi_at",
+                    arguments = """{"when":"2025-07-21T15:00:00+01:00","count":2,"enabled":true}"""
+                  )
+                )
+              )
+            )
+          ),
+          finishReason = Some("tool_calls")
+        )
+      ),
+      usage = ChatCompletionUsage(promptTokens = 10, completionTokens = 5, totalTokens = 15)
+    )
+
+    val calls = handling.getFunctionCalls(response).toOption.get
+    assertEquals(calls.length, 1)
+    assertEquals(calls.head.name, "ScheduleApi_at")
+    assertEquals(calls.head.callId, Some("call-schedule"))
+    assertEquals(calls.head.args.fields("when"), Value.string("2025-07-21T15:00:00+01:00"))
+    assertEquals(calls.head.args.fields("count"), Value.number(2.0))
+    assertEquals(calls.head.args.fields("enabled"), Value.bool(true))
+  }
+
   test("OpenRouter handling should handle different finish reasons") {
     val testCases = List(
       ("tool_calls", FinishReason.ToolCalls),

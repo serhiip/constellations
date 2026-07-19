@@ -10,13 +10,17 @@ libraryDependencies += "io.github.serhiip" %% "constellations-common" % "@VERSIO
 
 ```scala
 trait ToolDispatcher[F[_]]:
+  def prepare(call: FunctionCall): ValidatedNec[AgentError, F[ToolDispatcher.Result]]
   def dispatch(call: FunctionCall): F[ToolDispatcher.Result]
+  def dispatchAll(calls: List[FunctionCall]): F[ValidatedNec[AgentError, List[ToolDispatcher.Result]]]
   def getFunctionDeclarations: F[List[FunctionDeclaration]]
 
 enum ToolDispatcher.Result:
   case Response(result: FunctionResponse)
   case HumanInTheLoop
 ```
+
+`dispatchAll` validates every call first (name lookup + argument decoding), aggregating failures with `ValidatedNec`. If **any** call is invalid it returns `Invalid` and executes **nothing**. If all are valid it executes each call **reusing the arguments already parsed** during validation (no second decode). Prefer `dispatchAll` for batches; `dispatch` remains for single calls and raises the first `AgentError` in `F`.
 
 ## Trait rules
 
@@ -52,12 +56,14 @@ val calculator = new Calculator[IO]:
 
 ### `generate` — one or more components
 
-Pass concrete instances as **explicit arguments** (not a `Seq`):
+Pass concrete instances as **explicit arguments** (not a `Seq`). Requires `MonadThrow[F]` in scope so unknown tools and decode failures raise `AgentError` inside `F`:
 
 ```scala mdoc:silent
 val dispatcher: ToolDispatcher[IO] =
   ToolDispatcher.generate[IO](calculator)
 ```
+
+The instance you pass is `inline`, so its term is spliced into the generated dispatcher. Always pass a **stable reference** (a `val` or `object`). Passing a fresh expression such as `ToolDispatcher.generate[IO](makeCalculator())` would re-evaluate that expression on every dispatch — bind it to a `val` first.
 
 ### `to` — single trait as a factory
 
@@ -68,6 +74,20 @@ val fromTrait: Calculator[IO] => ToolDispatcher[IO] =
 val typedDispatcher: ToolDispatcher[IO] =
   fromTrait(calculator)
 ```
+
+### `generate` vs `to`
+
+Both are macros that expand at **compile time** and emit the *same* dispatcher code (the same routing map, `dispatch` / `dispatchAll` / `getFunctionDeclarations`). There is no runtime performance difference between them; choose based on ergonomics:
+
+| | `generate[F](component, others*)` | `to[F, T]` |
+|---|---|---|
+| Components | One **or many** (varargs) | Exactly one trait |
+| Trait type | Inferred from the value | Written explicitly (`T`) |
+| Returns | `ToolDispatcher[F]` | `T[F] => ToolDispatcher[F]` (reusable factory) |
+| Instance term | `inline` — pass a stable `val`/`object` | Supplied at apply time as a stable lambda parameter (immune to re-evaluation) |
+| When the macro runs | At the `generate(...)` call site, using the component's type and term | At the `to[F, T]` call site, using only the types; the instance is applied later at runtime |
+
+Rule of thumb: reach for `generate` (the default in these docs) — especially to merge multiple components. Prefer `to` when you want a reusable `T[F] => ToolDispatcher[F]` factory, want the trait fixed explicitly in the type, or want to build from a non-stable expression without the re-evaluation caveat.
 
 ### Multi-component
 
@@ -165,13 +185,17 @@ val withApproval: ToolDispatcher[IO] =
 
 ## Errors
 
-| Case | Behavior |
-|------|----------|
-| Unknown tool name | Throws `RuntimeException` |
-| Missing/invalid arguments | Throws `IllegalArgumentException` with decode errors |
-| Implementation failure | Error propagates in `F` |
+`ToolDispatcher.dispatch` raises **`AgentError`** inside `F`. `dispatchAll` returns the same errors aggregated as `ValidatedNec[AgentError, List[Result]]` without executing any call when invalid (requires `MonadThrow[F]` when using `generate` / `to` / `combine`):
 
-Decode errors currently surface as thrown exceptions when building the call (outside `F`). Prefer validating tool args from the model when possible.
+| Case | Error |
+|------|--------|
+| Unknown tool name | `AgentError.UnknownFunction(call)` |
+| Missing/invalid arguments | `AgentError.ArgumentDecodingFailed(call, errors)` |
+
+Both cases carry the original `FunctionCall` (including `callId` when the provider set one). Successful `FunctionResponse`s also embed that same `FunctionCall` (`response.call`), so providers read `call.callId` — there is no separate id field.
+| Implementation failure | Error propagates in `F` (only after a successful validation in `dispatch` / `dispatchAll`) |
+
+`Stateful` uses `dispatchAll` (validate-then-execute). On `Invalid` it posts tool-results for the whole batch (error for bad calls, skipped for valid siblings that were not run), retries up to `agentErrorRetryLimit`, then returns `Failure.AgentRetriesExhausted` with the aggregated `NonEmptyChain[AgentError]`.
 
 ## Observability
 

@@ -255,75 +255,6 @@ class CodecsSuite extends FunSuite:
     assertEquals(decoded, Right(func))
   }
 
-  test("FunctionResponse.simple should encode/decode correctly") {
-    val response = FunctionResponse(
-      "getUser",
-      Struct(
-        Map(
-          "id"   -> Value.StringValue("123"),
-          "name" -> Value.StringValue("John Doe")
-        )
-      )
-    )
-    val json     = response.asJson
-    val decoded  = decode[FunctionResponse](json.noSpaces)
-
-    assertEquals(decoded, Right(response))
-  }
-
-  test("FunctionResponse.withStringResponse should encode/decode correctly") {
-    val response = FunctionResponse(
-      "getUser",
-      Struct(Map("result" -> Value.string("User data retrieved successfully")))
-    )
-    val json     = response.asJson
-    val decoded  = decode[FunctionResponse](json.noSpaces)
-
-    assertEquals(decoded, Right(response))
-  }
-
-  test("FunctionResponse.withErrorResponse should encode/decode correctly") {
-    val response = FunctionResponse(
-      "getUser",
-      Struct(Map("error" -> Value.string("User not found")))
-    )
-    val json     = response.asJson
-    val decoded  = decode[FunctionResponse](json.noSpaces)
-
-    assertEquals(decoded, Right(response))
-  }
-
-  test("FunctionResponse.withSuccessResponse should encode/decode correctly") {
-    val data     = Map(
-      "id"     -> "123",
-      "name"   -> "John Doe",
-      "age"    -> 30,
-      "active" -> true,
-      "score"  -> 95.5
-    )
-    val response = FunctionResponse("getUser", Struct.fromMap(data))
-    val json     = response.asJson
-    val decoded  = decode[FunctionResponse](json.noSpaces)
-
-    assertEquals(decoded, Right(response))
-  }
-
-  test("FunctionResponse.fromMethod should encode/decode correctly") {
-    val response = FunctionResponse.fromMethod(
-      "UserService",
-      "getUser",
-      Struct(
-        Map(
-          "result" -> Value.StringValue("success")
-        )
-      )
-    )
-    val json     = response.asJson
-    val decoded  = decode[FunctionResponse](json.noSpaces)
-
-    assertEquals(decoded, Right(response))
-  }
-
   test("Complex nested structures should encode/decode correctly") {
     val userStruct = Struct(
       Map(
@@ -345,38 +276,10 @@ class CodecsSuite extends FunSuite:
         )
       )
     )
+    val json    = userStruct.asJson
+    val decoded = decode[Struct](json.noSpaces)
 
-    val response = FunctionResponse("getUser", userStruct)
-    val json     = response.asJson
-    val decoded  = decode[FunctionResponse](json.noSpaces)
-
-    assertEquals(decoded, Right(response))
-  }
-
-  test("FunctionResponse.withCallId should encode/decode correctly") {
-    val response = FunctionResponse(
-      "getUser",
-      Struct(Map("result" -> Value.string("User data retrieved successfully"))),
-      "call-123".some
-    )
-    val json     = response.asJson
-    val decoded  = decode[FunctionResponse](json.noSpaces)
-
-    assertEquals(decoded, Right(response))
-    assertEquals(response.functionCallId, "call-123".some)
-  }
-
-  test("FunctionResponse with functionCallId should encode/decode correctly") {
-    val response = FunctionResponse(
-      "getUser",
-      Struct(Map("id" -> Value.StringValue("123"))),
-      "call-456".some
-    )
-    val json     = response.asJson
-    val decoded  = decode[FunctionResponse](json.noSpaces)
-
-    assertEquals(decoded, Right(response))
-    assertEquals(response.functionCallId, "call-456".some)
+    assertEquals(decoded, Right(userStruct))
   }
 
   test("FunctionCall with callId should encode/decode correctly") {

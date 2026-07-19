@@ -62,11 +62,16 @@ Provider objects export both `Handling` and `AssetsHandling` givens. Importing `
 
 ## Consumers
 
-`StructuredInvoker` needs `Handling[T]`. `Stateful` needs both `Handling[T]` and `AssetsHandling[F, T]`:
+`StructuredInvoker` needs `Handling[T]`. `Stateful` needs both `Handling[T]` and `AssetsHandling[F, T]`. Production `Stateful(...)` also needs `Tracer` and `StructuredLogger` (use `Stateful.pure` in tests):
 
 ```scala
 import io.github.serhiip.constellations.handling.OpenRouter.given
+import io.github.serhiip.constellations.executor.Stateful
 
+Stateful.Config(functionCallLimit = 5, agentErrorRetryLimit = 3)
+// optional: agentErrorInstruction: String (correction text in the tool-result)
 Stateful[IO, ChatCompletionResponse](config, invoker, files)
 StructuredInvoker[IO, ChatCompletionResponse, MyType](baseInvoker)
 ```
+
+On invalid tool names/arguments (`AgentError`), `Stateful` uses `ToolDispatcher.dispatchAll`, which validates the whole batch first and executes none on failure. It posts tool-results with correction instructions, retries until `agentErrorRetryLimit`, then returns `Left(Failure.AgentRetriesExhausted(errors))`. Only when every call is `Valid` does `dispatchAll` run the prepared effects.

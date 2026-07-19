@@ -119,7 +119,7 @@ object Bedrock:
         val block = ContentBlock.fromToolResult(
           software.amazon.awssdk.services.bedrockruntime.model.ToolResultBlock
             .builder()
-            .toolUseId(fr.functionCallId.getOrElse(fr.name))
+            .toolUseId(fr.call.callId.getOrElse(fr.call.name))
             .content(
               software.amazon.awssdk.services.bedrockruntime.model.ToolResultContentBlock
                 .fromJson(Codecs.structToDocument(fr.response))

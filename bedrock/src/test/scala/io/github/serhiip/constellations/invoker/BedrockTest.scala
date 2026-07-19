@@ -37,7 +37,12 @@ final class BedrockTest extends CatsEffectSuite:
       Message.System("You are a helpful assistant."),
       Message.User(List(ContentPart.Text("What is the weather in London?"))),
       Message.Tool(FunctionCall("getWeather", Struct("city" -> Value.string("London")), "call-1".some)),
-      Message.ToolResult(FunctionResponse("getWeather", Struct("temperature" -> Value.string("18C")), "call-1".some)),
+      Message.ToolResult(
+        FunctionResponse(
+          FunctionCall("getWeather", Struct.empty, "call-1".some),
+          Struct("temperature" -> Value.string("18C"))
+        )
+      ),
       Message.Assistant("It is 18C in London.".some)
     )
 

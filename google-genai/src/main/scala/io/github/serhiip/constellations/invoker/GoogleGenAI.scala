@@ -80,7 +80,7 @@ object GoogleGenAI:
         Content.builder().role("user").parts(part).build()
       case Message.ToolResult(fr)          =>
         val args = fr.response.fields.view.mapValues(valueToJava).toMap.asJava
-        val part = Part.fromFunctionResponse(fr.name, args)
+        val part = Part.fromFunctionResponse(fr.call.name, args)
         Content.builder().role("tool").parts(part).build()
 
     private def toGFunctionDeclaration(fd: FunctionDeclaration): GFunctionDeclaration =
