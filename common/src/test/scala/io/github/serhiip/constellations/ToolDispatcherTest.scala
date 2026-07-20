@@ -7,10 +7,12 @@ import java.util.concurrent.atomic.AtomicInteger
 
 import cats.MonadThrow
 import cats.data.Validated.{Invalid, Valid}
+import cats.data.ValidatedNec
 import cats.effect.IO
 import cats.syntax.all.*
 import io.github.serhiip.constellations.common.*
 import io.github.serhiip.constellations.dispatcher.{Decoder, ValueEncoder}
+import io.github.serhiip.constellations.schema.ToSchema
 import munit.CatsEffectSuite
 
 final case class Ping(value: String) derives ValueEncoder
@@ -20,6 +22,30 @@ trait PingApi[F[_]]:
 
 trait ScheduleApi[F[_]]:
   def at(when: OffsetDateTime): F[String]
+
+/** Documented payload for tools. */
+final case class DocumentedPayload(
+    /** Field from docstring. */
+    label: String,
+    @llmHint(description = Some("Hinted count"), minimum = Some(0.0))
+    count: Int
+)
+
+trait DocumentedApi[F[_]]:
+  def submit(payload: DocumentedPayload): F[String]
+
+final case class CustomId(value: String)
+object CustomId:
+  given ToSchema[CustomId] = ToSchema.instance(Schema.string(format = Some("uuid"), description = Some("custom id")))
+  given Decoder[Value, CustomId] with
+    def decode(value: Value, path: String): ValidatedNec[Decoder.Error, CustomId] =
+      value match
+        case Value.StringValue(s) => CustomId(s).validNec
+        case other                =>
+          Decoder.Error.WrongType(path, "String", other.getClass.getSimpleName).invalidNec
+
+trait CustomIdApi[F[_]]:
+  def lookup(id: CustomId): F[String]
 
 trait TestApi[F[_]]:
   def mixedTypes(intVal: Int, strVal: String, boolVal: Boolean): F[String]
@@ -119,7 +145,7 @@ class ToolDispatcherTest extends CatsEffectSuite:
   val typedDispatcher = ToolDispatcher.to[IO, TestApi](impl)
   val greeting        = new GreetingApiStub
   val multiDispatcher = ToolDispatcher.generate[IO](impl, greeting)
-  
+
   test("dispatcher should successfully call a method with various parameter types") {
     val call = createFunctionCall("TestApi_mixed_types", Map("int_val" -> 42, "str_val" -> "test", "bool_val" -> true))
     dispatcher.dispatch(call).map(response => assertEquals(extractString(response), "int=42, str=test, bool=true"))
@@ -136,7 +162,7 @@ class ToolDispatcherTest extends CatsEffectSuite:
       case ToolDispatcher.Result.Response(result) =>
         assertEquals(result.call, call)
         assertEquals(result.response.fields("value"), Value.string("no params"))
-      case ToolDispatcher.Result.HumanInTheLoop =>
+      case ToolDispatcher.Result.HumanInTheLoop   =>
         fail("Unexpected HumanInTheLoop")
     }
   }
@@ -150,7 +176,7 @@ class ToolDispatcherTest extends CatsEffectSuite:
     dispatcher.dispatch(call).attempt.map {
       case Left(err: AgentError.ArgumentDecodingFailed) =>
         assertEquals(err.call, call)
-      case other => fail(s"Expected ArgumentDecodingFailed, got $other")
+      case other                                        => fail(s"Expected ArgumentDecodingFailed, got $other")
     }
   }
 
@@ -491,10 +517,11 @@ class ToolDispatcherTest extends CatsEffectSuite:
   test("getFunctionDeclarations should return correct function declarations") {
     val declarations = dispatcher.getFunctionDeclarations.map(_.sortBy(_.name))
 
+    val int32Schema  = ToSchema[Int].schema
     val personSchema = Schema.obj(
       properties = Map(
         "name"   -> Schema.string(),
-        "age"    -> Schema.integer(),
+        "age"    -> int32Schema,
         "active" -> Schema.boolean()
       ),
       required = List("name", "age", "active")
@@ -517,7 +544,7 @@ class ToolDispatcherTest extends CatsEffectSuite:
         Some(
           Schema.obj(
             properties = Map(
-              "int_val"  -> Schema.integer(),
+              "int_val"  -> int32Schema,
               "str_val"  -> Schema.string(),
               "bool_val" -> Schema.boolean()
             ),
@@ -542,7 +569,7 @@ class ToolDispatcherTest extends CatsEffectSuite:
         Some(
           Schema.obj(
             properties = Map(
-              "a" -> Schema.integer(),
+              "a" -> int32Schema,
               "b" -> Schema.string().copy(nullable = Some(true))
             ),
             required = List("a")
@@ -628,4 +655,50 @@ class ToolDispatcherTest extends CatsEffectSuite:
       errors.exists(_.message.contains("must be typed as a trait")),
       clues(errors.map(_.message))
     )
+  }
+
+  test("getFunctionDeclarations should flow docstrings and llmHint through nested param schemas") {
+    val api                  = new DocumentedApi[IO]:
+      def submit(payload: DocumentedPayload): IO[String] = IO.pure(payload.label)
+    val documentedDispatcher = ToolDispatcher.generate[IO](api)
+    documentedDispatcher.getFunctionDeclarations.map { decls =>
+      assertEquals(
+        decls.find(_.name == "DocumentedApi_submit").flatMap(_.parameters),
+        Some(
+          Schema.obj(
+            properties = Map(
+              "payload" -> Schema.obj(
+                description = Some("Documented payload for tools."),
+                properties = Map(
+                  "label" -> Schema.string(),
+                  "count" -> ToSchema[Int].schema.copy(
+                    description = Some("Hinted count"),
+                    minimum = Some(0.0)
+                  )
+                ),
+                required = List("label", "count")
+              )
+            ),
+            required = List("payload")
+          )
+        )
+      )
+    }
+  }
+
+  test("getFunctionDeclarations should use a custom ToSchema instance for param types") {
+    val api              = new CustomIdApi[IO]:
+      def lookup(id: CustomId): IO[String] = IO.pure(id.value)
+    val customDispatcher = ToolDispatcher.generate[IO](api)
+    customDispatcher.getFunctionDeclarations.map { decls =>
+      assertEquals(
+        decls.find(_.name == "CustomIdApi_lookup").flatMap(_.parameters),
+        Some(
+          Schema.obj(
+            properties = Map("id" -> Schema.string(format = Some("uuid"), description = Some("custom id"))),
+            required = List("id")
+          )
+        )
+      )
+    }
   }

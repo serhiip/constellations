@@ -145,6 +145,7 @@ object Schema:
     )
 
   def integer(
+      format: Option[String] = None,
       description: Option[String] = None,
       nullable: Option[Boolean] = None,
       minimum: Option[Double] = None,
@@ -152,6 +153,7 @@ object Schema:
   ): Schema =
     Schema(
       tpe = SchemaType.Integer,
+      format = format,
       description = description,
       nullable = nullable,
       minimum = minimum,

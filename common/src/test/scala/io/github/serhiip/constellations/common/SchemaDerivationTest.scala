@@ -38,6 +38,12 @@ class SchemaDerivationSuite extends FunSuite:
 
   case class Profile(person: Person, status: Status, mode: DeviceMode)
 
+  case class Temperature(celsius: Double)
+  object Temperature:
+    given ToSchema[Temperature] = ToSchema.instance(Schema.number(description = Some("temperature in celsius")))
+
+  case class Reading(id: String, temperature: Temperature, history: List[Temperature])
+
   /** All supported field types. */
   case class SupportedFieldTypes(
       text: String,
@@ -126,24 +132,41 @@ class SchemaDerivationSuite extends FunSuite:
     case object Cash                     extends PaymentMethod
     final case class Wire(bank: String)  extends PaymentMethod
 
+  private val int32Schema  = ToSchema[Int].schema
+  private val int64Schema  = ToSchema[Long].schema
+
   private val expectedAddressSchema = Schema.obj(
+    description = Some("Address for a person."),
     properties = Map(
       "street" -> Schema.string(),
-      "zip"    -> Schema.integer()
+      "zip"    -> int32Schema
     ),
     required = List("street", "zip")
   )
 
   private val expectedPersonSchema = Schema.obj(
+    description = Some("Person record."),
     properties = Map(
       "name"     -> Schema.string(),
-      "age"      -> Schema.integer(),
+      "age"      -> int32Schema,
       "nickname" -> Schema.string().copy(nullable = Some(true)),
       "address"  -> expectedAddressSchema,
       "tags"     -> Schema.array(items = Schema.string())
     ),
     required = List("name", "age", "address")
   )
+
+  private val expectedStatusSchema =
+    Schema.string(enm = List("Active", "Inactive"), description = Some("Account status."))
+
+  private val expectedComplexEnumSchema =
+    Schema.string(enm = List("Child1", "Child2"), description = Some("Complex enum."))
+
+  private val expectedDeviceModeSchema =
+    Schema.string(enm = List("Auto", "Manual"), description = Some("Device mode."))
+
+  private val expectedPaymentMethodSchema =
+    Schema.string(enm = List("Card", "Cash", "Wire"), description = Some("Payment method."))
 
   private val expectedAnnotatedSchema =
     Schema
@@ -169,6 +192,7 @@ class SchemaDerivationSuite extends FunSuite:
       .copy(title = Some("record"))
 
   private val expectedHintCoverageSchema = Schema.obj(
+    description = Some("Hint coverage record."),
     properties = Map(
       "email" -> Schema
         .string(
@@ -188,6 +212,7 @@ class SchemaDerivationSuite extends FunSuite:
   private val expectedDocFallbackSchema =
     Schema
       .obj(
+        description = Some("Docstring fallback record."),
         properties = Map(
           "label" -> Schema.string(minLength = Some(3))
         ),
@@ -196,32 +221,35 @@ class SchemaDerivationSuite extends FunSuite:
       .copy(title = Some("fallback"))
 
   private val expectedDocFallbackEnumSchema =
-    Schema.string(enm = List("Alpha", "Beta")).copy(title = Some("enum-fallback"))
+    Schema
+      .string(enm = List("Alpha", "Beta"), description = Some("Docstring fallback enum."))
+      .copy(title = Some("enum-fallback"))
 
   private val expectedDocFallbackTraitSchema =
-    Schema.string(enm = List("One", "Two")).copy(title = Some("trait-fallback"))
+    Schema
+      .string(enm = List("One", "Two"), description = Some("Docstring fallback trait."))
+      .copy(title = Some("trait-fallback"))
 
   private val expectedSupportedFieldSchema = Schema.obj(
+    description = Some("All supported field types."),
     properties = Map(
       "text"         -> Schema.string(),
-      "count"        -> Schema.integer(),
-      "total"        -> Schema.integer(),
+      "count"        -> int32Schema,
+      "total"        -> int64Schema,
       "ratio"        -> Schema.number(),
       "weight"       -> Schema.number(),
       "active"       -> Schema.boolean(),
       "note"         -> Schema.string().copy(nullable = Some(true)),
-      "list"         -> Schema.array(items = Schema.integer()),
+      "list"         -> Schema.array(items = int32Schema),
       "seq"          -> Schema.array(items = Schema.number()),
       "address"      -> expectedAddressSchema,
-      "status"       -> Schema.string(enm = List("Active", "Inactive")),
-      "method"       -> Schema.string(enm = List("Card", "Cash", "Wire")),
-      "complex"      -> Schema.string(enm = List("Child1", "Child2")),
-      "mode"         -> Schema.string(enm = List("Auto", "Manual")),
-      "optionalMode" -> Schema
-        .string(enm = List("Auto", "Manual"))
-        .copy(nullable = Some(true)),
+      "status"       -> expectedStatusSchema,
+      "method"       -> expectedPaymentMethodSchema,
+      "complex"      -> expectedComplexEnumSchema,
+      "mode"         -> expectedDeviceModeSchema,
+      "optionalMode" -> expectedDeviceModeSchema.copy(nullable = Some(true)),
       "optionalTags" -> Schema.array(items = Schema.string()).copy(nullable = Some(true)),
-      "defaulted"    -> Schema.integer()
+      "defaulted"    -> int32Schema
     ),
     required = List(
       "text",
@@ -249,13 +277,13 @@ class SchemaDerivationSuite extends FunSuite:
   test("Schema.derived should derive schema for enums") {
     val schema = Schema.derived[Status]
 
-    assertEquals(schema, Schema.string(enm = List("Active", "Inactive")))
+    assertEquals(schema, expectedStatusSchema)
   }
 
   test("Schema.derived should derive schema for complex enums") {
     val schema = Schema.derived[ComplexEnum]
 
-    assertEquals(schema, Schema.string(enm = List("Child1", "Child2")))
+    assertEquals(schema, expectedComplexEnumSchema)
   }
 
   test("Schema.derived should derive schema for nested enums and case classes") {
@@ -264,8 +292,8 @@ class SchemaDerivationSuite extends FunSuite:
     val expected = Schema.obj(
       properties = Map(
         "person" -> expectedPersonSchema,
-        "status" -> Schema.string(enm = List("Active", "Inactive")),
-        "mode"   -> Schema.string(enm = List("Auto", "Manual"))
+        "status" -> expectedStatusSchema,
+        "mode"   -> expectedDeviceModeSchema
       ),
       required = List("person", "status", "mode")
     )
@@ -291,10 +319,17 @@ class SchemaDerivationSuite extends FunSuite:
     assertEquals(schema, expectedHintCoverageSchema)
   }
 
-  test("Schema.derived should use docstring fallback with llmHint") {
+  test("Schema.derived should use docstring when llmHint has no description") {
     val schema = Schema.derived[DocFallback]
 
     assertEquals(schema, expectedDocFallbackSchema)
+  }
+
+  test("Schema.derived should prefer llmHint description over docstring") {
+    val schema = Schema.derived[AnnotatedRecord]
+
+    assertEquals(schema.description, Some("Annotated record"))
+    assertEquals(schema.properties("name").description, Some("Annotated name"))
   }
 
   test("Schema.derived should use docstring fallback for enums with llmHint") {
@@ -312,11 +347,41 @@ class SchemaDerivationSuite extends FunSuite:
   test("Schema.derived should derive schema for sealed trait hierarchies") {
     val schema = Schema.derived[PaymentMethod]
 
-    assertEquals(schema, Schema.string(enm = List("Card", "Cash", "Wire")))
+    assertEquals(schema, expectedPaymentMethodSchema)
+  }
+
+  test("Schema.derived should derive OffsetDateTime as date-time string") {
+    case class Timed(when: java.time.OffsetDateTime)
+    val schema = Schema.derived[Timed]
+
+    assertEquals(
+      schema,
+      Schema.obj(
+        properties = Map("when" -> Schema.string(format = Some("date-time"))),
+        required = List("when")
+      )
+    )
   }
 
   test("Structured typeclass should provide derived schema for case classes") {
     val schema = ToSchema[Person].schema
 
     assertEquals(schema, expectedPersonSchema)
+  }
+
+  test("Schema.derived should honor a custom nested ToSchema instance") {
+    val temperatureSchema = Schema.number(description = Some("temperature in celsius"))
+    val schema            = Schema.derived[Reading]
+
+    assertEquals(
+      schema,
+      Schema.obj(
+        properties = Map(
+          "id"          -> Schema.string(),
+          "temperature" -> temperatureSchema,
+          "history"     -> Schema.array(items = temperatureSchema)
+        ),
+        required = List("id", "temperature", "history")
+      )
+    )
   }

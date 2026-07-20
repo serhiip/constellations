@@ -28,29 +28,30 @@ object SchemaMacros:
     import quotes.reflect.*
 
     def readHint(sym: Symbol): Option[Expr[Hint]] =
-      sym.annotations.collectFirst { case ann if ann.tpe <:< TypeRepr.of[llmHint] =>
-        val hintExpr = ann.asExprOf[llmHint]
-        '{
-          val hint = $hintExpr
-          Hint(
-            format = hint.format,
-            title = hint.title,
-            description = hint.description,
-            nullable = hint.nullable,
-            default = hint.default,
-            minItems = hint.minItems,
-            maxItems = hint.maxItems,
-            minProperties = hint.minProperties,
-            maxProperties = hint.maxProperties,
-            minimum = hint.minimum,
-            maximum = hint.maximum,
-            minLength = hint.minLength,
-            maxLength = hint.maxLength,
-            pattern = hint.pattern,
-            example = hint.example,
-            enm = hint.enm
-          )
-        }
+      sym.annotations.collectFirst {
+        case ann if ann.tpe <:< TypeRepr.of[llmHint] =>
+          val hintExpr = ann.asExprOf[llmHint]
+          '{
+            val hint = $hintExpr
+            Hint(
+              format = hint.format,
+              title = hint.title,
+              description = hint.description,
+              nullable = hint.nullable,
+              default = hint.default,
+              minItems = hint.minItems,
+              maxItems = hint.maxItems,
+              minProperties = hint.minProperties,
+              maxProperties = hint.maxProperties,
+              minimum = hint.minimum,
+              maximum = hint.maximum,
+              minLength = hint.minLength,
+              maxLength = hint.maxLength,
+              pattern = hint.pattern,
+              example = hint.example,
+              enm = hint.enm
+            )
+          }
       }
 
     def applyHint(schemaExpr: Expr[Schema], hintOpt: Option[Expr[Hint]]): Expr[Schema] =
@@ -80,8 +81,14 @@ object SchemaMacros:
             )
           }
 
-    def getCaseClassFields(tpe: TypeRepr): List[(String, TypeRepr, Boolean, Option[Expr[Hint]])] =
-      val paramsByName =
+    def normalizeDocstring(raw: Option[String]): Option[String] =
+      raw.map(_.stripPrefix("/**").stripSuffix("*/").trim).filter(_.nonEmpty)
+
+    def withDocstring(schemaExpr: Expr[Schema], docstring: Option[String]): Expr[Schema] =
+      normalizeDocstring(docstring).fold(schemaExpr)(doc => '{ $schemaExpr.copy(description = Some(${ Expr(doc) })) })
+
+    def getCaseClassFields(tpe: TypeRepr): List[(String, TypeRepr, Boolean, Option[Expr[Hint]], Option[String])] =
+      val paramsByName   =
         tpe.typeSymbol.primaryConstructor.paramSymss.flatten
           .filterNot(_.isTypeParam)
           .map(param => param.name -> param)
@@ -94,25 +101,25 @@ object SchemaMacros:
         val hasDefault = defaultsByName.getOrElse(fieldName, false)
         val paramOpt   = paramsByName.get(fieldName)
         val hint       = paramOpt.flatMap(readHint).orElse(readHint(field))
-        (fieldName, fieldTpe, !isOptional && !hasDefault, hint)
+        val docstring  = paramOpt.flatMap(_.docstring).orElse(field.docstring)
+        (fieldName, fieldTpe, !isOptional && !hasDefault, hint, docstring)
       }.toList
 
-    def tpeToSchema(tpe: TypeRepr, posOpt: Option[Position]): Expr[Schema] =
+    def resolveSchema(tpe: TypeRepr, posOpt: Option[Position]): Expr[Schema] =
+      tpe.asType match
+        case '[t] =>
+          Expr.summon[ToSchema[t]].fold(structuralSchema(tpe, posOpt))(toSchema => '{ $toSchema.schema })
+
+    def structuralSchema(tpe: TypeRepr, posOpt: Option[Position]): Expr[Schema] =
       val errorPos = posOpt.getOrElse(Position.ofMacroExpansion)
       tpe.widen.simplified match
-        case t if t =:= TypeRepr.of[String]                                                => '{ Schema.string() }
-        case t if t =:= TypeRepr.of[Int]                                                   => '{ Schema.integer() }
-        case t if t =:= TypeRepr.of[Long]                                                  => '{ Schema.integer() }
-        case t if t =:= TypeRepr.of[Double]                                                => '{ Schema.number() }
-        case t if t =:= TypeRepr.of[Float]                                                 => '{ Schema.number() }
-        case t if t =:= TypeRepr.of[Boolean]                                               => '{ Schema.boolean() }
         case t if t <:< TypeRepr.of[Option[Any]]                                           =>
           val innerType   = t.typeArgs.head
-          val innerSchema = tpeToSchema(innerType, posOpt)
+          val innerSchema = resolveSchema(innerType, posOpt)
           '{ $innerSchema.copy(nullable = Some(true)) }
         case t if t <:< TypeRepr.of[List[Any]] || t <:< TypeRepr.of[Seq[Any]]              =>
           val innerType   = t.typeArgs.head
-          val itemsSchema = tpeToSchema(innerType, posOpt)
+          val itemsSchema = resolveSchema(innerType, posOpt)
           '{ Schema.array(items = $itemsSchema) }
         case t if t.typeSymbol.flags.is(Flags.Case)                                        =>
           processCaseClassSchema(t, posOpt)
@@ -124,28 +131,31 @@ object SchemaMacros:
     def processCaseClassSchema(tpe: TypeRepr, posOpt: Option[Position]): Expr[Schema] =
       val fields = getCaseClassFields(tpe)
 
-      val propertiesExprs = fields.map { case (name, fieldTpe, _, hint) =>
-        val schemaExpr     = tpeToSchema(fieldTpe, posOpt)
+      val propertiesExprs = fields.map { case (name, fieldTpe, _, hint, docstring) =>
+        val schemaExpr     = withDocstring(resolveSchema(fieldTpe, posOpt), docstring)
         val schemaWithHint = applyHint(schemaExpr, hint)
         '{ ${ Expr(name) } -> $schemaWithHint }
       }
 
       val requiredExprs  = fields.filter(_._3).map(f => Expr(f._1))
       val baseSchemaExpr =
-        '{
-          Schema.obj(
-            properties = Map(${ Varargs(propertiesExprs) }*),
-            required = List(${ Varargs(requiredExprs) }*)
-          )
-        }
+        withDocstring(
+          '{
+            Schema.obj(
+              properties = Map(${ Varargs(propertiesExprs) }*),
+              required = List(${ Varargs(requiredExprs) }*)
+            )
+          },
+          tpe.typeSymbol.docstring
+        )
       applyHint(baseSchemaExpr, readHint(tpe.typeSymbol))
 
     def processEnumSchema(tpe: TypeRepr): Expr[Schema] =
       val sym            = tpe.typeSymbol
       val children       = sym.children.map(_.name)
       val childrenExpr   = Expr(children.toList)
-      val baseSchemaExpr = '{ Schema.string(enm = $childrenExpr) }
+      val baseSchemaExpr = withDocstring('{ Schema.string(enm = $childrenExpr) }, sym.docstring)
       applyHint(baseSchemaExpr, readHint(sym))
 
     val pos = Some(Position.ofMacroExpansion)
-    tpeToSchema(TypeRepr.of[A], pos)
+    structuralSchema(TypeRepr.of[A], pos)

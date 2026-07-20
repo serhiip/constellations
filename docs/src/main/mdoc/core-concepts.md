@@ -50,7 +50,7 @@ val program: IO[Unit] =
 
 ## Schema generation
 
-Traits used with `ToolDispatcher.generate` get JSON schemas and declarations from method signatures and docstrings. Standalone derivation uses `Schema.derived` / `ToSchema` — see [Values & schemas](value-and-types.md).
+Traits used with `ToolDispatcher.generate` get JSON schemas and declarations from method signatures and docstrings. Parameter type schemas are built through the shared `ToSchema` / `SchemaMacros` path (same as standalone `Schema.derived`), so `@llmHint`, field docstrings, and custom `given ToSchema[...]` instances apply — see [Values & schemas](value-and-types.md).
 
 ## Learn more
 

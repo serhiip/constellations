@@ -59,22 +59,45 @@ val viaTypeclass: Schema = ToSchema[Person].schema
 
 Supported:
 
-- Primitives: `String`, `Int`, `Long`, `Double`, `Float`, `Boolean`
+- Primitives: `String`, `Int` (`format: int32`), `Long` (`format: int64`), `Double`, `Float`, `Boolean` (and `OffsetDateTime` as a `date-time` string)
 - `Option` (nullable / not required)
 - `List` / `Seq`
 - Nested case classes
 - Sealed traits and Scala 3 enums
 
+These are provided as `given ToSchema[...]` instances in the `ToSchema` companion, so they are part of the implicit search scope.
+
+### Custom instances
+
+Provide your own `given ToSchema[T]` to control how a type maps to `Schema`. Derivation honors it wherever `T` appears — as a top-level type, a nested field, or inside `Option` / `List` / `Seq`:
+
+```scala mdoc:silent
+import io.github.serhiip.constellations.common.Schema
+import io.github.serhiip.constellations.schema.ToSchema
+
+final case class Temperature(celsius: Double)
+object Temperature:
+  given ToSchema[Temperature] =
+    ToSchema.instance(Schema.number(description = Some("temperature in celsius")))
+
+final case class Reading(id: String, temperature: Temperature, history: List[Temperature])
+
+// `temperature` and each item of `history` use the custom Temperature schema
+val readingSchema: Schema = Schema.derived[Reading]
+```
+
 ### `@llmHint`
 
-Overrides metadata and constraints on fields (description, min/max, pattern, enum values, etc.). Used by **`Schema.derived` / `ToSchema`**.
+Overrides metadata and constraints on fields (description, min/max, pattern, enum values, etc.). Used by **`Schema.derived` / `ToSchema`**. Type-level docstrings are used as a fallback for `description` when `@llmHint` does not set one (`@llmHint` wins). Prefer `@llmHint(description = ...)` on fields — case-class parameter docstrings are not reliably available via Scala 3's `Symbol.docstring`.
 
 ### ToolDispatcher vs Schema.derived
 
-| Feature | ToolDispatcher param schemas | `Schema.derived` |
-|---------|------------------------------|------------------|
-| Descriptions | Method / parameter **docstrings** | `@llmHint` + docstrings |
-| Trigger | Macros in `generate` / `to` | Explicit `Schema.derived[A]` |
+| Feature                     | ToolDispatcher param schemas                                  | `Schema.derived` / `ToSchema`                |
+| --------------------------- | ------------------------------------------------------------- | -------------------------------------------- |
+| Type → schema               | Via `ToSchema` (`summonInline`)                               | Explicit `Schema.derived[A]` / `ToSchema[A]` |
+| Nested descriptions         | `@llmHint` + type-level docstrings                            | `@llmHint` + type-level docstrings           |
+| Method / param descriptions | Method / parameter **docstrings** (declaration surface)       | N/A                                          |
+| Extensibility               | User `given ToSchema[Custom]` (e.g. `ToSchema.instance(...)`) | Same                                         |
 
 ## Related
 

@@ -1,7 +1,6 @@
 package io.github.serhiip.constellations
 
-import java.time.OffsetDateTime
-
+import scala.compiletime.summonInline
 import scala.quoted.*
 
 import cats.data.Validated.{Invalid, Valid}
@@ -18,6 +17,7 @@ import io.github.serhiip.constellations.common.*
 import io.github.serhiip.constellations.common.Observability.*
 import io.github.serhiip.constellations.dispatcher.*
 import io.github.serhiip.constellations.dispatcher.naming.SnakeCaseNamingStrategy.*
+import io.github.serhiip.constellations.schema.ToSchema
 
 trait ToolDispatcher[F[_]]:
   def dispatch(call: FunctionCall): F[ToolDispatcher.Result]
@@ -226,79 +226,6 @@ object ToolDispatcher:
             ToolDispatcher.combineOwned[F](owned)
           }
 
-    def getCaseClassFields(using Quotes)(tpe: quotes.reflect.TypeRepr): List[(String, quotes.reflect.TypeRepr, Boolean, Option[String])] =
-      import quotes.reflect.*
-      tpe.typeSymbol.caseFields.map { field =>
-        val fieldName  = field.name
-        val fieldTpe   = tpe.memberType(field)
-        val isOptional = fieldTpe <:< TypeRepr.of[Option[Any]]
-        val docstring  = field.docstring
-        (fieldName, fieldTpe, !isOptional, docstring)
-      }.toList
-
-    def tpeToSchema(using Quotes)(tpe: quotes.reflect.TypeRepr, posOpt: Option[quotes.reflect.Position]): Expr[Schema] =
-      import quotes.reflect.*
-      val errorPos = posOpt.getOrElse(Position.ofMacroExpansion)
-      tpe.widen.simplified match
-        case t if t =:= TypeRepr.of[String]                                                => '{ Schema.string() }
-        case t if t =:= TypeRepr.of[OffsetDateTime]                                        => '{ Schema.string(format = Some("date-time")) }
-        case t if t =:= TypeRepr.of[Int]                                                   => '{ Schema.integer() }
-        case t if t =:= TypeRepr.of[Long]                                                  => '{ Schema.integer() }
-        case t if t =:= TypeRepr.of[Double]                                                => '{ Schema.number() }
-        case t if t =:= TypeRepr.of[Float]                                                 => '{ Schema.number() }
-        case t if t =:= TypeRepr.of[Boolean]                                               => '{ Schema.boolean() }
-        case t if t <:< TypeRepr.of[Option[Any]]                                           =>
-          val innerType   = t.typeArgs.head
-          val innerSchema = tpeToSchema(innerType, posOpt)
-          '{ $innerSchema.copy(nullable = Some(true)) }
-        case t if t <:< TypeRepr.of[List[Any]] || t <:< TypeRepr.of[Seq[Any]]              =>
-          val innerType   = t.typeArgs.head
-          val itemsSchema = tpeToSchema(innerType, posOpt)
-          '{ Schema.array(items = $itemsSchema) }
-        case t if t.typeSymbol.flags.is(Flags.Case)                                        =>
-          processCaseClassSchema(t, posOpt)
-        case t if t.typeSymbol.flags.is(Flags.Sealed) || t.typeSymbol.flags.is(Flags.Enum) =>
-          processEnumSchema(t)
-        case other                                                                         =>
-          report.errorAndAbort(s"Unsupported parameter type for schema generation: ${other.show}", errorPos)
-
-    def processCaseClassSchema(using Quotes)(tpe: quotes.reflect.TypeRepr, posOpt: Option[quotes.reflect.Position]): Expr[Schema] =
-      val fields = getCaseClassFields(tpe)
-
-      val propertiesExprs = fields.map { case (name, fieldTpe, _, docstring) =>
-        val schemaExpr     = tpeToSchema(fieldTpe, posOpt)
-        val schemaWithDesc = docstring match
-          case Some(doc) => '{ $schemaExpr.copy(description = Some(${ Expr(doc) })) }
-          case None      => schemaExpr
-        '{ ${ Expr(name) } -> $schemaWithDesc }
-      }
-
-      val requiredExprs = fields.filter(_._3).map(f => Expr(f._1))
-
-      val docstring         = tpe.typeSymbol.docstring
-      val schemaDescription = Expr(docstring)
-
-      '{
-        Schema.obj(
-          description = $schemaDescription,
-          properties = Map(${ Varargs(propertiesExprs) }*),
-          required = List(${ Varargs(requiredExprs) }*)
-        )
-      }
-
-    def processEnumSchema(using Quotes)(tpe: quotes.reflect.TypeRepr): Expr[Schema] =
-      import quotes.reflect.*
-      val sym          = tpe.typeSymbol
-      val children     =
-        if sym.flags.is(Flags.Enum) then
-          // scala 3 enum
-          sym.children.filter(_.isValDef).map(_.name)
-        else
-          // sealed trait
-          sym.children.map(_.name)
-      val childrenExpr = Expr(children.toList)
-      '{ Schema.string(enm = $childrenExpr) }
-
     def processMethodForDeclaration(using Quotes)(traitSym: quotes.reflect.Symbol)(
         method: quotes.reflect.Symbol
     ): Expr[FunctionDeclaration] =
@@ -320,7 +247,8 @@ object ToolDispatcher:
           val propertiesExprs = params.map { param =>
             val paramName       = parameterName(param.name)
             val paramTpe        = paramType(param)
-            val paramSchemaExpr = tpeToSchema(paramTpe, param.pos)
+            val paramSchemaExpr = paramTpe.asType match
+              case '[t] => '{ summonInline[ToSchema[t]].schema }
             val doc             = param.docstring
             val schemaWithDesc  = doc match
               case Some(d) => '{ $paramSchemaExpr.copy(description = Some(${ Expr(d) })) }
