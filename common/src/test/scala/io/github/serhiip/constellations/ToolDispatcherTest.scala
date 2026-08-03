@@ -15,6 +15,7 @@ import io.github.serhiip.constellations.dispatcher.{Decoder, ValueEncoder}
 import io.github.serhiip.constellations.schema.ToSchema
 import munit.CatsEffectSuite
 
+
 final case class Ping(value: String) derives ValueEncoder
 
 trait PingApi[F[_]]:
@@ -41,8 +42,7 @@ object CustomId:
     def decode(value: Value, path: String): ValidatedNec[Decoder.Error, CustomId] =
       value match
         case Value.StringValue(s) => CustomId(s).validNec
-        case other                =>
-          Decoder.Error.WrongType(path, "String", other.getClass.getSimpleName).invalidNec
+        case other                => Decoder.Error.WrongType(path, "String", other.getClass.getSimpleName).invalidNec
 
 trait CustomIdApi[F[_]]:
   def lookup(id: CustomId): F[String]

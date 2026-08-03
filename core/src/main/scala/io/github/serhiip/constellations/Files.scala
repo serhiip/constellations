@@ -28,12 +28,14 @@ object Files:
   def apply[F[_]: Sync: Fs2Files](baseUri: URI): F[Files[F]] =
     for
       providerFound <- Sync[F].blocking:
-                         if baseUri.getScheme == "file" then FileSystems.getDefault().provider().some
-                         else
-                           ServiceLoader
-                             .load(classOf[FileSystemProvider], Thread.currentThread().getContextClassLoader)
-                             .asScala
-                             .find(_.getScheme == baseUri.getScheme)
+                         Option
+                           .when(baseUri.getScheme == "file")(FileSystems.getDefault.provider())
+                           .orElse(
+                             ServiceLoader
+                               .load(classOf[FileSystemProvider], Thread.currentThread.getContextClassLoader)
+                               .asScala
+                               .find(_.getScheme == baseUri.getScheme)
+                           )
       provider      <- providerFound.liftTo[F](FileSystemNotFoundException(s"Provider '${baseUri.getScheme}' not found"))
     yield new:
       override def resolve(relative: String): F[URI] = Sync[F].delay(baseUri.resolve(relative))

@@ -39,6 +39,21 @@ final class RagEngineTest extends FunSuite:
     assertEquals(calls.toList.map(_.config), List(retrieval))
   }
 
+  test("findClosest keeps scoping filters from the configured RetrievalConfig") {
+    val retrieval       = RetrievalConfig(
+      metadataFilter = Some("""tenant_id == "user-42""""),
+      ragFileIds = List("file-1", "file-2")
+    )
+    val sim             = RagEngine.similarity(retrieving(List(RetrievedContext("scoped", None, None, None))), corpus, retrieval)
+    val (calls, result) = run(sim.findClosest("q", k = 3))
+
+    assertEquals(result, Right(NEL.one("scoped")))
+    assertEquals(
+      calls.toList.map(_.config),
+      List(retrieval.copy(topK = Some(3)))
+    )
+  }
+
   test("findClosest fails when no contexts are returned") {
     val sim             = RagEngine.similarity(retrieving(Nil), corpus, RetrievalConfig())
     val (calls, result) = run(sim.findClosest("missing", k = 1))

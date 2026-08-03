@@ -1,19 +1,42 @@
 package io.github.serhiip.constellations.gcprag
 
+enum RagManagedRetrieval:
+  case Knn
+  case Ann(treeDepth: Option[Int] = None, leafCount: Option[Int] = None)
+
 enum VectorDb:
-  case RagManaged
+  case RagManaged(retrieval: RagManagedRetrieval = RagManagedRetrieval.Knn)
   case VertexVectorSearch(index: String, indexEndpoint: String)
 
 final case class CorpusConfig(
     displayName: String,
     description: Option[String] = None,
     embeddingModelEndpoint: String = "publishers/google/models/text-embedding-005",
-    vectorDb: VectorDb = VectorDb.RagManaged
+    vectorDb: VectorDb = VectorDb.RagManaged()
 )
 final case class Corpus(name: String, displayName: String, description: Option[String])
-final case class RagFileInfo(name: String, displayName: String, description: Option[String])
-final case class ChunkingConfig(chunkSize: Int = 512, chunkOverlap: Int = 100)
-final case class GcsImportSource(uris: List[String], chunking: Option[ChunkingConfig] = None)
+
+enum FileState:
+  case Unspecified, Active, Failed
+
+final case class RagFileInfo(
+    name: String,
+    displayName: String,
+    description: Option[String],
+    state: FileState = FileState.Unspecified,
+    errorStatus: Option[String] = None
+)
+final case class ChunkingConfig(chunkSize: Int = 1024, chunkOverlap: Int = 256)
+
+enum ImportResultSink:
+  case Gcs(outputUriPrefix: String)
+  case BigQuery(outputUri: String)
+
+final case class GcsImportSource(
+    uris: List[String],
+    chunking: Option[ChunkingConfig] = None,
+    resultSink: Option[ImportResultSink] = None
+)
 final case class ImportResult(
     importedCount: Long,
     failedCount: Long,
@@ -22,7 +45,12 @@ final case class ImportResult(
     partialFailuresGcsPath: Option[String] = None,
     partialFailuresBigQueryTable: Option[String] = None
 )
-final case class RetrievalConfig(topK: Option[Int] = None, vectorDistanceThreshold: Option[Double] = None)
+final case class RetrievalConfig(
+    topK: Option[Int] = None,
+    vectorDistanceThreshold: Option[Double] = None,
+    metadataFilter: Option[String] = None,
+    ragFileIds: List[String] = Nil
+)
 final case class RetrievedContext(text: String, sourceUri: Option[String], sourceDisplayName: Option[String], score: Option[Double])
 final case class UpdateCorpusRequest(name: String, displayName: Option[String] = None, description: Option[String] = None)
 

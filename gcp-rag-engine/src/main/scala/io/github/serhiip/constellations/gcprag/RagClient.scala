@@ -1,7 +1,7 @@
 package io.github.serhiip.constellations.gcprag
 
 import cats.{Applicative, Functor, MonadThrow, ~>}
-import cats.effect.{Async, Resource}
+import cats.effect.{Async, Resource, Sync}
 import cats.effect.kernel.MonadCancelThrow
 import cats.syntax.all.*
 import scala.concurrent.duration.{MILLISECONDS, SECONDS}
@@ -18,11 +18,14 @@ import io.github.serhiip.constellations.common.Observability.*
 
 import com.google.api.gax.longrunning.OperationFuture
 import com.google.cloud.aiplatform.v1.{
+  BigQueryDestination,
   CreateRagCorpusRequest,
   DeleteRagCorpusRequest,
   DeleteRagFileRequest,
+  FileStatus,
   GetRagCorpusRequest,
   GetRagFileRequest,
+  GcsDestination,
   GcsSource,
   ImportRagFilesConfig,
   ImportRagFilesRequest,
@@ -77,6 +80,7 @@ object RagClient:
         partialFailuresGcsPath: Option[String],
         partialFailuresBigQueryTable: Option[String]
     )
+    case ImportOperationFailed(corpusName: String, uris: List[String], lroName: String, cause: Throwable)
 
     override def getMessage(): String = this match
       case ApiFailure(operation, cause)                     => s"GCP RAG Engine $operation failed: ${Option(cause.getMessage).getOrElse(cause.toString)}"
@@ -84,16 +88,19 @@ object RagClient:
       case ImportFailed(imported, failed, skipped, gcs, bq) =>
         val sink = gcs.orElse(bq).fold("")(path => s"; partial failures: $path")
         s"GCP RAG Engine import-files completed with failures: imported=$imported failed=$failed skipped=$skipped$sink"
+      case ImportOperationFailed(corpus, uris, lro, cause)  =>
+        val reason = Option(cause.getMessage).getOrElse(cause.toString)
+        s"GCP RAG Engine import-files LRO $lro failed for corpus $corpus over ${uris.size} uri(s) [${uris.mkString(", ")}]: $reason"
 
   def resource[F[_]: Async](config: Config): Resource[F, RagClient[F]] =
     for
       dataClient <- Resource.fromAutoCloseable(
-                      Async[F].blocking(
+                      Sync[F].blocking(
                         VertexRagDataServiceClient.create(VertexRagDataServiceSettings.newBuilder().setEndpoint(config.endpoint).build())
                       )
                     )
       ragClient  <- Resource.fromAutoCloseable(
-                      Async[F].blocking(
+                      Sync[F].blocking(
                         VertexRagServiceClient.create(VertexRagServiceSettings.newBuilder().setEndpoint(config.endpoint).build())
                       )
                     )
@@ -295,7 +302,9 @@ object RagClient:
             span   <- Tracer[F].currentSpanOrNoop
             _      <- span.addAttributes(
                         Attribute("corpus_name", corpusName),
-                        Attribute("query_length", query.length.toLong)
+                        Attribute("query_length", query.length.toLong),
+                        Attribute("has_metadata_filter", config.metadataFilter.isDefined),
+                        Attribute("rag_file_ids_count", config.ragFileIds.size.toLong)
                       )
             _      <- config.topK.traverse_(k => span.addAttribute(Attribute("top_k", k.toLong)))
             result <- delegate.retrieveContexts(corpusName, query, config)
@@ -383,7 +392,18 @@ object RagClient:
         .build()
       val vectorDbBuilder = RagVectorDbConfig.newBuilder().setRagEmbeddingModelConfig(embeddingConfig)
       val vectorDb        = corpusConfig.vectorDb match
-        case VectorDb.RagManaged                          => vectorDbBuilder.setRagManagedDb(RagVectorDbConfig.RagManagedDb.newBuilder().build()).build()
+        case VectorDb.RagManaged(retrieval)               =>
+          val managed = RagVectorDbConfig.RagManagedDb.newBuilder()
+          retrieval match
+            case RagManagedRetrieval.Knn                       =>
+              managed.setKnn(RagVectorDbConfig.RagManagedDb.KNN.newBuilder().build())
+            case RagManagedRetrieval.Ann(treeDepth, leafCount) =>
+              val ann = RagVectorDbConfig.RagManagedDb.ANN
+                .newBuilder()
+                .tap(b => treeDepth.foreach(b.setTreeDepth))
+                .tap(b => leafCount.foreach(b.setLeafCount))
+              managed.setAnn(ann.build())
+          vectorDbBuilder.setRagManagedDb(managed.build()).build()
         case VectorDb.VertexVectorSearch(index, endpoint) =>
           vectorDbBuilder
             .setVertexVectorSearch(RagVectorDbConfig.VertexVectorSearch.newBuilder().setIndex(index).setIndexEndpoint(endpoint).build())
@@ -399,12 +419,12 @@ object RagClient:
         .map(withAdaptError("create-corpus"))
 
     def getCorpus(name: String): F[Corpus] =
-      Async[F]
+      Sync[F]
         .blocking(toCorpus(dataClient.getRagCorpus(GetRagCorpusRequest.newBuilder().setName(name).build())))
         .adaptError(Error.ApiFailure("get-corpus", _))
 
     def listCorpora: F[List[Corpus]] =
-      Async[F]
+      Sync[F]
         .blocking(
           dataClient
             .listRagCorpora(ListRagCorporaRequest.newBuilder().setParent(config.parent).build())
@@ -417,7 +437,7 @@ object RagClient:
 
     def updateCorpus(request: UpdateCorpusRequest): F[StartedLro[F, Corpus]] =
       val op = for
-        existing <- Async[F].blocking(dataClient.getRagCorpus(request.name))
+        existing <- Sync[F].blocking(dataClient.getRagCorpus(request.name))
         updated   = existing.toBuilder
                       .tap(b => request.displayName.foreach(b.setDisplayName))
                       .tap(b => request.description.foreach(b.setDescription))
@@ -450,6 +470,14 @@ object RagClient:
               val chunkingConfig = RagFileChunkingConfig.newBuilder().setFixedLengthChunking(fixed).build()
               val transformation = RagFileTransformationConfig.newBuilder().setRagFileChunkingConfig(chunkingConfig).build()
               b.setRagFileTransformationConfig(transformation)
+            source.resultSink.foreach:
+              case ImportResultSink.Gcs(outputUriPrefix) =>
+                b.setImportResultGcsSink(GcsDestination.newBuilder().setOutputUriPrefix(outputUriPrefix).build())
+              case ImportResultSink.BigQuery(outputUri)  =>
+                b.setImportResultBigquerySink(BigQueryDestination.newBuilder().setOutputUri(outputUri).build())
+
+        val configuredGcs = source.resultSink.collect { case ImportResultSink.Gcs(outputUriPrefix) => outputUriPrefix }
+        val configuredBq  = source.resultSink.collect { case ImportResultSink.BigQuery(outputUri) => outputUri }
 
         val request = ImportRagFilesRequest.newBuilder().setParent(corpusName).setImportRagFilesConfig(importConfigBuilder.build()).build()
         startLro(LroKind.ImportFiles, dataClient.importRagFilesAsync(request)) { response =>
@@ -460,10 +488,10 @@ object RagClient:
           val bqTable  = Option.when(response.hasPartialFailuresBigqueryTable)(response.getPartialFailuresBigqueryTable)
           for
             _     <- Error
-                       .ImportFailed(imported, failed, skipped, gcsPath, bqTable)
+                       .ImportFailed(imported, failed, skipped, gcsPath.orElse(configuredGcs), bqTable.orElse(configuredBq))
                        .raiseError[F, Unit]
                        .whenA(failed > 0)
-            files <- Async[F].blocking(
+            files <- Sync[F].blocking(
                        dataClient.listRagFiles(ListRagFilesRequest.newBuilder().setParent(corpusName).build()).iterateAll().asScala.toList
                      )
           yield ImportResult(
@@ -479,20 +507,20 @@ object RagClient:
             started.handle,
             started.await.adaptError {
               case err: Error => err
-              case err        => Error.ApiFailure("import-files", err)
+              case err        => Error.ImportOperationFailed(corpusName, source.uris, started.handle.name, err)
             }
           )
       }
 
     def listFiles(corpusName: String): F[List[RagFileInfo]] =
-      Async[F]
+      Sync[F]
         .blocking(
           dataClient.listRagFiles(ListRagFilesRequest.newBuilder().setParent(corpusName).build()).iterateAll().asScala.toList.map(toFile)
         )
         .adaptError(Error.ApiFailure("list-files", _))
 
     def getFile(name: String): F[RagFileInfo] =
-      Async[F]
+      Sync[F]
         .blocking(toFile(dataClient.getRagFile(GetRagFileRequest.newBuilder().setName(name).build())))
         .adaptError(Error.ApiFailure("get-file", _))
 
@@ -501,20 +529,33 @@ object RagClient:
         .map(withAdaptError("delete-file"))
 
     def retrieveContexts(corpusName: String, query: String, retrieval: RetrievalConfig): F[List[RetrievedContext]] =
-      val op = Async[F].blocking:
+      val op = Sync[F].blocking:
+        val filter =
+          Option.when(retrieval.vectorDistanceThreshold.isDefined || retrieval.metadataFilter.isDefined):
+            RagRetrievalConfig.Filter
+              .newBuilder()
+              .tap: b =>
+                retrieval.vectorDistanceThreshold.foreach(b.setVectorDistanceThreshold)
+                retrieval.metadataFilter.foreach(b.setMetadataFilter)
+              .build()
+
         val retrievalBuilder = RagRetrievalConfig
           .newBuilder()
           .tap: b =>
             retrieval.topK.foreach(b.setTopK)
-            retrieval.vectorDistanceThreshold.foreach { threshold =>
-              b.setFilter(RagRetrievalConfig.Filter.newBuilder().setVectorDistanceThreshold(threshold).build())
-            }
+            filter.foreach(b.setFilter)
+
+        val resource = RetrieveContextsRequest.VertexRagStore.RagResource
+          .newBuilder()
+          .setRagCorpus(corpusName)
+          .tap: b =>
+            if retrieval.ragFileIds.nonEmpty then
+              b.addAllRagFileIds(retrieval.ragFileIds.asJava)
+              ()
+          .build()
 
         val ragQuery = RagQuery.newBuilder().setText(query).setRagRetrievalConfig(retrievalBuilder.build()).build()
-        val store    = RetrieveContextsRequest.VertexRagStore
-          .newBuilder()
-          .addRagResources(RetrieveContextsRequest.VertexRagStore.RagResource.newBuilder().setRagCorpus(corpusName).build())
-          .build()
+        val store    = RetrieveContextsRequest.VertexRagStore.newBuilder().addRagResources(resource).build()
         val request  = RetrieveContextsRequest.newBuilder().setParent(config.parent).setQuery(ragQuery).setVertexRagStore(store).build()
         ragClient
           .retrieveContexts(request)
@@ -533,14 +574,14 @@ object RagClient:
       op.adaptError(Error.ApiFailure("retrieve-contexts", _))
 
     def getLro(handle: LroHandle): F[LroStatus] =
-      Async[F]
+      Sync[F]
         .blocking(toLroStatus(dataClient.getOperationsClient.getOperation(handle.name)))
         .adaptError(Error.ApiFailure("get-lro", _))
 
     private def startLro[A, M, B](kind: LroKind, start: => OperationFuture[A, M])(finish: A => F[B]): F[StartedLro[F, B]] =
       for
         future <- Async[F].delay(start)
-        name   <- Async[F].blocking(future.getName)
+        name   <- Sync[F].blocking(future.getName)
       yield StartedLro(LroHandle(name, kind), future.liftTo.flatMap(finish))
 
     private def startLroUnit[A, M](kind: LroKind, start: => OperationFuture[A, M]): F[StartedLro[F, Unit]] =
@@ -560,4 +601,15 @@ object RagClient:
       Corpus(name = corpus.getName, displayName = corpus.getDisplayName, description = Option(corpus.getDescription).filter(_.nonEmpty))
 
     private def toFile(file: RagFile): RagFileInfo =
-      RagFileInfo(name = file.getName, displayName = file.getDisplayName, description = Option(file.getDescription).filter(_.nonEmpty))
+      val status = Option.when(file.hasFileStatus)(file.getFileStatus)
+      RagFileInfo(
+        name = file.getName,
+        displayName = file.getDisplayName,
+        description = Option(file.getDescription).filter(_.nonEmpty),
+        state = status.map(_.getState).fold(FileState.Unspecified) {
+          case FileStatus.State.ACTIVE                                            => FileState.Active
+          case FileStatus.State.ERROR                                             => FileState.Failed
+          case FileStatus.State.STATE_UNSPECIFIED | FileStatus.State.UNRECOGNIZED => FileState.Unspecified
+        },
+        errorStatus = status.map(_.getErrorStatus).filter(_.nonEmpty)
+      )

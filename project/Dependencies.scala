@@ -102,7 +102,7 @@ object Dependencies {
 
   val constellationsGoogleGenai = googleGenai ++ testing
 
-  val constellationsGcpRagEngine = googleCloudAiplatform ++ testing ++ mockito
+  val constellationsGcpRagEngine = googleCloudAiplatform ++ circe ++ googleCloudNio ++ testing ++ mockito
 
   val constellationsBedrock = awsBedrock ++ circe ++ testing
 
