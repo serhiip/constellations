@@ -19,6 +19,7 @@ Use Application Default Credentials and grant `roles/aiplatform.user`.
 Long-running operations (`createCorpus`, `updateCorpus`, `deleteCorpus`, `importFiles`, `deleteFile`) return `StartedLro[F, A]`: a persistable `LroHandle` plus an `await` effect that completes when Vertex finishes. Poll status later with `getLro`.
 
 ```scala
+import cats.data.NonEmptyList as NEL
 import cats.effect.IO
 import io.github.serhiip.constellations.gcprag.*
 
@@ -29,7 +30,17 @@ RagClient.resource[IO](RagClient.Config(project = "my-project", location = "us-e
     corpus   <- create.await
     importOp <- rag.importFiles(
                   corpus.name,
-                  GcsImportSource(uris = List("gs://my-bucket/docs/*.txt"), chunking = Some(ChunkingConfig()))
+                  GcsImportSource(
+                    uris = NEL.one("gs://my-bucket/docs/*.txt"),
+                    chunking = Some(ChunkingConfig()),
+                    // optional: define schema keys + attach values to newly imported files (v1beta1 RagMetadata)
+                    metadata = Some(
+                      ImportFileMetadata(
+                        schemas = List(DataSchema("tenantid")),
+                        entries = Some(NEL.one(MetadataEntry("tenantid", MetadataValue.Str("user-42"))))
+                      )
+                    )
+                  )
                 )
     status   <- rag.getLro(importOp.handle) // uses handle.name; Running | Succeeded | Failed(message)
     imported <- importOp.await
@@ -87,6 +98,42 @@ yield report match
 
 On `RagClient.Error.ImportFailed` with a GCS sink path, `report` reads `partialFailuresGcsPath` and builds the `Ior` from the NDJSON ledger. Full success stays `Ior.Right`. Hard LRO failures (`ImportOperationFailed`) and decode problems still raise.
 
+## File metadata (multi-tenant filters)
+
+Vertex exposes searchable file metadata on the **`v1beta1` data API** (`CreateRagDataSchema` / `CreateRagMetadata`). This client uses that path for ingestion while retrieval stays on `v1` (`metadata_filter`).
+
+1. Define corpus keys (`DataSchema`; keys must match `[a-z][a-z0-9-]{0,62}` — no underscores).
+2. Attach values per RagFile (`MetadataEntry`), either via `GcsImportSource.metadata` (applied to files **new** after that import) or `setFileMetadata` on an existing file name.
+3. Query with `RetrievalConfig.metadataFilter` (CEL), using those same keys (e.g. `tenantid == "user-42"`).
+
+```scala
+import cats.data.NonEmptyList as NEL
+
+// schemas can also be created ahead of import
+_ <- rag.createDataSchema(corpus.name, DataSchema("tenantid"))
+
+_ <- rag.importFiles(
+       corpus.name,
+       GcsImportSource(
+         uris = NEL.one("gs://my-bucket/docs/*.txt"),
+         metadata = Some(
+           ImportFileMetadata(
+             schemas = List(DataSchema("tenantid")), // idempotent if already created
+             entries = Some(NEL.one(MetadataEntry("tenantid", MetadataValue.Str("user-42"))))
+           )
+         )
+       )
+     ).flatMap(_.await)
+
+// or later, for an existing file:
+_ <- rag.setFileMetadata(
+       fileName,
+       NEL.one(MetadataEntry("tenantid", MetadataValue.Str("user-42")))
+     )
+```
+
+`importFiles` snapshots the corpus file list before the LRO when `entries` are set, then calls `setFileMetadata` only on names that appear afterwards. Pre-existing files in a shared corpus are left unchanged. Schema creation treats `ALREADY_EXISTS` as success.
+
 ## Similarity search
 
 RAG Engine accepts text queries (not raw embeddings). Use `RagEngine.similarity` for a plain `TextSimilarity`. Scoping filters live on `RetrievalConfig` and are fixed when the `Similarity` instance is created — `findClosest` itself is unchanged:
@@ -97,8 +144,8 @@ val sim = RagEngine.similarity[IO, String](
   rag,
   corpus.name,
   RetrievalConfig(
-    metadataFilter = Some("""tenant_id == "user-42""""), // CEL filter on file metadata
-    ragFileIds = List("ragFiles/abc", "ragFiles/def")    // optional allowlist of RagFile ids
+    metadataFilter = Some("""tenantid == "user-42""""), // CEL; keys must exist via CreateRagDataSchema + RagMetadata
+    ragFileIds = List("ragFiles/abc", "ragFiles/def")   // optional allowlist of RagFile ids
   )
 )
 sim.findClosest("What is RAG?", k = 3)
@@ -152,10 +199,10 @@ The Basic / Scaled / Unprovisioned Spanner **tier** that backs RagManagedDb is a
 Because one Vector Search 1.0 index maps to one corpus, and Vector Search index endpoints are slow to provision, multi-user isolation usually takes one of these shapes:
 
 1. **Corpus per tenant on `RagManaged`** — strongest isolation that still stays cheap to provision. Each tenant's queries only search that corpus. Shared Spanner capacity is still project-wide.
-2. **Shared corpus + query scoping (pool)** — one corpus (any backend), scope each `Similarity` instance with `RetrievalConfig.metadataFilter` (CEL) and/or `ragFileIds`. Create one scoped `TextSimilarity` per tenant/session; do not pass tenant identity through `findClosest`.
+2. **Shared corpus + query scoping (pool)** — one corpus (any backend), attach per-file metadata at import (`GcsImportSource.metadata` / `setFileMetadata`), then scope each `Similarity` with `RetrievalConfig.metadataFilter` (CEL) and/or `ragFileIds`. Create one scoped `TextSimilarity` per tenant/session; do not pass tenant identity through `findClosest`.
 3. **Corpus (and empty index) per tenant on Vector Search** — physical isolation with dedicated indexes. Viable only for a small number of long-lived tenants because of provisioning time and standing index cost.
 
-Option 2 is the usual scale-out path for many users on a single Vector Search index, but treat filters as an authorization boundary only after you have verified they actually restrict results for your corpus and backend. Forum reports and beta gaps around metadata filtering mean you should test with a deliberately skewed tenant layout before relying on it in production.
+Option 2 needs metadata on the files you intend to filter — a `metadataFilter` alone does nothing if no `RagMetadata` was written. Treat filters as an authorization boundary only after you have verified they restrict results for your corpus and backend (ingestion uses the `v1beta1` metadata API). Test with a deliberately skewed tenant layout before production.
 
 ### Shared-corpus filter performance
 

@@ -1,18 +1,27 @@
 package io.github.serhiip.constellations.gcprag
 
+import cats.data.NonEmptyList as NEL
 import cats.effect.IO
 import java.util.concurrent.{ExecutionException, Executor, TimeUnit}
 import scala.jdk.CollectionConverters.*
 import munit.CatsEffectSuite
 import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers.{any, anyLong, eq as eqTo}
-import org.mockito.Mockito.{doAnswer, doReturn, mock, times, verify, when}
+import org.mockito.Mockito.{doAnswer, doReturn, mock, verify, when}
 import org.mockito.invocation.InvocationOnMock
 
 import com.google.api.gax.longrunning.OperationFuture
 import com.google.cloud.aiplatform.v1.{
+  RagContexts,
+  RetrieveContextsRequest,
+  RetrieveContextsResponse,
+  VertexRagServiceClient
+}
+import com.google.cloud.aiplatform.v1beta1.{
   CreateRagCorpusOperationMetadata,
   CreateRagCorpusRequest,
+  CreateRagDataSchemaRequest,
+  CreateRagMetadataRequest,
   DeleteOperationMetadata,
   DeleteRagCorpusRequest,
   DeleteRagFileRequest,
@@ -24,15 +33,14 @@ import com.google.cloud.aiplatform.v1.{
   ImportRagFilesResponse,
   ListRagCorporaRequest,
   ListRagFilesRequest,
-  RagContexts,
   RagCorpus,
+  RagDataSchema,
   RagFile,
-  RetrieveContextsRequest,
-  RetrieveContextsResponse,
+  RagMetadata,
+  RagMetadataSchemaDetails,
   UpdateRagCorpusOperationMetadata,
   UpdateRagCorpusRequest as GUpdateRagCorpusRequest,
-  VertexRagDataServiceClient,
-  VertexRagServiceClient
+  VertexRagDataServiceClient
 }
 import com.google.longrunning.{Operation, OperationsClient}
 import com.google.protobuf.Empty
@@ -192,17 +200,6 @@ final class RagClientTest extends CatsEffectSuite:
     }
   }
 
-  test("importFiles rejects empty URIs without calling the data client") {
-    val data   = mockDataClient()
-    val rag    = mockRagClient()
-    val client = RagClient.create[IO](config, data, rag)
-
-    client.importFiles(corpusName, GcsImportSource(Nil)).attempt.map { err =>
-      assertEquals(err, Left(RagClient.Error.InvalidConfig("GCS import source requires at least one URI")))
-      verify(data, times(0)).importRagFilesAsync(any(classOf[ImportRagFilesRequest]))
-    }
-  }
-
   test("importFiles awaits LRO then lists files") {
     val data   = mockDataClient()
     val rag    = mockRagClient()
@@ -217,7 +214,7 @@ final class RagClientTest extends CatsEffectSuite:
     when(page.iterateAll()).thenReturn(java.util.List.of(file))
 
     for
-      started  <- client.importFiles(corpusName, GcsImportSource(List("gs://bucket/doc.txt"), Some(ChunkingConfig(256, 32))))
+      started  <- client.importFiles(corpusName, GcsImportSource(NEL.one("gs://bucket/doc.txt"), Some(ChunkingConfig(256, 32))))
       _        <- IO(assertEquals(started.handle, LroHandle(opName, LroKind.ImportFiles)))
       imported <- started.await
     yield
@@ -248,7 +245,7 @@ final class RagClientTest extends CatsEffectSuite:
     when(data.listRagFiles(any(classOf[ListRagFilesRequest]))).thenReturn(page)
     when(page.iterateAll()).thenReturn(java.util.List.of())
 
-    val source = GcsImportSource(List("gs://bucket/doc.txt"), resultSink = Some(ImportResultSink.Gcs("gs://bucket/results/")))
+    val source = GcsImportSource(NEL.one("gs://bucket/doc.txt"), resultSink = Some(ImportResultSink.Gcs("gs://bucket/results/")))
 
     for
       started <- client.importFiles(corpusName, source)
@@ -259,11 +256,95 @@ final class RagClientTest extends CatsEffectSuite:
       assertEquals(captor.getValue.getImportRagFilesConfig.getImportResultGcsSink.getOutputUriPrefix, "gs://bucket/results/")
   }
 
+  test("createDataSchema builds CreateRagDataSchemaRequest") {
+    val data   = mockDataClient()
+    val rag    = mockRagClient()
+    val client = RagClient.create[IO](config, data, rag)
+
+    when(data.createRagDataSchema(any(classOf[CreateRagDataSchemaRequest])))
+      .thenReturn(RagDataSchema.getDefaultInstance)
+
+    client.createDataSchema(corpusName, DataSchema("tenantid")).map { _ =>
+      val captor  = ArgumentCaptor.forClass(classOf[CreateRagDataSchemaRequest])
+      verify(data).createRagDataSchema(captor.capture())
+      val request = captor.getValue
+      assertEquals(request.getParent, corpusName)
+      assertEquals(request.getRagDataSchemaId, "tenantid")
+      assertEquals(request.getRagDataSchema.getKey, "tenantid")
+      assertEquals(request.getRagDataSchema.getSchemaDetails.getType, RagMetadataSchemaDetails.DataType.STRING)
+      assertEquals(
+        request.getRagDataSchema.getSchemaDetails.getSearchStrategy.getSearchStrategyType,
+        RagMetadataSchemaDetails.SearchStrategy.SearchStrategyType.EXACT_SEARCH
+      )
+    }
+  }
+
+  test("setFileMetadata creates RagMetadata entries") {
+    val data   = mockDataClient()
+    val rag    = mockRagClient()
+    val client = RagClient.create[IO](config, data, rag)
+
+    when(data.createRagMetadata(any(classOf[CreateRagMetadataRequest])))
+      .thenReturn(RagMetadata.getDefaultInstance)
+
+    client
+      .setFileMetadata(fileName, NEL.one(MetadataEntry("tenantid", MetadataValue.Str("user-42"))))
+      .map { _ =>
+        val captor  = ArgumentCaptor.forClass(classOf[CreateRagMetadataRequest])
+        verify(data).createRagMetadata(captor.capture())
+        val request = captor.getValue
+        assertEquals(request.getParent, fileName)
+        assertEquals(request.getRagMetadataId, "tenantid")
+        assertEquals(request.getRagMetadata.getUserSpecifiedMetadata.getKey, "tenantid")
+        assertEquals(request.getRagMetadata.getUserSpecifiedMetadata.getValue.getStrValue, "user-42")
+      }
+  }
+
+  test("importFiles ensures schemas and attaches metadata to newly imported files") {
+    val data       = mockDataClient()
+    val rag        = mockRagClient()
+    val client     = RagClient.create[IO](config, data, rag)
+    val existing   = RagFile.newBuilder().setName(s"$corpusName/ragFiles/old").setDisplayName("old.txt").build()
+    val imported   = RagFile.newBuilder().setName(fileName).setDisplayName("f1.txt").build()
+    val beforePage = mock(classOf[VertexRagDataServiceClient.ListRagFilesPagedResponse])
+    val afterPage  = mock(classOf[VertexRagDataServiceClient.ListRagFilesPagedResponse])
+
+    doReturn(completed[ImportRagFilesResponse, ImportRagFilesOperationMetadata](ImportRagFilesResponse.getDefaultInstance, opName))
+      .when(data)
+      .importRagFilesAsync(any(classOf[ImportRagFilesRequest]))
+    when(data.listRagFiles(any(classOf[ListRagFilesRequest]))).thenReturn(beforePage, afterPage)
+    when(beforePage.iterateAll()).thenReturn(java.util.List.of(existing))
+    when(afterPage.iterateAll()).thenReturn(java.util.List.of(existing, imported))
+    when(data.createRagDataSchema(any(classOf[CreateRagDataSchemaRequest]))).thenReturn(RagDataSchema.getDefaultInstance)
+    when(data.createRagMetadata(any(classOf[CreateRagMetadataRequest]))).thenReturn(RagMetadata.getDefaultInstance)
+
+    val source = GcsImportSource(
+      uris = NEL.one("gs://bucket/doc.txt"),
+      metadata = Some(
+        ImportFileMetadata(
+          schemas = List(DataSchema("tenantid")),
+          entries = Some(NEL.one(MetadataEntry("tenantid", MetadataValue.Str("user-42"))))
+        )
+      )
+    )
+
+    for
+      started <- client.importFiles(corpusName, source)
+      _       <- started.await
+    yield
+      verify(data).createRagDataSchema(any(classOf[CreateRagDataSchemaRequest]))
+      val metaCaptor = ArgumentCaptor.forClass(classOf[CreateRagMetadataRequest])
+      verify(data).createRagMetadata(metaCaptor.capture())
+      assertEquals(metaCaptor.getValue.getParent, fileName)
+      assertEquals(metaCaptor.getValue.getRagMetadataId, "tenantid")
+      assertEquals(metaCaptor.getValue.getRagMetadata.getUserSpecifiedMetadata.getValue.getStrValue, "user-42")
+  }
+
   test("importFiles reports the corpus and uris when the LRO itself fails") {
     val data   = mockDataClient()
     val rag    = mockRagClient()
     val client = RagClient.create[IO](config, data, rag)
-    val uris   = List("gs://bucket/doc.txt", "gs://bucket/corrupt.pdf")
+    val uris   = NEL.of("gs://bucket/doc.txt", "gs://bucket/corrupt.pdf")
 
     doReturn(failed[ImportRagFilesResponse, ImportRagFilesOperationMetadata](RuntimeException("internal error"), opName))
       .when(data)
@@ -389,7 +470,7 @@ final class RagClientTest extends CatsEffectSuite:
       .setContexts(RagContexts.newBuilder().build())
       .build()
     val retrieval = RetrievalConfig(
-      metadataFilter = Some("""tenant_id == "user-42""""),
+      metadataFilter = Some("""tenantid == "user-42""""),
       ragFileIds = List("file-1", "file-2")
     )
 
@@ -402,7 +483,7 @@ final class RagClientTest extends CatsEffectSuite:
       val request  = captor.getValue
       val filter   = request.getQuery.getRagRetrievalConfig.getFilter
       val resource = request.getVertexRagStore.getRagResources(0)
-      assertEquals(filter.getMetadataFilter, """tenant_id == "user-42"""")
+      assertEquals(filter.getMetadataFilter, """tenantid == "user-42"""")
       assertEquals(resource.getRagCorpus, corpusName)
       assertEquals(resource.getRagFileIdsList.asScala.toList, List("file-1", "file-2"))
   }

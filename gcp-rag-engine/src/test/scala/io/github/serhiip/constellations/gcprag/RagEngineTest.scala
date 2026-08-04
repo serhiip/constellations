@@ -41,7 +41,7 @@ final class RagEngineTest extends FunSuite:
 
   test("findClosest keeps scoping filters from the configured RetrievalConfig") {
     val retrieval       = RetrievalConfig(
-      metadataFilter = Some("""tenant_id == "user-42""""),
+      metadataFilter = Some("""tenantid == "user-42""""),
       ragFileIds = List("file-1", "file-2")
     )
     val sim             = RagEngine.similarity(retrieving(List(RetrievedContext("scoped", None, None, None))), corpus, retrieval)
@@ -84,6 +84,8 @@ final class RagEngineTest extends FunSuite:
     def listFiles(corpusName: String): F[List[RagFileInfo]]                                      = unused
     def getFile(name: String): F[RagFileInfo]                                                    = unused
     def deleteFile(name: String): F[StartedLro[F, Unit]]                                         = unused
+    def createDataSchema(corpusName: String, schema: DataSchema): F[Unit]                        = unused
+    def setFileMetadata(fileName: String, entries: NEL[MetadataEntry]): F[Unit]                  = unused
     def getLro(handle: LroHandle): F[LroStatus]                                                  = unused
 
   private def unused[A]: F[A] = UnsupportedOperationException("RagEngine.similarity only uses retrieveContexts").raiseError

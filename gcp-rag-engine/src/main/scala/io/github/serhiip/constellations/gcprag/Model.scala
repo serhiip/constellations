@@ -1,5 +1,7 @@
 package io.github.serhiip.constellations.gcprag
 
+import cats.data.NonEmptyList as NEL
+
 enum RagManagedRetrieval:
   case Knn
   case Ann(treeDepth: Option[Int] = None, leafCount: Option[Int] = None)
@@ -24,7 +26,8 @@ final case class RagFileInfo(
     displayName: String,
     description: Option[String],
     state: FileState = FileState.Unspecified,
-    errorStatus: Option[String] = None
+    errorStatus: Option[String] = None,
+    userMetadata: Option[String] = None
 )
 final case class ChunkingConfig(chunkSize: Int = 1024, chunkOverlap: Int = 256)
 
@@ -32,10 +35,38 @@ enum ImportResultSink:
   case Gcs(outputUriPrefix: String)
   case BigQuery(outputUri: String)
 
+enum MetadataType:
+  case String, Integer, Float, Boolean
+
+enum MetadataSearch:
+  case Exact, None
+
+/** Corpus-level key definition (`CreateRagDataSchema`). Keys must match `[a-z][a-z0-9-]{0,62}`. */
+final case class DataSchema(
+    key: String,
+    dataType: MetadataType = MetadataType.String,
+    search: MetadataSearch = MetadataSearch.Exact
+)
+
+enum MetadataValue:
+  case Str(value: String)
+  case Int64(value: Long)
+  case Float32(value: Float)
+  case Bool(value: Boolean)
+
+final case class MetadataEntry(key: String, value: MetadataValue)
+
+/** Metadata applied to every file newly created by this import (Vertex AI `v1beta1` RagMetadata API). */
+final case class ImportFileMetadata(
+    schemas: List[DataSchema] = Nil,
+    entries: Option[NEL[MetadataEntry]] = None
+)
+
 final case class GcsImportSource(
-    uris: List[String],
+    uris: NEL[String],
     chunking: Option[ChunkingConfig] = None,
-    resultSink: Option[ImportResultSink] = None
+    resultSink: Option[ImportResultSink] = None,
+    metadata: Option[ImportFileMetadata] = None
 )
 final case class ImportResult(
     importedCount: Long,

@@ -1,6 +1,7 @@
 package io.github.serhiip.constellations.gcprag
 
 import cats.{Applicative, Functor, MonadThrow, ~>}
+import cats.data.NonEmptyList as NEL
 import cats.effect.{Async, Resource, Sync}
 import cats.effect.kernel.MonadCancelThrow
 import cats.syntax.all.*
@@ -17,9 +18,19 @@ import io.github.serhiip.constellations.common.Observability
 import io.github.serhiip.constellations.common.Observability.*
 
 import com.google.api.gax.longrunning.OperationFuture
+import com.google.api.gax.rpc.{ApiException, StatusCode}
 import com.google.cloud.aiplatform.v1.{
+  RagQuery,
+  RagRetrievalConfig,
+  RetrieveContextsRequest,
+  VertexRagServiceClient,
+  VertexRagServiceSettings
+}
+import com.google.cloud.aiplatform.v1beta1.{
   BigQueryDestination,
   CreateRagCorpusRequest,
+  CreateRagDataSchemaRequest,
+  CreateRagMetadataRequest,
   DeleteRagCorpusRequest,
   DeleteRagFileRequest,
   FileStatus,
@@ -31,20 +42,20 @@ import com.google.cloud.aiplatform.v1.{
   ImportRagFilesRequest,
   ListRagCorporaRequest,
   ListRagFilesRequest,
+  MetadataValue as GMetadataValue,
   RagCorpus,
+  RagDataSchema,
   RagEmbeddingModelConfig,
   RagFile,
   RagFileChunkingConfig,
   RagFileTransformationConfig,
-  RagQuery,
-  RagRetrievalConfig,
+  RagMetadata,
+  RagMetadataSchemaDetails,
   RagVectorDbConfig,
-  RetrieveContextsRequest,
   UpdateRagCorpusRequest as GUpdateRagCorpusRequest,
+  UserSpecifiedMetadata,
   VertexRagDataServiceClient,
-  VertexRagDataServiceSettings,
-  VertexRagServiceClient,
-  VertexRagServiceSettings
+  VertexRagDataServiceSettings
 }
 import com.google.longrunning.Operation
 
@@ -54,14 +65,13 @@ trait RagClient[F[_]]:
   def listCorpora: F[List[Corpus]]
   def updateCorpus(request: UpdateCorpusRequest): F[StartedLro[F, Corpus]]
   def deleteCorpus(name: String): F[StartedLro[F, Unit]]
-
   def importFiles(corpusName: String, source: GcsImportSource): F[StartedLro[F, ImportResult]]
   def listFiles(corpusName: String): F[List[RagFileInfo]]
   def getFile(name: String): F[RagFileInfo]
   def deleteFile(name: String): F[StartedLro[F, Unit]]
-
+  def createDataSchema(corpusName: String, schema: DataSchema): F[Unit]
+  def setFileMetadata(fileName: String, entries: NEL[MetadataEntry]): F[Unit]
   def retrieveContexts(corpusName: String, query: String, config: RetrievalConfig): F[List[RetrievedContext]]
-
   def getLro(handle: LroHandle): F[LroStatus]
 
 object RagClient:
@@ -80,7 +90,7 @@ object RagClient:
         partialFailuresGcsPath: Option[String],
         partialFailuresBigQueryTable: Option[String]
     )
-    case ImportOperationFailed(corpusName: String, uris: List[String], lroName: String, cause: Throwable)
+    case ImportOperationFailed(corpusName: String, uris: NEL[String], lroName: String, cause: Throwable)
 
     override def getMessage(): String = this match
       case ApiFailure(operation, cause)                     => s"GCP RAG Engine $operation failed: ${Option(cause.getMessage).getOrElse(cause.toString)}"
@@ -90,7 +100,7 @@ object RagClient:
         s"GCP RAG Engine import-files completed with failures: imported=$imported failed=$failed skipped=$skipped$sink"
       case ImportOperationFailed(corpus, uris, lro, cause)  =>
         val reason = Option(cause.getMessage).getOrElse(cause.toString)
-        s"GCP RAG Engine import-files LRO $lro failed for corpus $corpus over ${uris.size} uri(s) [${uris.mkString(", ")}]: $reason"
+        s"GCP RAG Engine import-files LRO $lro failed for corpus $corpus over ${uris.size} uri(s) [${uris.toList.mkString(", ")}]: $reason"
 
   def resource[F[_]: Async](config: Config): Resource[F, RagClient[F]] =
     for
@@ -152,9 +162,15 @@ object RagClient:
                 case Left(err)                     => err.raiseError
               }
             )
-    def listFiles(corpusName: String): F[List[RagFileInfo]]                                      = counted("list-files")(delegate.listFiles(corpusName))
-    def getFile(name: String): F[RagFileInfo]                                                    = counted("get-file")(delegate.getFile(name))
-    def deleteFile(name: String): F[StartedLro[F, Unit]]                                         = withCountedAwait("delete-file")(delegate.deleteFile(name))
+
+    def listFiles(corpusName: String): F[List[RagFileInfo]] = counted("list-files")(delegate.listFiles(corpusName))
+    def getFile(name: String): F[RagFileInfo]               = counted("get-file")(delegate.getFile(name))
+    def deleteFile(name: String): F[StartedLro[F, Unit]]    = withCountedAwait("delete-file")(delegate.deleteFile(name))
+
+    def createDataSchema(corpusName: String, schema: DataSchema): F[Unit]       =
+      counted("create-data-schema")(delegate.createDataSchema(corpusName, schema))
+    def setFileMetadata(fileName: String, entries: NEL[MetadataEntry]): F[Unit] =
+      counted("set-file-metadata")(delegate.setFileMetadata(fileName, entries))
 
     def retrieveContexts(corpusName: String, query: String, config: RetrievalConfig): F[List[RetrievedContext]] =
       counted("retrieve-contexts")(delegate.retrieveContexts(corpusName, query, config))
@@ -178,10 +194,7 @@ object RagClient:
             span <- Tracer[F].currentSpanOrNoop
             _    <- span.addAttributes(attrs*)
             s    <- started
-            _    <- span.addAttributes(
-                      Attribute("lro.name", s.handle.name),
-                      Attribute("lro.kind", s.handle.kind.toString)
-                    )
+            _    <- span.addAttributes(Attribute("lro.name", s.handle.name), Attribute("lro.kind", s.handle.kind.toString))
             _    <- logger.trace(s"Started LRO ${s.handle.name} (${s.handle.kind})")
           yield StartedLro(
             s.handle,
@@ -293,6 +306,28 @@ object RagClient:
         (logger, _) => logger.trace(s"Deleted RAG file $name")
       )(delegate.deleteFile(name))
 
+    def createDataSchema(corpusName: String, schema: DataSchema): F[Unit] =
+      Tracer[F]
+        .span("rag-client", "create-data-schema")
+        .logged: logger =>
+          for
+            _    <- logger.trace(s"Creating data schema '${schema.key}' on $corpusName")
+            span <- Tracer[F].currentSpanOrNoop
+            _    <- span.addAttributes(Attribute("corpus_name", corpusName), Attribute("schema_key", schema.key))
+            _    <- delegate.createDataSchema(corpusName, schema)
+          yield ()
+
+    def setFileMetadata(fileName: String, entries: NEL[MetadataEntry]): F[Unit] =
+      Tracer[F]
+        .span("rag-client", "set-file-metadata")
+        .logged: logger =>
+          for
+            _    <- logger.trace(s"Setting ${entries.size} metadata entr(y/ies) on $fileName")
+            span <- Tracer[F].currentSpanOrNoop
+            _    <- span.addAttributes(Attribute("file_name", fileName), Attribute("entry_count", entries.size.toLong))
+            _    <- delegate.setFileMetadata(fileName, entries)
+          yield ()
+
     def retrieveContexts(corpusName: String, query: String, config: RetrievalConfig): F[List[RetrievedContext]] =
       Tracer[F]
         .span("rag-client", "retrieve-contexts")
@@ -371,9 +406,12 @@ object RagClient:
       client.importFiles(corpusName, source)
     )
 
-    def listFiles(corpusName: String): G[List[RagFileInfo]] = f(client.listFiles(corpusName))
-    def getFile(name: String): G[RagFileInfo]               = f(client.getFile(name))
-    def deleteFile(name: String): G[StartedLro[G, Unit]]    = mapStarted(client.deleteFile(name))
+    def listFiles(corpusName: String): G[List[RagFileInfo]]                     = f(client.listFiles(corpusName))
+    def getFile(name: String): G[RagFileInfo]                                   = f(client.getFile(name))
+    def deleteFile(name: String): G[StartedLro[G, Unit]]                        = mapStarted(client.deleteFile(name))
+    def createDataSchema(corpusName: String, schema: DataSchema): G[Unit]       = f(client.createDataSchema(corpusName, schema))
+    def setFileMetadata(fileName: String, entries: NEL[MetadataEntry]): G[Unit] =
+      f(client.setFileMetadata(fileName, entries))
 
     def retrieveContexts(corpusName: String, query: String, config: RetrievalConfig): G[List[RetrievedContext]] =
       f(client.retrieveContexts(corpusName, query, config))
@@ -454,63 +492,129 @@ object RagClient:
         .map(withAdaptError("delete-corpus"))
 
     def importFiles(corpusName: String, source: GcsImportSource): F[StartedLro[F, ImportResult]] =
-      Error.InvalidConfig("GCS import source requires at least one URI").raiseError.whenA(source.uris.isEmpty) >> {
-        val gcs                 = GcsSource.newBuilder().addAllUris(source.uris.asJava).build()
-        val importConfigBuilder = ImportRagFilesConfig
-          .newBuilder()
-          .setGcsSource(gcs)
-          .tap: b =>
-            source.chunking.foreach: chunking =>
-              val fixed = RagFileChunkingConfig.FixedLengthChunking
-                .newBuilder()
-                .setChunkSize(chunking.chunkSize)
-                .setChunkOverlap(chunking.chunkOverlap)
-                .build()
+      val gcs                 = GcsSource.newBuilder().addAllUris(source.uris.toList.asJava).build()
+      val importConfigBuilder = ImportRagFilesConfig
+        .newBuilder()
+        .setGcsSource(gcs)
+        .tap: b =>
+          source.chunking.foreach: chunking =>
+            val fixed = RagFileChunkingConfig.FixedLengthChunking
+              .newBuilder()
+              .setChunkSize(chunking.chunkSize)
+              .setChunkOverlap(chunking.chunkOverlap)
+              .build()
 
-              val chunkingConfig = RagFileChunkingConfig.newBuilder().setFixedLengthChunking(fixed).build()
-              val transformation = RagFileTransformationConfig.newBuilder().setRagFileChunkingConfig(chunkingConfig).build()
-              b.setRagFileTransformationConfig(transformation)
-            source.resultSink.foreach:
-              case ImportResultSink.Gcs(outputUriPrefix) =>
-                b.setImportResultGcsSink(GcsDestination.newBuilder().setOutputUriPrefix(outputUriPrefix).build())
-              case ImportResultSink.BigQuery(outputUri)  =>
-                b.setImportResultBigquerySink(BigQueryDestination.newBuilder().setOutputUri(outputUri).build())
+            val chunkingConfig = RagFileChunkingConfig.newBuilder().setFixedLengthChunking(fixed).build()
+            val transformation = RagFileTransformationConfig.newBuilder().setRagFileChunkingConfig(chunkingConfig).build()
+            b.setRagFileTransformationConfig(transformation)
+          source.resultSink.foreach:
+            case ImportResultSink.Gcs(outputUriPrefix) =>
+              b.setImportResultGcsSink(GcsDestination.newBuilder().setOutputUriPrefix(outputUriPrefix).build())
+            case ImportResultSink.BigQuery(outputUri)  =>
+              b.setImportResultBigquerySink(BigQueryDestination.newBuilder().setOutputUri(outputUri).build())
 
-        val configuredGcs = source.resultSink.collect { case ImportResultSink.Gcs(outputUriPrefix) => outputUriPrefix }
-        val configuredBq  = source.resultSink.collect { case ImportResultSink.BigQuery(outputUri) => outputUri }
+      val configuredGcs = source.resultSink.collect { case ImportResultSink.Gcs(outputUriPrefix) => outputUriPrefix }
+      val configuredBq  = source.resultSink.collect { case ImportResultSink.BigQuery(outputUri) => outputUri }
+      val request       = ImportRagFilesRequest.newBuilder().setParent(corpusName).setImportRagFilesConfig(importConfigBuilder.build()).build()
+      val metadata      = source.metadata.getOrElse(ImportFileMetadata())
 
-        val request = ImportRagFilesRequest.newBuilder().setParent(corpusName).setImportRagFilesConfig(importConfigBuilder.build()).build()
-        startLro(LroKind.ImportFiles, dataClient.importRagFilesAsync(request)) { response =>
-          val imported = response.getImportedRagFilesCount
-          val failed   = response.getFailedRagFilesCount
-          val skipped  = response.getSkippedRagFilesCount
-          val gcsPath  = Option.when(response.hasPartialFailuresGcsPath)(response.getPartialFailuresGcsPath)
-          val bqTable  = Option.when(response.hasPartialFailuresBigqueryTable)(response.getPartialFailuresBigqueryTable)
-          for
-            _     <- Error
-                       .ImportFailed(imported, failed, skipped, gcsPath.orElse(configuredGcs), bqTable.orElse(configuredBq))
-                       .raiseError[F, Unit]
-                       .whenA(failed > 0)
-            files <- Sync[F].blocking(
-                       dataClient.listRagFiles(ListRagFilesRequest.newBuilder().setParent(corpusName).build()).iterateAll().asScala.toList
-                     )
-          yield ImportResult(
-            importedCount = imported,
-            failedCount = failed,
-            skippedCount = skipped,
-            files = files.map(toFile),
-            partialFailuresGcsPath = gcsPath,
-            partialFailuresBigQueryTable = bqTable
-          )
-        }.map: started =>
-          StartedLro(
-            started.handle,
-            started.await.adaptError {
-              case err: Error => err
-              case err        => Error.ImportOperationFailed(corpusName, source.uris, started.handle.name, err)
+      for
+        _       <- metadata.schemas.traverse_(createDataSchema(corpusName, _))
+        before  <- metadata.entries.fold(Set.empty.pure)(_ => listFiles(corpusName).map(_.map(_.name).toSet))
+        started <- startLro(LroKind.ImportFiles, dataClient.importRagFilesAsync(request)) { response =>
+                     val imported = response.getImportedRagFilesCount
+                     val failed   = response.getFailedRagFilesCount
+                     val skipped  = response.getSkippedRagFilesCount
+                     val gcsPath  = Option.when(response.hasPartialFailuresGcsPath)(response.getPartialFailuresGcsPath)
+                     val bqTable  = Option.when(response.hasPartialFailuresBigqueryTable)(response.getPartialFailuresBigqueryTable)
+                     for
+                       _     <- Error
+                                  .ImportFailed(imported, failed, skipped, gcsPath.orElse(configuredGcs), bqTable.orElse(configuredBq))
+                                  .raiseError[F, Unit]
+                                  .whenA(failed > 0)
+                       files <- Sync[F].blocking(
+                                  dataClient
+                                    .listRagFiles(ListRagFilesRequest.newBuilder().setParent(corpusName).build())
+                                    .iterateAll()
+                                    .asScala
+                                    .toList
+                                )
+                       result = ImportResult(
+                                  importedCount = imported,
+                                  failedCount = failed,
+                                  skippedCount = skipped,
+                                  files = files.map(toFile),
+                                  partialFailuresGcsPath = gcsPath,
+                                  partialFailuresBigQueryTable = bqTable
+                                )
+                       _     <- metadata.entries.traverse_ { entries =>
+                                  result.files
+                                    .filterNot(file => before.contains(file.name))
+                                    .traverse_(file => setFileMetadata(file.name, entries))
+                                }
+                     yield result
+                   }
+      yield StartedLro(
+        started.handle,
+        started.await.adaptError {
+          case err: Error => err
+          case err        => Error.ImportOperationFailed(corpusName, source.uris, started.handle.name, err)
+        }
+      )
+
+    def createDataSchema(corpusName: String, schema: DataSchema): F[Unit] =
+      val details = RagMetadataSchemaDetails
+        .newBuilder()
+        .setType(toSchemaDataType(schema.dataType))
+        .setGranularity(RagMetadataSchemaDetails.Granularity.GRANULARITY_FILE_LEVEL)
+        .setSearchStrategy(
+          RagMetadataSchemaDetails.SearchStrategy
+            .newBuilder()
+            .setSearchStrategyType(toSearchStrategy(schema.search))
+            .build()
+        )
+        .build()
+      val body    = RagDataSchema.newBuilder().setKey(schema.key).setSchemaDetails(details).build()
+      val request = CreateRagDataSchemaRequest
+        .newBuilder()
+        .setParent(corpusName)
+        .setRagDataSchema(body)
+        .setRagDataSchemaId(schema.key)
+        .build()
+      Sync[F]
+        .blocking(dataClient.createRagDataSchema(request))
+        .void
+        .recoverWith {
+          case err: ApiException if err.getStatusCode.getCode == StatusCode.Code.ALREADY_EXISTS => ().pure[F]
+        }
+        .adaptError(Error.ApiFailure("create-data-schema", _))
+
+    def setFileMetadata(fileName: String, entries: NEL[MetadataEntry]): F[Unit] =
+      entries
+        .traverse_ { entry =>
+          val metadata = RagMetadata
+            .newBuilder()
+            .setUserSpecifiedMetadata(
+              UserSpecifiedMetadata.newBuilder().setKey(entry.key).setValue(toMetadataValue(entry.value)).build()
+            )
+            .build()
+          val request  = CreateRagMetadataRequest
+            .newBuilder()
+            .setParent(fileName)
+            .setRagMetadata(metadata)
+            .setRagMetadataId(entry.key)
+            .build()
+          Sync[F]
+            .blocking(dataClient.createRagMetadata(request))
+            .void
+            .recoverWith {
+              case err: ApiException if err.getStatusCode.getCode == StatusCode.Code.ALREADY_EXISTS =>
+                Sync[F]
+                  .blocking(dataClient.updateRagMetadata(metadata.toBuilder.setName(s"$fileName/ragMetadata/${entry.key}").build()))
+                  .void
             }
-          )
-      }
+        }
+        .adaptError(Error.ApiFailure("set-file-metadata", _))
 
     def listFiles(corpusName: String): F[List[RagFileInfo]] =
       Sync[F]
@@ -578,7 +682,10 @@ object RagClient:
         .blocking(toLroStatus(dataClient.getOperationsClient.getOperation(handle.name)))
         .adaptError(Error.ApiFailure("get-lro", _))
 
-    private def startLro[A, M, B](kind: LroKind, start: => OperationFuture[A, M])(finish: A => F[B]): F[StartedLro[F, B]] =
+    private def startLro[A, M, B](
+        kind: LroKind,
+        start: => OperationFuture[A, M]
+    )(finish: A => F[B]): F[StartedLro[F, B]] = // TODO: separate LRO descriptor from result
       for
         future <- Async[F].delay(start)
         name   <- Sync[F].blocking(future.getName)
@@ -600,6 +707,26 @@ object RagClient:
     private def toCorpus(corpus: RagCorpus): Corpus =
       Corpus(name = corpus.getName, displayName = corpus.getDisplayName, description = Option(corpus.getDescription).filter(_.nonEmpty))
 
+    private def toSchemaDataType(dataType: MetadataType): RagMetadataSchemaDetails.DataType = dataType match
+      case MetadataType.String  => RagMetadataSchemaDetails.DataType.STRING
+      case MetadataType.Integer => RagMetadataSchemaDetails.DataType.INTEGER
+      case MetadataType.Float   => RagMetadataSchemaDetails.DataType.FLOAT
+      case MetadataType.Boolean => RagMetadataSchemaDetails.DataType.BOOLEAN
+
+    private def toSearchStrategy(search: MetadataSearch): RagMetadataSchemaDetails.SearchStrategy.SearchStrategyType =
+      search match
+        case MetadataSearch.Exact => RagMetadataSchemaDetails.SearchStrategy.SearchStrategyType.EXACT_SEARCH
+        case MetadataSearch.None  => RagMetadataSchemaDetails.SearchStrategy.SearchStrategyType.NO_SEARCH
+
+    private def toMetadataValue(value: MetadataValue): GMetadataValue =
+      val builder = GMetadataValue.newBuilder()
+      value match
+        case MetadataValue.Str(v)     => builder.setStrValue(v)
+        case MetadataValue.Int64(v)   => builder.setIntValue(v)
+        case MetadataValue.Float32(v) => builder.setFloatValue(v)
+        case MetadataValue.Bool(v)    => builder.setBoolValue(v)
+      builder.build()
+
     private def toFile(file: RagFile): RagFileInfo =
       val status = Option.when(file.hasFileStatus)(file.getFileStatus)
       RagFileInfo(
@@ -611,5 +738,6 @@ object RagClient:
           case FileStatus.State.ERROR                                             => FileState.Failed
           case FileStatus.State.STATE_UNSPECIFIED | FileStatus.State.UNRECOGNIZED => FileState.Unspecified
         },
-        errorStatus = status.map(_.getErrorStatus).filter(_.nonEmpty)
+        errorStatus = status.map(_.getErrorStatus).filter(_.nonEmpty),
+        userMetadata = Option(file.getUserMetadata).filter(_.nonEmpty)
       )
