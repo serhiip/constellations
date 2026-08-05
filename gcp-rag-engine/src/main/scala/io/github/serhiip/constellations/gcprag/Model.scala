@@ -27,7 +27,8 @@ final case class RagFileInfo(
     description: Option[String],
     state: FileState = FileState.Unspecified,
     errorStatus: Option[String] = None,
-    userMetadata: Option[String] = None
+    userMetadata: Option[String] = None,
+    sourceUris: List[String] = Nil
 )
 final case class ChunkingConfig(chunkSize: Int = 1024, chunkOverlap: Int = 256)
 
@@ -56,7 +57,7 @@ enum MetadataValue:
 
 final case class MetadataEntry(key: String, value: MetadataValue)
 
-/** Metadata applied to every file newly created by this import (Vertex AI `v1beta1` RagMetadata API). */
+/** Corpus schemas plus optional entries stamped on RagFiles listed as OK with a fileId in the import result sink. */
 final case class ImportFileMetadata(
     schemas: List[DataSchema] = Nil,
     entries: Option[NEL[MetadataEntry]] = None
@@ -65,7 +66,7 @@ final case class ImportFileMetadata(
 final case class GcsImportSource(
     uris: NEL[String],
     chunking: Option[ChunkingConfig] = None,
-    resultSink: Option[ImportResultSink] = None,
+    resultSink: ImportResultSink,
     metadata: Option[ImportFileMetadata] = None
 )
 final case class ImportResult(

@@ -26,7 +26,7 @@ final class ErrorReporterTest extends CatsEffectSuite:
     StartedLro(handle, await)
 
   private def reporter(content: String): IO[ErrorReporter[IO]] =
-    ErrorReporter.core[IO](_ => content.pure[IO])
+    ErrorReporter.core(ImportResultLedger.core[IO](_ => content.pure[IO])).pure[IO]
 
   test("success path returns Ior.Right(ImportResult)") {
     reporter(sampleNdjson).flatMap { reporter =>

@@ -7,7 +7,7 @@ import scala.jdk.CollectionConverters.*
 import munit.CatsEffectSuite
 import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers.{any, anyLong, eq as eqTo}
-import org.mockito.Mockito.{doAnswer, doReturn, mock, verify, when}
+import org.mockito.Mockito.{doAnswer, doReturn, mock, times, verify, when}
 import org.mockito.invocation.InvocationOnMock
 
 import com.google.api.gax.longrunning.OperationFuture
@@ -52,6 +52,8 @@ final class RagClientTest extends CatsEffectSuite:
   private val corpusName = s"${config.parent}/ragCorpora/123"
   private val fileName   = s"$corpusName/ragFiles/f1"
   private val opName     = s"${config.parent}/operations/op-1"
+  private val sinkPath   = "gs://bucket/results/run.ndjson"
+  private val defaultSink = ImportResultSink.Gcs(sinkPath)
 
   test("config builds regional parent and endpoint") {
     assertEquals(config.parent, "projects/demo/locations/us-east4")
@@ -214,13 +216,22 @@ final class RagClientTest extends CatsEffectSuite:
     when(page.iterateAll()).thenReturn(java.util.List.of(file))
 
     for
-      started  <- client.importFiles(corpusName, GcsImportSource(NEL.one("gs://bucket/doc.txt"), Some(ChunkingConfig(256, 32))))
+      started  <- client.importFiles(
+                    corpusName,
+                    GcsImportSource(NEL.one("gs://bucket/doc.txt"), Some(ChunkingConfig(256, 32)), defaultSink)
+                  )
       _        <- IO(assertEquals(started.handle, LroHandle(opName, LroKind.ImportFiles)))
       imported <- started.await
     yield
       assertEquals(
         imported,
-        ImportResult(importedCount = 0, failedCount = 0, skippedCount = 0, files = List(RagFileInfo(fileName, "f1.txt", None)))
+        ImportResult(
+          importedCount = 0,
+          failedCount = 0,
+          skippedCount = 0,
+          files = List(RagFileInfo(fileName, "f1.txt", None)),
+          partialFailuresGcsPath = Some(sinkPath)
+        )
       )
       val captor  = ArgumentCaptor.forClass(classOf[ImportRagFilesRequest])
       verify(data).importRagFilesAsync(captor.capture())
@@ -245,7 +256,7 @@ final class RagClientTest extends CatsEffectSuite:
     when(data.listRagFiles(any(classOf[ListRagFilesRequest]))).thenReturn(page)
     when(page.iterateAll()).thenReturn(java.util.List.of())
 
-    val source = GcsImportSource(NEL.one("gs://bucket/doc.txt"), resultSink = Some(ImportResultSink.Gcs("gs://bucket/results/")))
+    val source = GcsImportSource(NEL.one("gs://bucket/doc.txt"), resultSink = ImportResultSink.Gcs("gs://bucket/results/"))
 
     for
       started <- client.importFiles(corpusName, source)
@@ -300,26 +311,30 @@ final class RagClientTest extends CatsEffectSuite:
       }
   }
 
-  test("importFiles ensures schemas and attaches metadata to newly imported files") {
-    val data       = mockDataClient()
-    val rag        = mockRagClient()
-    val client     = RagClient.create[IO](config, data, rag)
-    val existing   = RagFile.newBuilder().setName(s"$corpusName/ragFiles/old").setDisplayName("old.txt").build()
-    val imported   = RagFile.newBuilder().setName(fileName).setDisplayName("f1.txt").build()
-    val beforePage = mock(classOf[VertexRagDataServiceClient.ListRagFilesPagedResponse])
-    val afterPage  = mock(classOf[VertexRagDataServiceClient.ListRagFilesPagedResponse])
+  test("importFiles attaches metadata only to OK sink rows with fileId") {
+    val data     = mockDataClient()
+    val rag      = mockRagClient()
+    val fileId   = 42L
+    val expected = ImportResultLedger.ragFileName(corpusName, fileId)
+    val page     = mock(classOf[VertexRagDataServiceClient.ListRagFilesPagedResponse])
+    val ndjson   =
+      s"""{"OperationId":1,"CreateTimestamp":"t","Filename":"doc.txt","Status":"OK","FileId":$fileId}
+         |{"OperationId":2,"CreateTimestamp":"t","Filename":"skip.txt","Status":"SKIPPED"}
+         |{"OperationId":3,"CreateTimestamp":"t","Filename":"other.txt","Status":"OK"}
+         |""".stripMargin
+    val client   = RagClient.create[IO](config, data, rag, ImportResultLedger.core(_ => IO.pure(ndjson)))
 
     doReturn(completed[ImportRagFilesResponse, ImportRagFilesOperationMetadata](ImportRagFilesResponse.getDefaultInstance, opName))
       .when(data)
       .importRagFilesAsync(any(classOf[ImportRagFilesRequest]))
-    when(data.listRagFiles(any(classOf[ListRagFilesRequest]))).thenReturn(beforePage, afterPage)
-    when(beforePage.iterateAll()).thenReturn(java.util.List.of(existing))
-    when(afterPage.iterateAll()).thenReturn(java.util.List.of(existing, imported))
+    when(data.listRagFiles(any(classOf[ListRagFilesRequest]))).thenReturn(page)
+    when(page.iterateAll()).thenReturn(java.util.List.of())
     when(data.createRagDataSchema(any(classOf[CreateRagDataSchemaRequest]))).thenReturn(RagDataSchema.getDefaultInstance)
     when(data.createRagMetadata(any(classOf[CreateRagMetadataRequest]))).thenReturn(RagMetadata.getDefaultInstance)
 
     val source = GcsImportSource(
-      uris = NEL.one("gs://bucket/doc.txt"),
+      uris = NEL.one("gs://bucket/docs/*.txt"),
+      resultSink = defaultSink,
       metadata = Some(
         ImportFileMetadata(
           schemas = List(DataSchema("tenantid")),
@@ -334,10 +349,29 @@ final class RagClientTest extends CatsEffectSuite:
     yield
       verify(data).createRagDataSchema(any(classOf[CreateRagDataSchemaRequest]))
       val metaCaptor = ArgumentCaptor.forClass(classOf[CreateRagMetadataRequest])
-      verify(data).createRagMetadata(metaCaptor.capture())
-      assertEquals(metaCaptor.getValue.getParent, fileName)
+      verify(data, times(1)).createRagMetadata(metaCaptor.capture())
+      assertEquals(metaCaptor.getValue.getParent, expected)
       assertEquals(metaCaptor.getValue.getRagMetadataId, "tenantid")
       assertEquals(metaCaptor.getValue.getRagMetadata.getUserSpecifiedMetadata.getValue.getStrValue, "user-42")
+  }
+
+  test("importFiles rejects metadata.entries with a BigQuery result sink") {
+    val data   = mockDataClient()
+    val rag    = mockRagClient()
+    val client = RagClient.create[IO](config, data, rag)
+    val source = GcsImportSource(
+      uris = NEL.one("gs://bucket/doc.txt"),
+      resultSink = ImportResultSink.BigQuery("bq://p.d.t"),
+      metadata = Some(ImportFileMetadata(entries = Some(NEL.one(MetadataEntry("tenantid", MetadataValue.Str("a"))))))
+    )
+
+    client.importFiles(corpusName, source).attempt.map { err =>
+      assertEquals(
+        err,
+        Left(RagClient.Error.InvalidConfig("metadata.entries requires ImportResultSink.Gcs so imported fileIds can be read from the sink"))
+      )
+      verify(data, times(0)).importRagFilesAsync(any(classOf[ImportRagFilesRequest]))
+    }
   }
 
   test("importFiles reports the corpus and uris when the LRO itself fails") {
@@ -351,7 +385,7 @@ final class RagClientTest extends CatsEffectSuite:
       .importRagFilesAsync(any(classOf[ImportRagFilesRequest]))
 
     for
-      started <- client.importFiles(corpusName, GcsImportSource(uris))
+      started <- client.importFiles(corpusName, GcsImportSource(uris, resultSink = defaultSink))
       result  <- started.await.attempt
     yield result match
       case Left(RagClient.Error.ImportOperationFailed(corpus, failedUris, lro, cause)) =>

@@ -33,7 +33,8 @@ RagClient.resource[IO](RagClient.Config(project = "my-project", location = "us-e
                   GcsImportSource(
                     uris = NEL.one("gs://my-bucket/docs/*.txt"),
                     chunking = Some(ChunkingConfig()),
-                    // optional: define schema keys + attach values to newly imported files (v1beta1 RagMetadata)
+                    resultSink = ImportResultSink.Gcs("gs://my-bucket/import-results/run-1.ndjson"),
+                    // optional: schemas + stamp entries on OK sink rows that carry a FileId
                     metadata = Some(
                       ImportFileMetadata(
                         schemas = List(DataSchema("tenantid")),
@@ -79,7 +80,7 @@ rag.createCorpus(
 - The operation completes but some files could not be ingested (`failedCount > 0`), which raises `RagClient.Error.ImportFailed` carrying the counts.
 - The operation itself fails, which raises `RagClient.Error.ImportOperationFailed` carrying the corpus, the requested URIs and the LRO name. Vertex often reports these as a bare `INTERNAL`, so a single unreadable file can take down the whole batch without naming itself.
 
-Two things help narrow down the second case. Set `GcsImportSource(resultSink = Some(ImportResultSink.Gcs("gs://bucket/import-results/run-1.ndjson")))` so Vertex writes per-file outcomes to Cloud Storage — each `importFiles` call needs a sink path that does not already exist — and read `RagFileInfo.state` / `RagFileInfo.errorStatus` from `listFiles`, which report `FileState.Failed` plus Vertex's reason per file.
+Two things help narrow down the second case. `GcsImportSource.resultSink` is required — Vertex writes per-file outcomes to that GCS or BigQuery destination (each GCS path must not already exist) — and read `RagFileInfo.state` / `RagFileInfo.errorStatus` from `listFiles`, which report `FileState.Failed` plus Vertex's reason per file.
 
 To surface those sink rows without losing partial success, pass the import LRO to `ErrorReporter.report`, which awaits it and returns `Ior[NonEmptyList[ImportFileOutcome], ImportResult]` (use `lro.handle` separately if you still need to poll):
 
@@ -87,7 +88,7 @@ To surface those sink rows without losing partial success, pass the import LRO t
 import cats.data.Ior
 
 for
-  reporter <- ErrorReporter[IO]() // or ErrorReporter.gcs / ErrorReporter.core(readObject)
+  reporter <- ErrorReporter[IO]() // or ErrorReporter.gcs / ErrorReporter.core(ledger)
   lro      <- rag.importFiles(corpus.name, source)
   report   <- reporter.report(lro)
 yield report match
@@ -103,7 +104,7 @@ On `RagClient.Error.ImportFailed` with a GCS sink path, `report` reads `partialF
 Vertex exposes searchable file metadata on the **`v1beta1` data API** (`CreateRagDataSchema` / `CreateRagMetadata`). This client uses that path for ingestion while retrieval stays on `v1` (`metadata_filter`).
 
 1. Define corpus keys (`DataSchema`; keys must match `[a-z][a-z0-9-]{0,62}` — no underscores).
-2. Attach values per RagFile (`MetadataEntry`), either via `GcsImportSource.metadata` (applied to files **new** after that import) or `setFileMetadata` on an existing file name.
+2. Attach values per RagFile (`MetadataEntry`), either via `GcsImportSource.metadata.entries` or `setFileMetadata` on an explicit file name.
 3. Query with `RetrievalConfig.metadataFilter` (CEL), using those same keys (e.g. `tenantid == "user-42"`).
 
 ```scala
@@ -115,7 +116,8 @@ _ <- rag.createDataSchema(corpus.name, DataSchema("tenantid"))
 _ <- rag.importFiles(
        corpus.name,
        GcsImportSource(
-         uris = NEL.one("gs://my-bucket/docs/*.txt"),
+         uris = NEL.one("gs://my-bucket/tenants/user-42/docs/*.txt"),
+         resultSink = ImportResultSink.Gcs("gs://my-bucket/import-results/user-42-run.ndjson"),
          metadata = Some(
            ImportFileMetadata(
              schemas = List(DataSchema("tenantid")), // idempotent if already created
@@ -132,7 +134,7 @@ _ <- rag.setFileMetadata(
      )
 ```
 
-`importFiles` snapshots the corpus file list before the LRO when `entries` are set, then calls `setFileMetadata` only on names that appear afterwards. Pre-existing files in a shared corpus are left unchanged. Schema creation treats `ALREADY_EXISTS` as success.
+When `entries` are set, `resultSink` must be `ImportResultSink.Gcs`. After the LRO succeeds, the client reads that NDJSON ledger and calls `setFileMetadata` only for rows with `Status=OK` and a `FileId`, using the resource name `{corpus}/ragFiles/{fileId}`. That set is scoped to this import operation — not a corpus-wide “new since snapshot” diff. Schema creation treats `ALREADY_EXISTS` as success. Skipped/reimport rows without a usable `FileId` (or non-OK status) are not stamped.
 
 ## Similarity search
 
@@ -202,7 +204,7 @@ Because one Vector Search 1.0 index maps to one corpus, and Vector Search index 
 2. **Shared corpus + query scoping (pool)** — one corpus (any backend), attach per-file metadata at import (`GcsImportSource.metadata` / `setFileMetadata`), then scope each `Similarity` with `RetrievalConfig.metadataFilter` (CEL) and/or `ragFileIds`. Create one scoped `TextSimilarity` per tenant/session; do not pass tenant identity through `findClosest`.
 3. **Corpus (and empty index) per tenant on Vector Search** — physical isolation with dedicated indexes. Viable only for a small number of long-lived tenants because of provisioning time and standing index cost.
 
-Option 2 needs metadata on the files you intend to filter — a `metadataFilter` alone does nothing if no `RagMetadata` was written. Treat filters as an authorization boundary only after you have verified they restrict results for your corpus and backend (ingestion uses the `v1beta1` metadata API). Test with a deliberately skewed tenant layout before production.
+Option 2 needs metadata on the files you intend to filter — a `metadataFilter` alone does nothing if no `RagMetadata` was written. Import `entries` are stamped from the import result sink’s OK `FileId`s for that LRO. Treat filters as an authorization boundary only after you have verified they restrict results for your corpus and backend. Test with a deliberately skewed tenant layout before production.
 
 ### Shared-corpus filter performance
 
@@ -218,7 +220,7 @@ When tenant sizes vary widely, corpus-per-tenant on RagManaged is usually safer 
 
 Imports can fail as a completed LRO with `failedCount > 0` (`ImportFailed`) or as a dead LRO (`ImportOperationFailed`, often a bare `INTERNAL`). A single bad file in a batch can take down the whole LRO without naming itself.
 
-Use `ImportResultSink` so Vertex writes per-file outcomes (success and failure) to GCS or BigQuery. The GCS sink path must be unique per import (Vertex returns `FAILED_PRECONDITION` if the object already exists). Pass the import LRO to `ErrorReporter.report` (`ErrorReporter.gcs` / `ErrorReporter.apply`) so `ImportFailed` + sink become an `Ior` (`Both` for partial success, `Left` when nothing imported). After a failure, also call `listFiles` and inspect `RagFileInfo.state` / `errorStatus` — that is corpus-scoped and reliable. Do not use retrieval results as proof of ingestion when the corpus shares a Vector Search index with earlier runs (stale vectors).
+`resultSink` is required on every import so Vertex writes per-file outcomes (success and failure) to GCS or BigQuery. The GCS sink path must be unique per import (Vertex returns `FAILED_PRECONDITION` if the object already exists). Pass the import LRO to `ErrorReporter.report` (`ErrorReporter.gcs` / `ErrorReporter.apply`) so `ImportFailed` + sink become an `Ior` (`Both` for partial success, `Left` when nothing imported). After a failure, also call `listFiles` and inspect `RagFileInfo.state` / `errorStatus` — that is corpus-scoped and reliable. Do not use retrieval results as proof of ingestion when the corpus shares a Vector Search index with earlier runs (stale vectors). `GcpRagImportFailureExample` also resolves each sink `FileId` via `getFile` to confirm `{corpus}/ragFiles/{fileId}` naming.
 
 `GcpRagImportFailureExample` exercises batch vs per-file import against a deliberately corrupt document and prints whether the batch failed as a unit.
 
