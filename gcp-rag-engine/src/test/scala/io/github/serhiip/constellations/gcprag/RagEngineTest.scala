@@ -23,7 +23,7 @@ final class RagEngineTest extends FunSuite:
       RetrievedContext("chunk-a", Some("gs://b/a.txt"), Some("a.txt"), Some(0.1)),
       RetrievedContext("chunk-b", Some("gs://b/b.txt"), Some("b.txt"), Some(0.2))
     )
-    val sim: TextSimilarity[F, String] = RagEngine.similarity(retrieving(contexts), corpus, RetrievalConfig())
+    val sim: TextSimilarity[F, String] = RagEngine.Similarity.simple(retrieving(contexts), corpus, RetrievalConfig())
     val (calls, result)                = run(sim.findClosest("what is rag", k = 2))
 
     assertEquals(result, Right(NEL.of("chunk-a", "chunk-b")))
@@ -32,7 +32,7 @@ final class RagEngineTest extends FunSuite:
 
   test("findClosest keeps default retrieval topK when k is not positive") {
     val retrieval       = RetrievalConfig(topK = Some(5), vectorDistanceThreshold = Some(0.4))
-    val sim             = RagEngine.similarity(retrieving(List(RetrievedContext("only", None, None, None))), corpus, retrieval)
+    val sim             = RagEngine.Similarity.simple(retrieving(List(RetrievedContext("only", None, None, None))), corpus, retrieval)
     val (calls, result) = run(sim.findClosest("q", k = 0))
 
     assertEquals(result, Right(NEL.one("only")))
@@ -44,7 +44,7 @@ final class RagEngineTest extends FunSuite:
       metadataFilter = Some("""tenantid == "user-42""""),
       ragFileIds = List("file-1", "file-2")
     )
-    val sim             = RagEngine.similarity(retrieving(List(RetrievedContext("scoped", None, None, None))), corpus, retrieval)
+    val sim             = RagEngine.Similarity.simple(retrieving(List(RetrievedContext("scoped", None, None, None))), corpus, retrieval)
     val (calls, result) = run(sim.findClosest("q", k = 3))
 
     assertEquals(result, Right(NEL.one("scoped")))
@@ -55,7 +55,7 @@ final class RagEngineTest extends FunSuite:
   }
 
   test("findClosest fails when no contexts are returned") {
-    val sim             = RagEngine.similarity(retrieving(Nil), corpus, RetrievalConfig())
+    val sim             = RagEngine.Similarity.simple(retrieving(Nil), corpus, RetrievalConfig())
     val (calls, result) = run(sim.findClosest("missing", k = 1))
 
     assertEquals(calls.toList, List(RetrieveCall(corpus, "missing", RetrievalConfig(topK = Some(1)))))
@@ -64,7 +64,7 @@ final class RagEngineTest extends FunSuite:
 
   test("findClosest propagates decoder failures") {
     given ContextDecoder[F, String] = ContextDecoder(_ => RuntimeException("boom").raiseError)
-    val sim                         = RagEngine.similarity(retrieving(List(RetrievedContext("x", None, None, None))), corpus, RetrievalConfig())
+    val sim                         = RagEngine.Similarity.simple(retrieving(List(RetrievedContext("x", None, None, None))), corpus, RetrievalConfig())
     val (calls, result)             = run(sim.findClosest("q", k = 1))
 
     assertEquals(calls.size, 1L)
@@ -88,6 +88,6 @@ final class RagEngineTest extends FunSuite:
     def setFileMetadata(fileName: String, entries: NEL[MetadataEntry]): F[Unit]                  = unused
     def getLro(handle: LroHandle): F[LroStatus]                                                  = unused
 
-  private def unused[A]: F[A] = UnsupportedOperationException("RagEngine.similarity only uses retrieveContexts").raiseError
+  private def unused[A]: F[A] = UnsupportedOperationException("RagEngine.Similarity.simple only uses retrieveContexts").raiseError
 
   private def run[A](fa: F[A]): (Chain[RetrieveCall], Either[Throwable, A]) = fa.value.run
