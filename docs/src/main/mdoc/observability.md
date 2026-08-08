@@ -46,7 +46,7 @@ Attributes on the active span for a failed batch: `retries_left`, `error` (comma
 - `constellations/similarity_find_closest_error_count`
 - `constellations/similarity_find_closest_duration` (unit `s`)
 
-Example: `Similarity.observed(RagEngine.similarity(...))` for metered RAG search.
+Example: `Similarity.observed(RagEngine.Similarity.simple(...))` for metered RAG search.
 
 ## Logging
 

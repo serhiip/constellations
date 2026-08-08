@@ -138,11 +138,11 @@ When `entries` are set, `resultSink` must be `ImportResultSink.Gcs`. After the L
 
 ## Similarity search
 
-RAG Engine accepts text queries (not raw embeddings). Use `RagEngine.similarity` for a plain `TextSimilarity`. Scoping filters live on `RetrievalConfig` and are fixed when the `Similarity` instance is created — `findClosest` itself is unchanged:
+RAG Engine accepts text queries (not raw embeddings). Use `RagEngine.Similarity.simple` for a plain `TextSimilarity` with a fixed corpus and `RetrievalConfig`. For ambient config (e.g. Kleisli/`Ask`), use `RagEngine.Similarity.fromAsk` instead. Scoping filters live on `RetrievalConfig` and are fixed when the instance is created — `findClosest` itself is unchanged:
 
 ```scala
 given ContextDecoder[IO, String] = ContextDecoder(ctx => IO.pure(ctx.text))
-val sim = RagEngine.similarity[IO, String](
+val sim = RagEngine.Similarity.simple[IO, String](
   rag,
   corpus.name,
   RetrievalConfig(
@@ -162,7 +162,7 @@ import io.github.serhiip.constellations.Similarity
 
 RagClient.resource[IO](config).evalMap(RagClient.apply[IO]).use { rag =>
   for
-    sim  <- Similarity.observed(RagEngine.similarity[IO, String](rag, corpus.name, RetrievalConfig()))
+    sim  <- Similarity.observed(RagEngine.Similarity.simple[IO, String](rag, corpus.name, RetrievalConfig()))
     hits <- sim.findClosest("What is RAG?", k = 3)
   yield hits
 }
