@@ -41,6 +41,7 @@ import com.google.cloud.aiplatform.v1beta1.{
   GcsSource,
   ImportRagFilesConfig,
   ImportRagFilesRequest,
+  ImportRagFilesResponse,
   ListRagCorporaRequest,
   ListRagFilesRequest,
   MetadataValue as GMetadataValue,
@@ -74,6 +75,12 @@ trait RagClient[F[_]]:
   def setFileMetadata(fileName: String, entries: NEL[MetadataEntry]): F[Unit]
   def retrieveContexts(corpusName: String, query: String, config: RetrievalConfig): F[List[RetrievedContext]]
   def getLro(handle: LroHandle): F[LroStatus]
+  def getImportResult(
+      handle: LroHandle,
+      corpusName: String,
+      sinkGcs: Option[String] = None,
+      sinkBq: Option[String] = None
+  ): F[ImportResult]
 
 object RagClient:
 
@@ -84,6 +91,8 @@ object RagClient:
   enum Error extends RuntimeException:
     case ApiFailure(operation: String, cause: Throwable)
     case InvalidConfig(message: String)
+    case LroRunning
+    case LroFailed(message: String)
     case ImportFailed(
         importedCount: Long,
         failedCount: Long,
@@ -96,6 +105,8 @@ object RagClient:
     override def getMessage(): String = this match
       case ApiFailure(operation, cause)                     => s"GCP RAG Engine $operation failed: ${Option(cause.getMessage).getOrElse(cause.toString)}"
       case InvalidConfig(message)                           => message
+      case LroRunning                                       => "GCP RAG Engine LRO is still running"
+      case LroFailed(message)                               => s"GCP RAG Engine LRO failed: $message"
       case ImportFailed(imported, failed, skipped, gcs, bq) =>
         val sink = gcs.orElse(bq).fold("")(path => s"; partial failures: $path")
         s"GCP RAG Engine import-files completed with failures: imported=$imported failed=$failed skipped=$skipped$sink"
@@ -186,6 +197,13 @@ object RagClient:
       counted("retrieve-contexts")(delegate.retrieveContexts(corpusName, query, config))
 
     def getLro(handle: LroHandle): F[LroStatus] = counted("get-lro")(delegate.getLro(handle))
+    def getImportResult(
+        handle: LroHandle,
+        corpusName: String,
+        sinkGcs: Option[String] = None,
+        sinkBq: Option[String] = None
+    ): F[ImportResult] =
+      counted("get-import-result")(delegate.getImportResult(handle, corpusName, sinkGcs, sinkBq))
 
   def traced[F[_]: MonadThrow: Tracer: StructuredLogger](delegate: RagClient[F]): RagClient[F] = new:
     private val delegateName = Option(delegate.getClass.getCanonicalName()).getOrElse(delegate.getClass.getName)
@@ -369,6 +387,30 @@ object RagClient:
             _      <- logger.trace(s"LRO ${handle.name} status: $result")
           yield result
 
+    def getImportResult(
+        handle: LroHandle,
+        corpusName: String,
+        sinkGcs: Option[String] = None,
+        sinkBq: Option[String] = None
+    ): F[ImportResult] =
+      Tracer[F]
+        .span("rag-client", "get-import-result")
+        .logged: logger =>
+          for
+            _      <- logger.trace(s"Getting import result for ${handle.name} on $corpusName")
+            span   <- Tracer[F].currentSpanOrNoop
+            _      <- span.addAttributes(
+                        Attribute("lro.name", handle.name),
+                        Attribute("lro.kind", handle.kind.toString),
+                        Attribute("corpus_name", corpusName)
+                      )
+            result <- delegate.getImportResult(handle, corpusName, sinkGcs, sinkBq)
+            _      <-
+              logger.trace(
+                s"Import result for ${handle.name}: imported=${result.importedCount} failed=${result.failedCount} skipped=${result.skippedCount}"
+              )
+          yield result
+
   def observed[F[_]: MonadCancelThrow: Tracer: StructuredLogger](delegate: RagClient[F], meters: Meters[F]): RagClient[F] =
     traced(metered(delegate, meters))
 
@@ -426,6 +468,13 @@ object RagClient:
     def retrieveContexts(corpusName: String, query: String, config: RetrievalConfig): G[List[RetrievedContext]] =
       f(client.retrieveContexts(corpusName, query, config))
     def getLro(handle: LroHandle): G[LroStatus]                                                                 = f(client.getLro(handle))
+    def getImportResult(
+        handle: LroHandle,
+        corpusName: String,
+        sinkGcs: Option[String] = None,
+        sinkBq: Option[String] = None
+    ): G[ImportResult] =
+      f(client.getImportResult(handle, corpusName, sinkGcs, sinkBq))
 
   private final class JavaRagClient[F[_]: Async](
       config: Config,
@@ -541,37 +590,11 @@ object RagClient:
         for
           _       <- metadata.schemas.traverse_(createDataSchema(corpusName, _))
           started <- startLro(LroKind.ImportFiles, dataClient.importRagFilesAsync(request)) { response =>
-                       val imported = response.getImportedRagFilesCount
-                       val failed   = response.getFailedRagFilesCount
-                       val skipped  = response.getSkippedRagFilesCount
-                       val gcsPath  = Option.when(response.hasPartialFailuresGcsPath)(response.getPartialFailuresGcsPath).orElse(sinkGcs)
-                       val bqTable  =
-                         Option.when(response.hasPartialFailuresBigqueryTable)(response.getPartialFailuresBigqueryTable).orElse(sinkBq)
-                       for
-                         _     <- Error
-                                    .ImportFailed(imported, failed, skipped, gcsPath, bqTable)
-                                    .raiseError[F, Unit]
-                                    .whenA(failed > 0)
-                         files <- Sync[F].blocking(
-                                    dataClient
-                                      .listRagFiles(ListRagFilesRequest.newBuilder().setParent(corpusName).build())
-                                      .iterateAll()
-                                      .asScala
-                                      .toList
-                                      .map(toFile)
-                                  )
-                         result = ImportResult(
-                                    importedCount = imported,
-                                    failedCount = failed,
-                                    skippedCount = skipped,
-                                    files = files,
-                                    partialFailuresGcsPath = gcsPath,
-                                    partialFailuresBigQueryTable = bqTable
-                                  )
-                         _     <- (metadata.entries, sinkGcs).tupled.traverse_ { (entries, path) =>
-                                    stampImportedMetadata(corpusName, path, entries)
-                                  }
-                       yield result
+                       finishImport(corpusName, response, sinkGcs, sinkBq).flatTap { _ =>
+                         (metadata.entries, sinkGcs).tupled.traverse_ { (entries, path) =>
+                           stampImportedMetadata(corpusName, path, entries)
+                         }
+                       }
                      }
         yield StartedLro(
           started.handle,
@@ -701,6 +724,59 @@ object RagClient:
       Sync[F]
         .blocking(toLroStatus(dataClient.getOperationsClient.getOperation(handle.name)))
         .adaptError(Error.ApiFailure("get-lro", _))
+
+    def getImportResult(
+        handle: LroHandle,
+        corpusName: String,
+        sinkGcs: Option[String] = None,
+        sinkBq: Option[String] = None
+    ): F[ImportResult] =
+      val op =
+        for
+          _         <- Error.InvalidConfig("getImportResult requires LroKind.ImportFiles").raiseError.unlessA(handle.kind == LroKind.ImportFiles)
+          operation <- Sync[F].blocking(dataClient.getOperationsClient.getOperation(handle.name))
+          _         <- Error.LroRunning.raiseError.unlessA(operation.getDone)
+          _         <- Error
+                         .LroFailed(Option(operation.getError.getMessage).filter(_.nonEmpty).getOrElse(operation.getError.toString))
+                         .raiseError
+                         .whenA(operation.hasError)
+          response  <- Sync[F].blocking(operation.getResponse.unpack(classOf[ImportRagFilesResponse]))
+          result    <- finishImport(corpusName, response, sinkGcs, sinkBq)
+        yield result
+      op.adaptError {
+        case err: Error => err
+        case err        => Error.ApiFailure("get-import-result", err)
+      }
+
+    private def finishImport(
+        corpusName: String,
+        response: ImportRagFilesResponse,
+        sinkGcs: Option[String],
+        sinkBq: Option[String]
+    ): F[ImportResult] =
+      val imported = response.getImportedRagFilesCount
+      val failed   = response.getFailedRagFilesCount
+      val skipped  = response.getSkippedRagFilesCount
+      val gcsPath  = Option.when(response.hasPartialFailuresGcsPath)(response.getPartialFailuresGcsPath).orElse(sinkGcs)
+      val bqTable  = Option.when(response.hasPartialFailuresBigqueryTable)(response.getPartialFailuresBigqueryTable).orElse(sinkBq)
+      for
+        _     <- Error.ImportFailed(imported, failed, skipped, gcsPath, bqTable).raiseError[F, Unit].whenA(failed > 0)
+        files <- Sync[F].blocking(
+                   dataClient
+                     .listRagFiles(ListRagFilesRequest.newBuilder().setParent(corpusName).build())
+                     .iterateAll()
+                     .asScala
+                     .toList
+                     .map(toFile)
+                 )
+      yield ImportResult(
+        importedCount = imported,
+        failedCount = failed,
+        skippedCount = skipped,
+        files = files,
+        partialFailuresGcsPath = gcsPath,
+        partialFailuresBigQueryTable = bqTable
+      )
 
     private def startLro[A, M, B](
         kind: LroKind,

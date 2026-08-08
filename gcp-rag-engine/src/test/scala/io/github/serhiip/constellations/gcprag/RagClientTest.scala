@@ -11,12 +11,7 @@ import org.mockito.Mockito.{doAnswer, doReturn, mock, times, verify, when}
 import org.mockito.invocation.InvocationOnMock
 
 import com.google.api.gax.longrunning.OperationFuture
-import com.google.cloud.aiplatform.v1.{
-  RagContexts,
-  RetrieveContextsRequest,
-  RetrieveContextsResponse,
-  VertexRagServiceClient
-}
+import com.google.cloud.aiplatform.v1.{RagContexts, RetrieveContextsRequest, RetrieveContextsResponse, VertexRagServiceClient}
 import com.google.cloud.aiplatform.v1beta1.{
   CreateRagCorpusOperationMetadata,
   CreateRagCorpusRequest,
@@ -43,16 +38,16 @@ import com.google.cloud.aiplatform.v1beta1.{
   VertexRagDataServiceClient
 }
 import com.google.longrunning.{Operation, OperationsClient}
-import com.google.protobuf.Empty
+import com.google.protobuf.{Any as ProtoAny, Empty}
 import com.google.rpc.Status
 
 final class RagClientTest extends CatsEffectSuite:
 
-  private val config     = RagClient.Config(project = "demo", location = "us-east4")
-  private val corpusName = s"${config.parent}/ragCorpora/123"
-  private val fileName   = s"$corpusName/ragFiles/f1"
-  private val opName     = s"${config.parent}/operations/op-1"
-  private val sinkPath   = "gs://bucket/results/run.ndjson"
+  private val config      = RagClient.Config(project = "demo", location = "us-east4")
+  private val corpusName  = s"${config.parent}/ragCorpora/123"
+  private val fileName    = s"$corpusName/ragFiles/f1"
+  private val opName      = s"${config.parent}/operations/op-1"
+  private val sinkPath    = "gs://bucket/results/run.ndjson"
   private val defaultSink = ImportResultSink.Gcs(sinkPath)
 
   test("config builds regional parent and endpoint") {
@@ -548,6 +543,177 @@ final class RagClientTest extends CatsEffectSuite:
       assertEquals(status1, LroStatus.Running)
       assertEquals(status2, LroStatus.Succeeded)
       assertEquals(status3, LroStatus.Failed("import blew up"))
+  }
+
+  test("getImportResult resumes a completed import LRO") {
+    val data     = mockDataClient()
+    val rag      = mockRagClient()
+    val ops      = mock(classOf[OperationsClient])
+    val client   = RagClient.create[IO](config, data, rag)
+    val handle   = LroHandle(opName, LroKind.ImportFiles)
+    val file     = RagFile.newBuilder().setName(fileName).setDisplayName("f1.txt").build()
+    val page     = mock(classOf[VertexRagDataServiceClient.ListRagFilesPagedResponse])
+    val response = ImportRagFilesResponse
+      .newBuilder()
+      .setImportedRagFilesCount(1)
+      .setFailedRagFilesCount(0)
+      .setSkippedRagFilesCount(0)
+      .setPartialFailuresGcsPath(sinkPath)
+      .build()
+    val done     = Operation.newBuilder().setName(opName).setDone(true).setResponse(ProtoAny.pack(response)).build()
+
+    when(data.getOperationsClient).thenReturn(ops)
+    when(ops.getOperation(opName)).thenReturn(done)
+    when(data.listRagFiles(any(classOf[ListRagFilesRequest]))).thenReturn(page)
+    when(page.iterateAll()).thenReturn(java.util.List.of(file))
+
+    client.getImportResult(handle, corpusName).map { result =>
+      assertEquals(
+        result,
+        ImportResult(
+          importedCount = 1,
+          failedCount = 0,
+          skippedCount = 0,
+          files = List(RagFileInfo(fileName, "f1.txt", None)),
+          partialFailuresGcsPath = Some(sinkPath)
+        )
+      )
+    }
+  }
+
+  test("getImportResult raises LroRunning while the operation is in progress") {
+    val data    = mockDataClient()
+    val rag     = mockRagClient()
+    val ops     = mock(classOf[OperationsClient])
+    val client  = RagClient.create[IO](config, data, rag)
+    val handle  = LroHandle(opName, LroKind.ImportFiles)
+    val running = Operation.newBuilder().setName(opName).setDone(false).build()
+
+    when(data.getOperationsClient).thenReturn(ops)
+    when(ops.getOperation(opName)).thenReturn(running)
+
+    client.getImportResult(handle, corpusName).attempt.map(assertEquals(_, Left(RagClient.Error.LroRunning)))
+  }
+
+  test("getImportResult raises LroFailed when the operation itself failed") {
+    val data   = mockDataClient()
+    val rag    = mockRagClient()
+    val ops    = mock(classOf[OperationsClient])
+    val client = RagClient.create[IO](config, data, rag)
+    val handle = LroHandle(opName, LroKind.ImportFiles)
+    val failed = Operation
+      .newBuilder()
+      .setName(opName)
+      .setDone(true)
+      .setError(Status.newBuilder().setMessage("import blew up").build())
+      .build()
+
+    when(data.getOperationsClient).thenReturn(ops)
+    when(ops.getOperation(opName)).thenReturn(failed)
+
+    client.getImportResult(handle, corpusName).attempt.map(assertEquals(_, Left(RagClient.Error.LroFailed("import blew up"))))
+  }
+
+  test("getImportResult rejects non-import LRO kinds") {
+    val data   = mockDataClient()
+    val rag    = mockRagClient()
+    val client = RagClient.create[IO](config, data, rag)
+    val handle = LroHandle(opName, LroKind.CreateCorpus)
+
+    client
+      .getImportResult(handle, corpusName)
+      .attempt
+      .map(assertEquals(_, Left(RagClient.Error.InvalidConfig("getImportResult requires LroKind.ImportFiles"))))
+  }
+
+  test("getImportResult raises ImportFailed when the response reports failed files") {
+    val data     = mockDataClient()
+    val rag      = mockRagClient()
+    val ops      = mock(classOf[OperationsClient])
+    val client   = RagClient.create[IO](config, data, rag)
+    val handle   = LroHandle(opName, LroKind.ImportFiles)
+    val response = ImportRagFilesResponse
+      .newBuilder()
+      .setImportedRagFilesCount(1)
+      .setFailedRagFilesCount(1)
+      .setSkippedRagFilesCount(0)
+      .setPartialFailuresGcsPath(sinkPath)
+      .build()
+    val done     = Operation.newBuilder().setName(opName).setDone(true).setResponse(ProtoAny.pack(response)).build()
+
+    when(data.getOperationsClient).thenReturn(ops)
+    when(ops.getOperation(opName)).thenReturn(done)
+
+    client
+      .getImportResult(handle, corpusName)
+      .attempt
+      .map(
+        assertEquals(
+          _,
+          Left(
+            RagClient.Error.ImportFailed(
+              importedCount = 1,
+              failedCount = 1,
+              skippedCount = 0,
+              partialFailuresGcsPath = Some(sinkPath),
+              partialFailuresBigQueryTable = None
+            )
+          )
+        )
+      )
+  }
+
+  test("getImportResult falls back to sinkGcs when the response omits the path") {
+    val data     = mockDataClient()
+    val rag      = mockRagClient()
+    val ops      = mock(classOf[OperationsClient])
+    val client   = RagClient.create[IO](config, data, rag)
+    val handle   = LroHandle(opName, LroKind.ImportFiles)
+    val file     = RagFile.newBuilder().setName(fileName).setDisplayName("f1.txt").build()
+    val page     = mock(classOf[VertexRagDataServiceClient.ListRagFilesPagedResponse])
+    val response = ImportRagFilesResponse
+      .newBuilder()
+      .setImportedRagFilesCount(1)
+      .setFailedRagFilesCount(0)
+      .setSkippedRagFilesCount(0)
+      .build()
+    val done     = Operation.newBuilder().setName(opName).setDone(true).setResponse(ProtoAny.pack(response)).build()
+
+    when(data.getOperationsClient).thenReturn(ops)
+    when(ops.getOperation(opName)).thenReturn(done)
+    when(data.listRagFiles(any(classOf[ListRagFilesRequest]))).thenReturn(page)
+    when(page.iterateAll()).thenReturn(java.util.List.of(file))
+
+    client.getImportResult(handle, corpusName, sinkGcs = Some(sinkPath)).map { result =>
+      assertEquals(result.partialFailuresGcsPath, Some(sinkPath))
+    }
+  }
+
+  test("getImportResult falls back to sinkBq when the response omits the path") {
+    val data     = mockDataClient()
+    val rag      = mockRagClient()
+    val ops      = mock(classOf[OperationsClient])
+    val client   = RagClient.create[IO](config, data, rag)
+    val handle   = LroHandle(opName, LroKind.ImportFiles)
+    val bqPath   = "bq://project.dataset.table"
+    val file     = RagFile.newBuilder().setName(fileName).setDisplayName("f1.txt").build()
+    val page     = mock(classOf[VertexRagDataServiceClient.ListRagFilesPagedResponse])
+    val response = ImportRagFilesResponse
+      .newBuilder()
+      .setImportedRagFilesCount(1)
+      .setFailedRagFilesCount(0)
+      .setSkippedRagFilesCount(0)
+      .build()
+    val done     = Operation.newBuilder().setName(opName).setDone(true).setResponse(ProtoAny.pack(response)).build()
+
+    when(data.getOperationsClient).thenReturn(ops)
+    when(ops.getOperation(opName)).thenReturn(done)
+    when(data.listRagFiles(any(classOf[ListRagFilesRequest]))).thenReturn(page)
+    when(page.iterateAll()).thenReturn(java.util.List.of(file))
+
+    client.getImportResult(handle, corpusName, sinkBq = Some(bqPath)).map { result =>
+      assertEquals(result.partialFailuresBigQueryTable, Some(bqPath))
+    }
   }
 
   private def mockDataClient(): VertexRagDataServiceClient =

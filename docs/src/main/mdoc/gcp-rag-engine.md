@@ -16,7 +16,7 @@ Use Application Default Credentials and grant `roles/aiplatform.user`.
 
 ## Corpus and file management
 
-Long-running operations (`createCorpus`, `updateCorpus`, `deleteCorpus`, `importFiles`, `deleteFile`) return `StartedLro[F, A]`: a persistable `LroHandle` plus an `await` effect that completes when Vertex finishes. Poll status later with `getLro`.
+Long-running operations (`createCorpus`, `updateCorpus`, `deleteCorpus`, `importFiles`, `deleteFile`) return `StartedLro[F, A]`: a persistable `LroHandle` plus an `await` effect that completes when Vertex finishes. Poll status later with `getLro`. For an import-files LRO, resume the typed result across restarts with `getImportResult(handle, corpusName, sinkGcs = …, sinkBq = …)` — it returns `ImportResult` when done, or raises `RagClient.Error.LroRunning` / `LroFailed` while in progress or when the operation itself failed. Pass the original result-sink path as `sinkGcs` / `sinkBq` when the LRO response omits it.
 
 ```scala
 import cats.data.NonEmptyList as NEL
@@ -45,6 +45,7 @@ RagClient.resource[IO](RagClient.Config(project = "my-project", location = "us-e
                 )
     status   <- rag.getLro(importOp.handle) // uses handle.name; Running | Succeeded | Failed(message)
     imported <- importOp.await
+    // after a restart: imported <- rag.getImportResult(importOp.handle, corpus.name, sinkGcs = Some("gs://…/run-1.ndjson"))
     files    <- rag.listFiles(corpus.name)
   yield (corpus, status, imported.importedCount, imported.files, files)
 }
@@ -168,7 +169,7 @@ RagClient.resource[IO](config).evalMap(RagClient.apply[IO]).use { rag =>
 }
 ```
 
-- Spans: `constellations-rag-client-*` (including `*-start` / `*-await` for LROs, and `get-lro`), `constellations-similarity-find-closest`
+- Spans: `constellations-rag-client-*` (including `*-start` / `*-await` for LROs, `get-lro`, and `get-import-result`), `constellations-similarity-find-closest`
 - Metrics: `constellations/rag_client_operation_count`, `constellations/rag_client_error_count`, `constellations/rag_client_operation_duration`, `constellations/rag_client_operation_start_duration`, `constellations/rag_client_imported_files_count`, `constellations/rag_client_failed_import_files_count`, `constellations/similarity_find_closest_success_count`, `constellations/similarity_find_closest_error_count`, `constellations/similarity_find_closest_duration`
 
 ## Considerations

@@ -87,6 +87,12 @@ final class RagEngineTest extends FunSuite:
     def createDataSchema(corpusName: String, schema: DataSchema): F[Unit]                        = unused
     def setFileMetadata(fileName: String, entries: NEL[MetadataEntry]): F[Unit]                  = unused
     def getLro(handle: LroHandle): F[LroStatus]                                                  = unused
+    def getImportResult(
+        handle: LroHandle,
+        corpusName: String,
+        sinkGcs: Option[String] = None,
+        sinkBq: Option[String] = None
+    ): F[ImportResult] = unused
 
   private def unused[A]: F[A] = UnsupportedOperationException("RagEngine.Similarity.simple only uses retrieveContexts").raiseError
 
