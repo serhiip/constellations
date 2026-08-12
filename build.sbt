@@ -134,7 +134,8 @@ lazy val `constellations-bedrock` = (project in file("bedrock"))
 lazy val `constellations-mcp` = (project in file("mcp"))
   .settings(commonReleaseSettings)
   .settings(
-    name := "constellations-mcp",
+    name         := "constellations-mcp",
+    scalaVersion := "3.3.8",
     libraryDependencies ++= Dependencies.constellationsMcp
   )
   .dependsOn(`constellations-common`)

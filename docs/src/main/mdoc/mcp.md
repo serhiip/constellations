@@ -8,7 +8,7 @@ Constellations can expose a [`ToolDispatcher`](tool-dispatcher.md) as [Model Con
 libraryDependencies += "io.github.serhiip" %% "constellations-mcp" % "@VERSION@"
 ```
 
-This depends on **`constellations-common`** (Scala **3.3.8+** for the common JAR; the MCP module itself is built for **3.7.x**).
+This depends on **`constellations-common`**. Both common and MCP are built for **Scala 3.3.8+**.
 
 ## Quick example
 

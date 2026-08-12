@@ -27,8 +27,8 @@ libraryDependencies ++= Seq(
 
 ### Scala versions
 
-- `constellations-common` (including `ToolDispatcher`) is built with **Scala 3.3.8** (LTS) and works on 3.3.8+
-- Other modules (`core`, providers, `mcp`, …) require **Scala 3.7.x**
+- `constellations-common` and `constellations-mcp` are built with **Scala 3.3.8** (LTS) and work on 3.3.8+
+- Other modules (`core`, providers, …) require **Scala 3.7.x**
 
 ## Quick example
 

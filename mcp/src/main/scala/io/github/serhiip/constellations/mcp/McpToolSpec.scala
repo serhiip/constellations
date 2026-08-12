@@ -30,10 +30,10 @@ object McpToolSpec:
 
   final case class Config(jsonMapper: McpJsonMapper)
 
-  def apply[F[_]: Monad: Functor: Tracer: LoggerFactory](dispatcher: Dispatcher[F]): Reader[Config, F[McpToolSpec[F]]] =
+  def apply[F[_]: Monad: Tracer: LoggerFactory](dispatcher: Dispatcher[F]): Reader[Config, F[McpToolSpec[F]]] =
     core[F](dispatcher).map(_.flatMap(observed))
 
-  def core[F[_]: Applicative: Functor](dispatcher: Dispatcher[F]): Reader[Config, F[McpToolSpec[F]]] =
+  def core[F[_]: Applicative](dispatcher: Dispatcher[F]): Reader[Config, F[McpToolSpec[F]]] =
     Reader: config =>
       ToolDispatcherSpec[F](dispatcher, config).pure[F]
 
