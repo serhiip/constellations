@@ -1,5 +1,9 @@
 package io.github.serhiip.constellations.common
 
+import java.util.{Collection as JCollection, Map as JMap}
+
+import scala.jdk.CollectionConverters.*
+
 import cats.syntax.option.*
 
 final case class FunctionCall(name: String, args: Struct, callId: Option[String])
@@ -65,21 +69,26 @@ object Value:
   def list(values: Value*): Value      = Value.ListValue(values.toList)
 
   def fromAny(value: Any): Value = value match
-    case null         => Value.NullValue
-    case s: String    => Value.StringValue(s)
-    case i: Int       => Value.NumberValue(i.toDouble)
-    case l: Long      => Value.NumberValue(l.toDouble)
-    case d: Double    => Value.NumberValue(d)
-    case f: Float     => Value.NumberValue(f.toDouble)
-    case b: Boolean   => Value.BoolValue(b)
-    case m: Map[?, ?] =>
-      try
-        val stringMap = m.asInstanceOf[Map[String, Any]]
-        Value.StructValue(Struct.fromMap(stringMap))
-      catch case _: ClassCastException => Value.StringValue(value.toString)
-    case l: List[?]   => Value.ListValue(l.map(Value.fromAny))
-    case s: Seq[?]    => Value.ListValue(s.map(Value.fromAny).toList)
-    case _            => Value.StringValue(value.toString)
+    case null                    => Value.NullValue
+    case s: String               => Value.StringValue(s)
+    case i: Int                  => Value.NumberValue(i.toDouble)
+    case l: Long                 => Value.NumberValue(l.toDouble)
+    case d: Double               => Value.NumberValue(d)
+    case f: Float                => Value.NumberValue(f.toDouble)
+    case b: Boolean              => Value.BoolValue(b)
+    case m: collection.Map[?, ?] => mapToStruct(m, value)
+    case s: collection.Seq[?]    => Value.ListValue(s.toList.map(Value.fromAny))
+    case s: collection.Set[?]    => Value.ListValue(s.toList.map(Value.fromAny))
+    case m: JMap[?, ?]           => mapToStruct(m.asScala, value)
+    case c: JCollection[?]       => Value.ListValue(c.asScala.toList.map(Value.fromAny))
+    case a: Array[?]             => Value.ListValue(a.toList.map(Value.fromAny))
+    case _                       => Value.StringValue(value.toString)
+
+  private def mapToStruct(m: collection.Map[?, ?], original: Any): Value =
+    try
+      val stringMap = m.asInstanceOf[collection.Map[String, Any]].toMap
+      Value.StructValue(Struct.fromMap(stringMap))
+    catch case _: ClassCastException => Value.StringValue(original.toString)
 
 enum SchemaType:
   case TypeUnspecified, String, Number, Integer, Boolean, Array, Object
