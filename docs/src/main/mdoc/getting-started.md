@@ -58,7 +58,7 @@ val dispatcher: ToolDispatcher[IO] =
 import cats.effect.unsafe.implicits.global
 
 val call = FunctionCall(
-  name = "Calculator_add",
+  name = "calculator_add",
   args = Struct(Map(
     "a" -> Value.number(5),
     "b" -> Value.number(3)

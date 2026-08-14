@@ -3,6 +3,7 @@ package io.github.serhiip.constellations.schema
 import scala.quoted.*
 
 import io.github.serhiip.constellations.common.{Schema, llmHint}
+import io.github.serhiip.constellations.naming.Configuration
 
 object SchemaMacros:
   final case class Hint(
@@ -25,6 +26,9 @@ object SchemaMacros:
   )
 
   def deriveImpl[A: Type](using Quotes): Expr[Schema] =
+    deriveWithImpl[A]('{ Configuration.default })
+
+  def deriveWithImpl[A: Type](config: Expr[Configuration])(using Quotes): Expr[Schema] =
     import quotes.reflect.*
 
     def readHint(sym: Symbol): Option[Expr[Hint]] =
@@ -88,27 +92,23 @@ object SchemaMacros:
       normalizeDocstring(docstring).fold(schemaExpr)(doc => '{ $schemaExpr.copy(description = Some(${ Expr(doc) })) })
 
     def getCaseClassFields(tpe: TypeRepr): List[(String, TypeRepr, Boolean, Option[Expr[Hint]], Option[String])] =
-      val paramsByName   =
+      val params =
         tpe.typeSymbol.primaryConstructor.paramSymss.flatten
           .filterNot(_.isTypeParam)
-          .map(param => param.name -> param)
-          .toMap
-      val defaultsByName = paramsByName.view.mapValues(_.flags.is(Flags.HasDefault)).toMap
-      tpe.typeSymbol.caseFields.map { field =>
-        val fieldName  = field.name
-        val fieldTpe   = tpe.memberType(field)
-        val isOptional = fieldTpe <:< TypeRepr.of[Option[Any]]
-        val hasDefault = defaultsByName.getOrElse(fieldName, false)
-        val paramOpt   = paramsByName.get(fieldName)
-        val hint       = paramOpt.flatMap(readHint).orElse(readHint(field))
-        val docstring  = paramOpt.flatMap(_.docstring).orElse(field.docstring)
-        (fieldName, fieldTpe, !isOptional && !hasDefault, hint, docstring)
-      }.toList
+      params.zipWithIndex.map { case (param, idx) =>
+        val fieldName        = param.name
+        val fieldTpe         = tpe.memberType(param)
+        val isOptional       = fieldTpe <:< TypeRepr.of[Option[Any]]
+        val hasUsableDefault = DefaultValues.hasUsableDefault(tpe, idx)
+        val hint             = readHint(param)
+        val docstring        = param.docstring
+        (fieldName, fieldTpe, !isOptional && !hasUsableDefault, hint, docstring)
+      }
 
     def resolveSchema(tpe: TypeRepr, posOpt: Option[Position]): Expr[Schema] =
       tpe.asType match
         case '[t] =>
-          Expr.summon[ToSchema[t]].fold(structuralSchema(tpe, posOpt))(toSchema => '{ $toSchema.schema })
+          Expr.summon[ToSchema[t]].fold(structuralSchema(tpe, posOpt))(toSchema => '{ $toSchema.schemaWith($config) })
 
     def structuralSchema(tpe: TypeRepr, posOpt: Option[Position]): Expr[Schema] =
       val errorPos = posOpt.getOrElse(Position.ofMacroExpansion)
@@ -134,10 +134,12 @@ object SchemaMacros:
       val propertiesExprs = fields.map { case (name, fieldTpe, _, hint, docstring) =>
         val schemaExpr     = withDocstring(resolveSchema(fieldTpe, posOpt), docstring)
         val schemaWithHint = applyHint(schemaExpr, hint)
-        '{ ${ Expr(name) } -> $schemaWithHint }
+        '{ $config.transformMemberNames(${ Expr(name) }) -> $schemaWithHint }
       }
 
-      val requiredExprs  = fields.filter(_._3).map(f => Expr(f._1))
+      val requiredExprs  = fields.filter(_._3).map { case (name, _, _, _, _) =>
+        '{ $config.transformMemberNames(${ Expr(name) }) }
+      }
       val baseSchemaExpr =
         withDocstring(
           '{
@@ -152,9 +154,12 @@ object SchemaMacros:
 
     def processEnumSchema(tpe: TypeRepr): Expr[Schema] =
       val sym            = tpe.typeSymbol
-      val children       = sym.children.map(_.name)
-      val childrenExpr   = Expr(children.toList)
-      val baseSchemaExpr = withDocstring('{ Schema.string(enm = $childrenExpr) }, sym.docstring)
+      val children       = sym.children.map(_.name).toList
+      val childrenExpr   = Expr(children)
+      val baseSchemaExpr = withDocstring(
+        '{ Schema.string(enm = $childrenExpr.map($config.transformConstructorNames)) },
+        sym.docstring
+      )
       applyHint(baseSchemaExpr, readHint(sym))
 
     val pos = Some(Position.ofMacroExpansion)

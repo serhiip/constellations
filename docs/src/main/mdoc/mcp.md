@@ -39,7 +39,7 @@ Dispatcher.parallel[IO].use { dispatcher =>
 }
 ```
 
-Tool names follow the usual naming contract (`Calculator_add`). See [ToolDispatcher](tool-dispatcher.md).
+Tool names follow the usual naming contract (`calculator_add`). See [ToolDispatcher](tool-dispatcher.md).
 
 ## Complete server
 

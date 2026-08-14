@@ -1,6 +1,7 @@
 package io.github.serhiip.constellations.common
 
 import munit.FunSuite
+import io.github.serhiip.constellations.naming.Configuration
 import io.github.serhiip.constellations.schema.ToSchema
 
 class SchemaDerivationSuite extends FunSuite:
@@ -132,8 +133,8 @@ class SchemaDerivationSuite extends FunSuite:
     case object Cash                     extends PaymentMethod
     final case class Wire(bank: String)  extends PaymentMethod
 
-  private val int32Schema  = ToSchema[Int].schema
-  private val int64Schema  = ToSchema[Long].schema
+  private val int32Schema = ToSchema[Int].schema
+  private val int64Schema = ToSchema[Long].schema
 
   private val expectedAddressSchema = Schema.obj(
     description = Some("Address for a person."),
@@ -384,4 +385,36 @@ class SchemaDerivationSuite extends FunSuite:
         required = List("id", "temperature", "history")
       )
     )
+  }
+
+  test("Schema.derivedWith snakeCase renames nested members") {
+    case class Nested(zipCode: String)
+    case class Outer(firstName: String, nested: Nested, items: List[Nested])
+    val schema = Schema.derivedWith[Outer](Configuration.snakeCase)
+    assertEquals(
+      schema,
+      Schema.obj(
+        properties = Map(
+          "first_name" -> Schema.string(),
+          "nested"     -> Schema.obj(
+            properties = Map("zip_code" -> Schema.string()),
+            required = List("zip_code")
+          ),
+          "items"      -> Schema.array(
+            items = Schema.obj(
+              properties = Map("zip_code" -> Schema.string()),
+              required = List("zip_code")
+            )
+          )
+        ),
+        required = List("first_name", "nested", "items")
+      )
+    )
+  }
+
+  test("Schema.derivedWith withSnakeCaseConstructorNames renames enum values") {
+    enum Color:
+      case LightBlue, DarkRed
+    val schema = Schema.derivedWith[Color](Configuration.default.withSnakeCaseConstructorNames)
+    assertEquals(schema.enm.toSet, Set("light_blue", "dark_red"))
   }

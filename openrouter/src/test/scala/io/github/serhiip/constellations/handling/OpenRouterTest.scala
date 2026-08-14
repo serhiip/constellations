@@ -132,7 +132,7 @@ class OpenRouterTest extends FunSuite:
                   id = "call-schedule",
                   `type` = "function",
                   function = OrToolCallFunction(
-                    name = "ScheduleApi_at",
+                    name = "schedule_api_at",
                     arguments = """{"when":"2025-07-21T15:00:00+01:00","count":2,"enabled":true}"""
                   )
                 )
@@ -147,7 +147,7 @@ class OpenRouterTest extends FunSuite:
 
     val calls = handling.getFunctionCalls(response).toOption.get
     assertEquals(calls.length, 1)
-    assertEquals(calls.head.name, "ScheduleApi_at")
+    assertEquals(calls.head.name, "schedule_api_at")
     assertEquals(calls.head.callId, Some("call-schedule"))
     assertEquals(calls.head.args.fields("when"), Value.string("2025-07-21T15:00:00+01:00"))
     assertEquals(calls.head.args.fields("count"), Value.number(2.0))

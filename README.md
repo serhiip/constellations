@@ -62,7 +62,7 @@ val impl = new Calculator[IO]:
 val dispatcher = ToolDispatcher.generate[IO](impl)
 
 val call = FunctionCall(
-  name = "Calculator_add",
+  name = "calculator_add",
   args = Struct("a" -> Value.number(5), "b" -> Value.number(3))
 )
 
@@ -72,11 +72,15 @@ dispatcher.dispatch(call).flatMap {
 }
 ```
 
-### Naming
+## Naming
 
-- Tool name: `{TraitName}_{snake_case_method}` — e.g. `Calculator_add`, `WeatherService_get_weather`
-- Parameters: snake_case (`intVal` → `int_val`)
-- Trait/component names are **not** snake_cased
+ToolDispatcher uses a circe-style `Configuration` to transform component, method, member, and constructor names. The default is `Configuration.snakeCase`:
+
+- Tool name: `{snake_case_trait}_{snake_case_method}` — e.g. `calculator_add`, `weather_service_get_weather`
+- Parameters and **nested** case-class fields: snake_case (`intVal` → `int_val`, `zipCode` → `zip_code`)
+- Trait/component names are snake_cased by default
+
+Override with `ToolDispatcher.generate[IO](impl)(using Configuration.default)` or an ambient `given Configuration`.
 
 ### Observability
 

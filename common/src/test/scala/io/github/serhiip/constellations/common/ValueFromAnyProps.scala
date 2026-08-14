@@ -96,9 +96,11 @@ class ValueFromAnyProps extends ScalaCheckSuite:
     yield (raw, Value.ListValue(unique.map(_._2)))
 
   private def distinctByValue(items: List[(Any, Value)]): List[(Any, Value)] =
-    items.foldLeft(List.empty[(Any, Value)]) { (acc, item) =>
-      if acc.exists { case (_, value) => valuesEqual(value, item._2) } then acc else acc :+ item
-    }
+    items
+      .foldLeft(List.empty[(Any, Value)]) { (acc, item) =>
+        if acc.exists { case (_, value) => valuesEqual(value, item._2) } then acc else item :: acc
+      }
+      .reverse
 
   private def genObject(size: Int): Gen[(Any, Value)] =
     for

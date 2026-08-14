@@ -4,10 +4,10 @@ Constellations splits into a **common** foundation (tools and types) and **core*
 
 ## Common vs core
 
-| Layer | Module | What you get |
-|-------|--------|----------------|
+| Layer      | Module                  | What you get                                                                 |
+| ---------- | ----------------------- | ---------------------------------------------------------------------------- |
 | **Common** | `constellations-common` | `ToolDispatcher`, `Value` / `Struct` / `Schema`, encoders/decoders, messages |
-| **Core** | `constellations-core` | `Executor`, `Memory`, `Invoker`, `Handling`, `Similarity` |
+| **Core**   | `constellations-core`   | `Executor`, `Memory`, `Invoker`, `Handling`, `Similarity`                    |
 
 Start with [ToolDispatcher](tool-dispatcher.md) if you only need to expose Scala methods as LLM tools. Add core when you want a multi-step conversation loop with memory.
 
@@ -50,7 +50,7 @@ val program: IO[Unit] =
 
 ## Schema generation
 
-Traits used with `ToolDispatcher.generate` get JSON schemas and declarations from method signatures and docstrings. Parameter type schemas are built through the shared `ToSchema` / `SchemaMacros` path (same as standalone `Schema.derived`), so `@llmHint`, field docstrings, and custom `given ToSchema[...]` instances apply — see [Values & schemas](value-and-types.md).
+Traits used with `ToolDispatcher.generate` get JSON schemas and declarations from method signatures and docstrings. Parameter type schemas are built through `ToSchema.schemaWith(config)` (same derivation path as standalone `Schema.derived`, with the dispatcher's `Configuration` applied to member names), so `@llmHint`, field docstrings, and custom `given ToSchema[...]` instances apply — see [Values & schemas](value-and-types.md).
 
 ## Learn more
 

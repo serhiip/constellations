@@ -29,7 +29,7 @@ val system = Message.System("You are a helpful assistant.")
 
 ```scala mdoc:silent
 val call = FunctionCall(
-  name = "Calculator_add",
+  name = "calculator_add",
   args = Struct(Map("a" -> Value.number(2), "b" -> Value.number(2))),
   callId = Some("call_1")
 )
@@ -45,7 +45,7 @@ val response = FunctionResponse(
 val toolResult = Message.ToolResult(response)
 
 val declaration = FunctionDeclaration(
-  name = "Calculator_add",
+  name = "calculator_add",
   description = Some("Adds two integers together"),
   parameters = Some(
     Schema.obj(

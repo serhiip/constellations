@@ -16,7 +16,7 @@ import org.typelevel.otel4s.trace.Tracer
 import io.github.serhiip.constellations.common.*
 import io.github.serhiip.constellations.common.Observability.*
 import io.github.serhiip.constellations.dispatcher.*
-import io.github.serhiip.constellations.dispatcher.naming.SnakeCaseNamingStrategy.*
+import io.github.serhiip.constellations.naming.Configuration
 import io.github.serhiip.constellations.schema.ToSchema
 
 trait ToolDispatcher[F[_]]:
@@ -129,19 +129,27 @@ object ToolDispatcher:
 
       def getFunctionDeclarations: F[List[FunctionDeclaration]] = declarations.pure[F]
 
-  inline def to[F[_], T[_[_]]]: T[F] => ToolDispatcher[F] = ${ macroImplTo[F, T] }
+  inline def to[F[_], T[_[_]]](using config: Configuration = Configuration.snakeCase): T[F] => ToolDispatcher[F] =
+    ${ macroImplTo[F, T]('config) }
 
-  inline def generate[F[_]](inline component: Any, inline optionalOtherComponents: Any*): ToolDispatcher[F] =
-    ${ macroImpl[F]('component, 'optionalOtherComponents) }
+  inline def generate[F[_]](
+      inline component: Any,
+      inline optionalOtherComponents: Any*
+  )(using config: Configuration = Configuration.snakeCase): ToolDispatcher[F] =
+    ${ macroImpl[F]('component, 'optionalOtherComponents, 'config) }
 
-  private def macroImplTo[F[_]: Type, T[F[_]]: Type](using quotes: Quotes): Expr[T[F] => ToolDispatcher[F]] =
-    MacroSupport.buildFromTrait[F, T]
+  private def macroImplTo[F[_]: Type, T[F[_]]: Type](config: Expr[Configuration])(using quotes: Quotes): Expr[T[F] => ToolDispatcher[F]] =
+    MacroSupport.buildFromTrait[F, T](config)
 
-  private def macroImpl[F[_]: Type](componentExpr: Expr[Any], optionalExpr: Expr[Seq[Any]])(using quotes: Quotes): Expr[ToolDispatcher[F]] =
-    MacroSupport.buildFromComponents[F](componentExpr, optionalExpr)
+  private def macroImpl[F[_]: Type](
+      componentExpr: Expr[Any],
+      optionalExpr: Expr[Seq[Any]],
+      config: Expr[Configuration]
+  )(using quotes: Quotes): Expr[ToolDispatcher[F]] =
+    MacroSupport.buildFromComponents[F](componentExpr, optionalExpr, config)
 
   private object MacroSupport:
-    def buildFromTrait[F[_]: Type, T[F[_]]: Type](using Quotes): Expr[T[F] => ToolDispatcher[F]] =
+    def buildFromTrait[F[_]: Type, T[F[_]]: Type](config: Expr[Configuration])(using Quotes): Expr[T[F] => ToolDispatcher[F]] =
       import quotes.reflect.*
       val traitSym = TypeRepr.of[T].typeSymbol
       if !traitSym.flags.is(Flags.Trait) then report.errorAndAbort(s"${traitSym.fullName} is not a trait.", Position.ofMacroExpansion)
@@ -156,26 +164,30 @@ object ToolDispatcher:
             case Some(term: Term) => term
             case Some(other)      => report.errorAndAbort(s"Expected a term parameter, got: ${other.show}", other.pos)
             case None             => report.errorAndAbort("Expected a single parameter for dispatcher lambda.", Position.ofMacroExpansion)
-          buildDispatcherExpr[F](List((instanceTerm, traitSym))).asTerm.changeOwner(owner)
+          buildDispatcherExpr[F](List((instanceTerm, traitSym)), config).asTerm.changeOwner(owner)
       )
 
       lambda.asExprOf[T[F] => ToolDispatcher[F]]
 
-    def buildFromComponents[F[_]: Type](componentExpr: Expr[Any], optionalExpr: Expr[Seq[Any]])(using Quotes): Expr[ToolDispatcher[F]] =
+    def buildFromComponents[F[_]: Type](
+        componentExpr: Expr[Any],
+        optionalExpr: Expr[Seq[Any]],
+        config: Expr[Configuration]
+    )(using Quotes): Expr[ToolDispatcher[F]] =
       import quotes.reflect.*
       optionalExpr match
         case Varargs(args) =>
           val components    = componentExpr.asTerm :: args.toList.map(_.asTerm)
           val componentInfo = components.map(term => (term, resolveComponentTrait[F](term.tpe, term.pos)))
-          buildDispatcherExpr[F](componentInfo)
+          buildDispatcherExpr[F](componentInfo, config)
         case _             =>
-          buildFromComponentAndCollection[F](componentExpr, optionalExpr)
+          buildFromComponentAndCollection[F](componentExpr, optionalExpr, config)
 
-    /** Handles the spread form `generate(component, collection*)` where the elements are only known at runtime
-      */
-    def buildFromComponentAndCollection[F[_]: Type](componentExpr: Expr[Any], optionalExpr: Expr[Seq[Any]])(using
-        Quotes
-    ): Expr[ToolDispatcher[F]] =
+    def buildFromComponentAndCollection[F[_]: Type](
+        componentExpr: Expr[Any],
+        optionalExpr: Expr[Seq[Any]],
+        config: Expr[Configuration]
+    )(using Quotes): Expr[ToolDispatcher[F]] =
       import quotes.reflect.*
       val mandatoryTerm  = componentExpr.asTerm
       val mandatoryTrait = resolveComponentTrait[F](mandatoryTerm.tpe, mandatoryTerm.pos)
@@ -198,9 +210,9 @@ object ToolDispatcher:
 
       val monadThrow     =
         Expr.summon[MonadThrow[F]].getOrElse(report.errorAndAbort("No cats.MonadThrow given found for F", Position.ofMacroExpansion))
-      val baseDispatcher = buildDispatcherExpr[F](List((mandatoryTerm, mandatoryTrait)))
-      val baseDecls      = getMethodDeclarations(mandatoryTrait)
-      val elemDecls      = getMethodDeclarations(elementTrait)
+      val baseDispatcher = buildDispatcherExpr[F](List((mandatoryTerm, mandatoryTrait)), config)
+      val baseDecls      = getMethodDeclarations(mandatoryTrait, config)
+      val elemDecls      = getMethodDeclarations(elementTrait, config)
 
       elementType.asType match
         case '[e] =>
@@ -214,7 +226,7 @@ object ToolDispatcher:
                 case Some(term: Term) => term
                 case Some(other)      => report.errorAndAbort(s"Expected a term parameter, got: ${other.show}", other.pos)
                 case None             => report.errorAndAbort("Expected a single parameter for dispatcher lambda.", Position.ofMacroExpansion)
-              buildDispatcherExpr[F](List((instanceTerm, elementTrait))).asTerm.changeOwner(owner)
+              buildDispatcherExpr[F](List((instanceTerm, elementTrait)), config).asTerm.changeOwner(owner)
           ).asExprOf[e => ToolDispatcher[F]]
           '{
             given MonadThrow[F] = $monadThrow
@@ -226,13 +238,14 @@ object ToolDispatcher:
             ToolDispatcher.combineOwned[F](owned)
           }
 
-    def processMethodForDeclaration(using Quotes)(traitSym: quotes.reflect.Symbol)(
-        method: quotes.reflect.Symbol
-    ): Expr[FunctionDeclaration] =
+    def processMethodForDeclaration(using Quotes)(
+        traitSym: quotes.reflect.Symbol,
+        config: Expr[Configuration]
+    )(method: quotes.reflect.Symbol): Expr[FunctionDeclaration] =
       import quotes.reflect.*
-      val convertedMethodName = methodName(method.name)
-      val qualifiedName       = s"${componentName(traitSym.name)}_$convertedMethodName"
-      val docstring           = method.docstring
+      val traitName  = Expr(traitSym.name)
+      val methodName = Expr(method.name)
+      val docstring  = method.docstring
 
       def paramType(param: Symbol): TypeRepr =
         param.tree match
@@ -245,20 +258,20 @@ object ToolDispatcher:
         if params.isEmpty then '{ None }
         else
           val propertiesExprs = params.map { param =>
-            val paramName       = parameterName(param.name)
+            val scalaName       = Expr(param.name)
             val paramTpe        = paramType(param)
             val paramSchemaExpr = paramTpe.asType match
-              case '[t] => '{ summonInline[ToSchema[t]].schema }
+              case '[t] => '{ summonInline[ToSchema[t]].schemaWith($config) }
             val doc             = param.docstring
             val schemaWithDesc  = doc match
               case Some(d) => '{ $paramSchemaExpr.copy(description = Some(${ Expr(d) })) }
               case None    => paramSchemaExpr
-            '{ ${ Expr(paramName) } -> $schemaWithDesc }
+            '{ $config.transformMemberNames($scalaName) -> $schemaWithDesc }
           }
 
           val requiredExprs = params
             .filterNot(param => paramType(param) <:< TypeRepr.of[Option[Any]])
-            .map(p => Expr(parameterName(p.name)))
+            .map(p => '{ $config.transformMemberNames(${ Expr(p.name) }) })
 
           '{
             Some(
@@ -271,13 +284,16 @@ object ToolDispatcher:
 
       '{
         FunctionDeclaration(
-          name = ${ Expr(qualifiedName) },
+          name = s"${$config.transformComponentNames($traitName)}_${$config.transformMethodNames($methodName)}",
           description = ${ Expr(docstring) },
           parameters = $parametersSchemaExpr
         )
       }
 
-    def getMethodDeclarations(using Quotes)(traitSym: quotes.reflect.Symbol): Expr[List[FunctionDeclaration]] =
+    def getMethodDeclarations(using Quotes)(
+        traitSym: quotes.reflect.Symbol,
+        config: Expr[Configuration]
+    ): Expr[List[FunctionDeclaration]] =
       import quotes.reflect.*
       val methods = traitSym.declarations.filter(m =>
         m.isDefDef && !m.flags.is(Flags.Private) && !m.flags.is(Flags.Protected) && !m.flags.is(
@@ -287,14 +303,18 @@ object ToolDispatcher:
             Flags.CaseAccessor
           ) && !m.flags.is(Flags.StableRealizable)
       )
-      Expr.ofList(methods.map(processMethodForDeclaration(traitSym)))
+      Expr.ofList(methods.map(processMethodForDeclaration(traitSym, config)))
 
     def processMethodForDispatch[F[_]: Type](using Quotes)(
         repr: quotes.reflect.TypeRepr,
-        from: quotes.reflect.Term
-    )(method: quotes.reflect.Symbol): (String, Expr[FunctionCall => ValidatedNec[AgentError, F[ToolDispatcher.Result]]]) =
+        from: quotes.reflect.Term,
+        config: Expr[Configuration]
+    )(method: quotes.reflect.Symbol): (Expr[String], Expr[FunctionCall => ValidatedNec[AgentError, F[ToolDispatcher.Result]]]) =
       import quotes.reflect.*
-      val qualifiedName: String              = s"${componentName(repr.typeSymbol.name)}_${methodName(method.name)}"
+      val traitNameExpr                      = Expr(repr.typeSymbol.name)
+      val methodNameExpr                     = Expr(method.name)
+      val qualifiedName                      =
+        '{ s"${$config.transformComponentNames($traitNameExpr)}_${$config.transformMethodNames($methodNameExpr)}" }
       def paramType(param: Symbol): TypeRepr =
         param.tree match
           case valDef: ValDef => valDef.tpt.tpe
@@ -314,13 +334,14 @@ object ToolDispatcher:
                         s"No Decoder[Value, ${paramType(param).show}] found for parameter '${param.name}' in '${method.fullName}'"
                       )
                     )
-                val paramName = Expr(parameterName(param.name))
+                val scalaName = Expr(param.name)
                 '{
-                  call.args.fields.get($paramName) match
-                    case Some(value) => $decoder.decode(value, $paramName)
+                  val paramName = $config.transformMemberNames($scalaName)
+                  call.args.fields.get(paramName) match
+                    case Some(value) => $decoder.decode(value, paramName, $config)
                     case None        =>
                       if ${ Expr(paramType(param) <:< TypeRepr.of[Option[Any]]) } then Valid(None)
-                      else Invalid(NonEmptyChain(Decoder.Error.MissingField($paramName)))
+                      else Invalid(NonEmptyChain(Decoder.Error.MissingField(paramName)))
                 }
               case _    =>
                 report.errorAndAbort(
@@ -357,7 +378,7 @@ object ToolDispatcher:
                             .getOrElse(report.errorAndAbort("No cats.Functor given found for F", Position.ofMacroExpansion))
                         val encoder = '{ scala.compiletime.summonInline[ResultEncoder[t]] }
                         '{
-                          $functor.map(${ applied.asExprOf[F[t]] })(value => $encoder.encode(call, value))
+                          $functor.map(${ applied.asExprOf[F[t]] })(value => $encoder.encode(call, value, $config))
                         }
                       case _    =>
                         report.errorAndAbort(
@@ -382,7 +403,8 @@ object ToolDispatcher:
 
     def processMethodsForDispatch[F[_]: Type](using Quotes)(
         symbol: quotes.reflect.Symbol,
-        term: quotes.reflect.Term
+        term: quotes.reflect.Term,
+        config: Expr[Configuration]
     ) =
       import quotes.reflect.*
       val methods = symbol.declarations.filter(m =>
@@ -394,7 +416,7 @@ object ToolDispatcher:
           ) && !m.flags.is(Flags.StableRealizable)
       )
       if methods.isEmpty then report.warning(s"Component ${symbol.fullName} has no public methods to route.", term.pos)
-      methods.map(processMethodForDispatch[F](symbol.typeRef.dealias, term))
+      methods.map(processMethodForDispatch[F](symbol.typeRef.dealias, term, config))
 
     def hasEffectType[F[_]: Type](using Quotes)(tpe: quotes.reflect.TypeRepr): Boolean =
       import quotes.reflect.*
@@ -428,16 +450,17 @@ object ToolDispatcher:
           )
 
     def buildDispatcherExpr[F[_]: Type](using Quotes)(
-        componentInfo: List[(quotes.reflect.Term, quotes.reflect.Symbol)]
+        componentInfo: List[(quotes.reflect.Term, quotes.reflect.Symbol)],
+        config: Expr[Configuration]
     ): Expr[ToolDispatcher[F]] =
       import quotes.reflect.*
       val functionDeclarationsExpr =
         componentInfo
-          .map { case (_, traitSym) => getMethodDeclarations(traitSym) }
+          .map { case (_, traitSym) => getMethodDeclarations(traitSym, config) }
           .reduceLeftOption((left, right) => '{ $left ++ $right })
           .getOrElse('{ List.empty[FunctionDeclaration] })
 
-      val callables  = componentInfo.flatMap { case (term, traitSym) => processMethodsForDispatch[F](traitSym, term) }
+      val callables  = componentInfo.flatMap { case (term, traitSym) => processMethodsForDispatch[F](traitSym, term, config) }
       val monadThrow =
         Expr.summon[MonadThrow[F]].getOrElse(report.errorAndAbort("No cats.MonadThrow given found for F", Position.ofMacroExpansion))
       val app        =
@@ -447,8 +470,10 @@ object ToolDispatcher:
         new ToolDispatcher[F]:
           given Applicative[F] = $app
 
+          private val declarations: List[FunctionDeclaration] = $functionDeclarationsExpr
+
           private val preparers: Map[String, FunctionCall => ValidatedNec[AgentError, F[ToolDispatcher.Result]]] = Map(
-            ${ Expr.ofList(callables.map { case (k, v) => '{ ${ Expr(k) } -> ${ v } } }) }*
+            ${ Expr.ofList(callables.map { case (k, v) => '{ $k -> $v } }) }*
           )
 
           def prepare(call: FunctionCall): ValidatedNec[AgentError, F[ToolDispatcher.Result]] =
@@ -460,7 +485,7 @@ object ToolDispatcher:
           def dispatchAll(calls: List[FunctionCall]): F[ValidatedNec[AgentError, List[ToolDispatcher.Result]]] =
             calls.traverse(prepare).fold(_.invalid.pure, _.sequence.map(Valid.apply))
 
-          def getFunctionDeclarations: F[List[FunctionDeclaration]] = $app.pure($functionDeclarationsExpr)
+          def getFunctionDeclarations: F[List[FunctionDeclaration]] = $app.pure(declarations)
       }
 
   def mapK[F[_], G[_]](dispatcher: ToolDispatcher[F])(f: F ~> G): ToolDispatcher[G] = new ToolDispatcher[G]:

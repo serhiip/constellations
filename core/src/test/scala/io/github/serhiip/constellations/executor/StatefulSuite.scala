@@ -82,7 +82,7 @@ class StatefulSuite extends CatsEffectSuite:
   private def alwaysFailingDispatcher(mkError: FunctionCall => AgentError): ToolDispatcher[IO] =
     dispatcherFromPrepare(call => mkError(call).invalidNec)
 
-  private val toolCall = FunctionCall("ScheduleApi_at", Struct("when" -> Value.string("bad")), None)
+  private val toolCall = FunctionCall("schedule_api_at", Struct("when" -> Value.string("bad")), None)
 
   test("retries AgentError and succeeds when the model corrects arguments") {
     for
@@ -136,14 +136,14 @@ class StatefulSuite extends CatsEffectSuite:
     yield result match
       case Left(Stateful.Failure.AgentRetriesExhausted(errors)) =>
         errors.head match
-          case err: AgentError.ArgumentDecodingFailed => assertEquals(err.call.name, "ScheduleApi_at")
+          case err: AgentError.ArgumentDecodingFailed => assertEquals(err.call.name, "schedule_api_at")
           case other                                  => fail(s"Unexpected error: $other")
       case other => fail(s"Expected AgentRetriesExhausted, got $other")
   }
 
   test("resets agent error retry counter after a successful function call") {
-    val badCall  = FunctionCall("ScheduleApi_at", Struct("when" -> Value.string("bad")), "call-bad".some)
-    val goodCall = FunctionCall("ScheduleApi_at", Struct("when" -> Value.string("ok")), "call-ok".some)
+    val badCall  = FunctionCall("schedule_api_at", Struct("when" -> Value.string("bad")), "call-bad".some)
+    val goodCall = FunctionCall("schedule_api_at", Struct("when" -> Value.string("ok")), "call-ok".some)
     val dispatcher = dispatcherFromPrepare {
       case call if call.args.fields.get("when").contains(Value.string("bad")) =>
         AgentError
@@ -187,7 +187,7 @@ class StatefulSuite extends CatsEffectSuite:
   }
 
   test("dispatchAll executes effects when every call is Valid") {
-    val call     = FunctionCall("GreetingApi_greet", Struct("name" -> Value.string("Ada")))
+    val call     = FunctionCall("greeting_api_greet", Struct("name" -> Value.string("Ada")))
     val executed = AtomicInteger(0)
     val dispatcher = dispatcherFromPrepare { c =>
       (IO.delay(executed.incrementAndGet()) *>
@@ -220,7 +220,7 @@ class StatefulSuite extends CatsEffectSuite:
   }
 
   test("dispatchAll reports AgentError without executing when prepare is Invalid") {
-    val call       = FunctionCall("ScheduleApi_at", Struct("when" -> Value.string("bad")))
+    val call       = FunctionCall("schedule_api_at", Struct("when" -> Value.string("bad")))
     val dispatcher = dispatcherFromPrepare { c =>
       AgentError
         .ArgumentDecodingFailed(
@@ -254,8 +254,8 @@ class StatefulSuite extends CatsEffectSuite:
   }
 
   test("invalid batch does not execute valid sibling calls and reports skipped plus errors") {
-    val okCall     = FunctionCall("GreetingApi_greet", Struct("name" -> Value.string("Ada")), "call-ok".some)
-    val badCall    = FunctionCall("ScheduleApi_at", Struct("when" -> Value.string("bad")), "call-bad".some)
+    val okCall     = FunctionCall("greeting_api_greet", Struct("name" -> Value.string("Ada")), "call-ok".some)
+    val badCall    = FunctionCall("schedule_api_at", Struct("when" -> Value.string("bad")), "call-bad".some)
     val executed   = AtomicInteger(0)
     val dispatcher = dispatcherFromPrepare {
       case call if call.name == okCall.name =>
@@ -322,8 +322,8 @@ class StatefulSuite extends CatsEffectSuite:
   }
 
   test("matches batch AgentErrors by callId when the same function appears twice") {
-    val badA       = FunctionCall("ScheduleApi_at", Struct("when" -> Value.string("bad-a")), "call-a".some)
-    val badB       = FunctionCall("ScheduleApi_at", Struct("when" -> Value.string("bad-b")), "call-b".some)
+    val badA       = FunctionCall("schedule_api_at", Struct("when" -> Value.string("bad-a")), "call-a".some)
+    val badB       = FunctionCall("schedule_api_at", Struct("when" -> Value.string("bad-b")), "call-b".some)
     val dispatcher = dispatcherFromPrepare { call =>
       AgentError
         .ArgumentDecodingFailed(

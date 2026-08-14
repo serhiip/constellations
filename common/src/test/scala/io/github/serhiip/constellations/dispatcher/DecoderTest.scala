@@ -5,6 +5,7 @@ import java.util.UUID
 
 import cats.data.Validated.{Invalid, Valid}
 import cats.data.ValidatedNec
+import cats.syntax.show.*
 import io.github.serhiip.constellations.common.{Value, Struct}
 import munit.FunSuite
 
@@ -14,6 +15,7 @@ class DecoderTest extends FunSuite:
   case class Person(name: String, age: Int, active: Boolean)
   case class Address(street: String, city: String, zipCode: String)
   case class User(id: String, person: Person, address: Option[Address], tags: List[String])
+  case class WithDefaults(label: String, count: Int = 1, note: Option[String] = None)
 
   enum Shape:
     case Circle(radius: Double)
@@ -338,6 +340,7 @@ class DecoderTest extends FunSuite:
       case Invalid(errors) =>
         assertEquals(errors.length, 1L)
         assert(errors.head.isInstanceOf[Decoder.Error.MissingDiscriminator])
+        assertEquals(errors.head.show, "Error at path 'shape._type': Sum type discriminator field '_type' is missing.")
       case _               => fail("Expected Invalid result")
   }
 
@@ -381,4 +384,76 @@ class DecoderTest extends FunSuite:
         assertEquals(errors.length, 1L)
         assert(errors.head.isInstanceOf[Decoder.Error.WrongType])
       case _               => fail("Expected Invalid result")
+  }
+
+  test("omitted nested Option field decodes as None") {
+    val personStruct = Struct(
+      Map(
+        "name"   -> Value.StringValue("John"),
+        "age"    -> Value.NumberValue(30),
+        "active" -> Value.BoolValue(true)
+      )
+    )
+    val userStruct   = Struct(
+      Map(
+        "id"     -> Value.StringValue("user123"),
+        "person" -> Value.StructValue(personStruct),
+        "tags"   -> Value.ListValue(List.empty)
+      )
+    )
+    val result       = Decoder[Struct, User].decode(userStruct, "user")
+    assertEquals(result, Valid(User("user123", Person("John", 30, true), None, List.empty)))
+  }
+
+  test("omitted defaulted field uses the case-class default") {
+    val result = Decoder[Struct, WithDefaults].decode(Struct(Map("label" -> Value.StringValue("x"))), "root")
+    assertEquals(result, Valid(WithDefaults("x", 1, None)))
+  }
+
+  test("present value overrides the case-class default") {
+    val result = Decoder[Struct, WithDefaults].decode(
+      Struct(
+        Map(
+          "label" -> Value.StringValue("x"),
+          "count" -> Value.NumberValue(9),
+          "note"  -> Value.StringValue("hi")
+        )
+      ),
+      "root"
+    )
+    assertEquals(result, Valid(WithDefaults("x", 9, Some("hi"))))
+  }
+
+  test("snake_case configuration renames nested member keys") {
+    import io.github.serhiip.constellations.naming.Configuration
+    val address =
+      Struct(Map("street" -> Value.StringValue("Main"), "city" -> Value.StringValue("Town"), "zip_code" -> Value.StringValue("1")))
+    val result  = Decoder[Struct, Address].decode(address, "address", Configuration.snakeCase)
+    assertEquals(result, Valid(Address("Main", "Town", "1")))
+  }
+
+  test("custom discriminator field name is honored") {
+    import io.github.serhiip.constellations.naming.Configuration
+    val cfg    = Configuration.default.withDiscriminator("kind")
+    val circle = Struct(Map("kind" -> Value.StringValue("Circle"), "radius" -> Value.NumberValue(2.0)))
+    val result = Decoder[Struct, Shape].decode(circle, "shape", cfg)
+    assertEquals(result, Valid(Shape.Circle(2.0)))
+  }
+
+  test("missing custom discriminator names the field in the error") {
+    import io.github.serhiip.constellations.naming.Configuration
+    val cfg    = Configuration.default.withDiscriminator("kind")
+    val result = Decoder[Struct, Shape].decode(Struct(Map("radius" -> Value.NumberValue(2.0))), "shape", cfg)
+    result match
+      case Invalid(errors) => assertEquals(errors.head.show, "Error at path 'shape.kind': Sum type discriminator field 'kind' is missing.")
+      case _               => fail("Expected Invalid result")
+  }
+
+  test("schema required and decoder agree for optional and defaulted fields") {
+    import io.github.serhiip.constellations.common.Schema
+    case class C(a: String, b: Int = 1, c: Option[String])
+    val schema  = Schema.derived[C]
+    assertEquals(schema.required, List("a"))
+    val decoded = Decoder[Struct, C].decode(Struct(Map("a" -> Value.StringValue("x"))), "root")
+    assertEquals(decoded, Valid(C("x", 1, None)))
   }

@@ -94,10 +94,13 @@ Overrides metadata and constraints on fields (description, min/max, pattern, enu
 
 | Feature                     | ToolDispatcher param schemas                                  | `Schema.derived` / `ToSchema`                |
 | --------------------------- | ------------------------------------------------------------- | -------------------------------------------- |
-| Type → schema               | Via `ToSchema` (`summonInline`)                               | Explicit `Schema.derived[A]` / `ToSchema[A]` |
+| Type → schema               | Via `ToSchema.schemaWith(config)`                             | Explicit `Schema.derived[A]` / `ToSchema[A]` |
+| Member naming               | `Configuration.transformMemberNames` at every nesting level   | Identity (`Configuration.default`)           |
 | Nested descriptions         | `@llmHint` + type-level docstrings                            | `@llmHint` + type-level docstrings           |
 | Method / param descriptions | Method / parameter **docstrings** (declaration surface)       | N/A                                          |
 | Extensibility               | User `given ToSchema[Custom]` (e.g. `ToSchema.instance(...)`) | Same                                         |
+
+Custom `ToSchema.instance(schema)` instances keep their own property names; use `ToSchema.instance(config => …)` when the custom schema should honor naming. `Schema.derivedWith[A](config)` applies a non-default configuration outside ToolDispatcher.
 
 ## Related
 

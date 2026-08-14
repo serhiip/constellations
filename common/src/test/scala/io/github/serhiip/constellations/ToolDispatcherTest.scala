@@ -12,9 +12,9 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.github.serhiip.constellations.common.*
 import io.github.serhiip.constellations.dispatcher.{Decoder, ValueEncoder}
+import io.github.serhiip.constellations.naming.Configuration
 import io.github.serhiip.constellations.schema.ToSchema
 import munit.CatsEffectSuite
-
 
 final case class Ping(value: String) derives ValueEncoder
 
@@ -39,13 +39,28 @@ final case class CustomId(value: String)
 object CustomId:
   given ToSchema[CustomId] = ToSchema.instance(Schema.string(format = Some("uuid"), description = Some("custom id")))
   given Decoder[Value, CustomId] with
-    def decode(value: Value, path: String): ValidatedNec[Decoder.Error, CustomId] =
+    def decode(
+        value: Value,
+        path: String = "root",
+        config: Configuration = Configuration.default
+    ): ValidatedNec[Decoder.Error, CustomId] =
       value match
         case Value.StringValue(s) => CustomId(s).validNec
         case other                => Decoder.Error.WrongType(path, "String", other.getClass.getSimpleName).invalidNec
 
 trait CustomIdApi[F[_]]:
   def lookup(id: CustomId): F[String]
+
+final case class NestedAddress(streetName: String, zipCode: String)
+final case class UserProfile(firstName: String, addresses: List[NestedAddress], nickname: Option[String] = None)
+
+trait NestedNamingApi[F[_]]:
+  def saveProfile(userId: String, profile: UserProfile): F[String]
+
+trait DefaultedPayloadApi[F[_]]:
+  def submit(payload: DefaultedPayload): F[String]
+
+final case class DefaultedPayload(label: String, count: Int = 1, note: Option[String] = None)
 
 trait TestApi[F[_]]:
   def mixedTypes(intVal: Int, strVal: String, boolVal: Boolean): F[String]
@@ -117,8 +132,7 @@ class ToolDispatcherTest extends CatsEffectSuite:
         )
       )
     case l: List[?]   =>
-      // Safe to cast since we know it's List[String] from our test context
-      Value.list(l.asInstanceOf[List[String]].map(Value.string))
+      Value.list(l.map(convertValue).toList)
     case m: Map[?, ?] =>
       // Convert Map to Struct by converting all values
       val structFields = m.asInstanceOf[Map[String, Any]].map { case (k, v) => k -> convertValue(v) }
@@ -147,17 +161,17 @@ class ToolDispatcherTest extends CatsEffectSuite:
   val multiDispatcher = ToolDispatcher.generate[IO](impl, greeting)
 
   test("dispatcher should successfully call a method with various parameter types") {
-    val call = createFunctionCall("TestApi_mixed_types", Map("int_val" -> 42, "str_val" -> "test", "bool_val" -> true))
+    val call = createFunctionCall("test_api_mixed_types", Map("int_val" -> 42, "str_val" -> "test", "bool_val" -> true))
     dispatcher.dispatch(call).map(response => assertEquals(extractString(response), "int=42, str=test, bool=true"))
   }
 
   test("dispatcher should successfully call a method with no parameters") {
-    val call = createFunctionCall("TestApi_no_params")
+    val call = createFunctionCall("test_api_no_params")
     dispatcher.dispatch(call).map(response => assertEquals(extractString(response), "no params"))
   }
 
   test("dispatcher should keep FunctionCall on successful FunctionResponse") {
-    val call = FunctionCall("TestApi_no_params", Struct.empty, "call-42".some)
+    val call = FunctionCall("test_api_no_params", Struct.empty, "call-42".some)
     dispatcher.dispatch(call).map {
       case ToolDispatcher.Result.Response(result) =>
         assertEquals(result.call, call)
@@ -169,7 +183,7 @@ class ToolDispatcherTest extends CatsEffectSuite:
 
   test("dispatcher should attach callId to ArgumentDecodingFailed") {
     val call = FunctionCall(
-      "TestApi_mixed_types",
+      "test_api_mixed_types",
       Struct("str_val" -> Value.string("test"), "bool_val" -> Value.bool(true)),
       "call-err".some
     )
@@ -181,18 +195,18 @@ class ToolDispatcherTest extends CatsEffectSuite:
   }
 
   test("dispatcher should handle an optional parameter when it's present") {
-    val call = createFunctionCall("TestApi_optional_param", Map("a" -> 1, "b" -> "hello"))
+    val call = createFunctionCall("test_api_optional_param", Map("a" -> 1, "b" -> "hello"))
     dispatcher.dispatch(call).map(response => assertEquals(extractString(response), "a=1, b=hello"))
   }
 
   test("dispatcher should handle an optional parameter when it's missing") {
-    val call = createFunctionCall("TestApi_optional_param", Map("a" -> 1))
+    val call = createFunctionCall("test_api_optional_param", Map("a" -> 1))
     dispatcher.dispatch(call).map(response => assertEquals(extractString(response), "a=1, b=none"))
   }
 
   test("dispatcher should handle nested case class parameters") {
     val person = Person("John", 30, true)
-    val call   = createFunctionCall("TestApi_nested_struct", Map("person" -> person))
+    val call   = createFunctionCall("test_api_nested_struct", Map("person" -> person))
     dispatcher.dispatch(call).map { response =>
       val fields = extractResponseStruct(response).fields
       assertEquals(fields("name"), Value.string(person.name))
@@ -203,7 +217,7 @@ class ToolDispatcherTest extends CatsEffectSuite:
 
   test("dispatcher should handle list parameters") {
     val items = List("apple", "banana", "cherry")
-    val call  = createFunctionCall("TestApi_list_param", Map("items" -> items))
+    val call  = createFunctionCall("test_api_list_param", Map("items" -> items))
     dispatcher.dispatch(call).map { response =>
       extractResponseStruct(response).fields("value") match
         case Value.ListValue(values) => assertEquals(values, items.map(Value.string))
@@ -212,29 +226,29 @@ class ToolDispatcherTest extends CatsEffectSuite:
   }
 
   test("dispatcher should encode UUID results as strings") {
-    val call = createFunctionCall("TestApi_uuid_value")
+    val call = createFunctionCall("test_api_uuid_value")
     dispatcher.dispatch(call).map(response => assertEquals(extractString(response), impl.uuid.toString))
   }
 
   test("dispatcher should encode OffsetDateTime results as strings") {
-    val call = createFunctionCall("TestApi_offset_date_time_value")
+    val call = createFunctionCall("test_api_offset_date_time_value")
     dispatcher.dispatch(call).map(response => assertEquals(extractString(response), impl.offsetDateTime.toString))
   }
 
   test("dispatcher should raise UnknownFunction for an unknown method") {
-    val call = createFunctionCall("TestApi_unknown_method")
+    val call = createFunctionCall("test_api_unknown_method")
     dispatcher.dispatch(call).attempt.map {
       case Left(err: AgentError.UnknownFunction) =>
         assertEquals(err.call, call)
-        assertEquals(err.getMessage, "No handler for TestApi_unknown_method")
+        assertEquals(err.getMessage, "No handler for test_api_unknown_method")
       case other                                 => fail(s"Expected AgentError.UnknownFunction, got $other")
     }
   }
 
   test("dispatchAll should return Valid results in call order") {
     val calls = List(
-      createFunctionCall("TestApi_no_params"),
-      createFunctionCall("TestApi_mixed_types", Map("int_val" -> 1, "str_val" -> "a", "bool_val" -> false))
+      createFunctionCall("test_api_no_params"),
+      createFunctionCall("test_api_mixed_types", Map("int_val" -> 1, "str_val" -> "a", "bool_val" -> false))
     )
     dispatcher.dispatchAll(calls).map {
       case Valid(results) =>
@@ -250,14 +264,14 @@ class ToolDispatcherTest extends CatsEffectSuite:
         IO.delay(executions.incrementAndGet()) *> IO.pure(s"Hello, $name")
     val batchDispatcher   = ToolDispatcher.generate[IO](impl, recordingGreeting)
     val calls             = List(
-      createFunctionCall("GreetingApi_greet", Map("name" -> "Ada")),
-      createFunctionCall("TestApi_mixed_types", Map("str_val" -> "test"))
+      createFunctionCall("greeting_api_greet", Map("name" -> "Ada")),
+      createFunctionCall("test_api_mixed_types", Map("str_val" -> "test"))
     )
     batchDispatcher.dispatchAll(calls).map {
       case Invalid(errs)  =>
         assertEquals(executions.get(), 0)
         assert(errs.exists {
-          case AgentError.ArgumentDecodingFailed(call, _) => call.name == "TestApi_mixed_types"
+          case AgentError.ArgumentDecodingFailed(call, _) => call.name == "test_api_mixed_types"
           case _                                          => false
         })
       case Valid(results) => fail(s"Expected Invalid, got Valid($results)")
@@ -266,18 +280,18 @@ class ToolDispatcherTest extends CatsEffectSuite:
 
   test("dispatchAll should aggregate multiple AgentErrors") {
     val calls = List(
-      createFunctionCall("TestApi_unknown_method"),
-      createFunctionCall("TestApi_mixed_types", Map("str_val" -> "test"))
+      createFunctionCall("test_api_unknown_method"),
+      createFunctionCall("test_api_mixed_types", Map("str_val" -> "test"))
     )
     dispatcher.dispatchAll(calls).map {
       case Invalid(errs)  =>
         assertEquals(errs.length, 2L)
         assert(errs.exists {
-          case AgentError.UnknownFunction(call) => call.name == "TestApi_unknown_method"
+          case AgentError.UnknownFunction(call) => call.name == "test_api_unknown_method"
           case _                                => false
         })
         assert(errs.exists {
-          case AgentError.ArgumentDecodingFailed(call, _) => call.name == "TestApi_mixed_types"
+          case AgentError.ArgumentDecodingFailed(call, _) => call.name == "test_api_mixed_types"
           case _                                          => false
         })
       case Valid(results) => fail(s"Expected Invalid, got Valid($results)")
@@ -285,24 +299,24 @@ class ToolDispatcherTest extends CatsEffectSuite:
   }
 
   test("dispatcher should report a single missing required parameter") {
-    val call = createFunctionCall("TestApi_mixed_types", Map("str_val" -> "test", "bool_val" -> true))
+    val call = createFunctionCall("test_api_mixed_types", Map("str_val" -> "test", "bool_val" -> true))
     dispatcher.dispatch(call).attempt.map {
       case Left(err: AgentError.ArgumentDecodingFailed) =>
         assertEquals(
           err.getMessage,
-          "Failed to decode arguments for method 'TestApi_mixed_types': Error at path 'int_val': Field is missing."
+          "Failed to decode arguments for method 'test_api_mixed_types': Error at path 'int_val': Field is missing."
         )
       case other                                        => fail(s"Expected AgentError.ArgumentDecodingFailed, got $other")
     }
   }
 
   test("dispatcher should accumulate and report multiple decoding errors") {
-    val call = createFunctionCall("TestApi_mixed_types", Map("bool_val" -> "not-a-bool"))
+    val call = createFunctionCall("test_api_mixed_types", Map("bool_val" -> "not-a-bool"))
     dispatcher.dispatch(call).attempt.map {
       case Left(err: AgentError.ArgumentDecodingFailed) =>
         assertEquals(
           err.getMessage,
-          "Failed to decode arguments for method 'TestApi_mixed_types': Error at path 'int_val': Field is missing., Error at path 'str_val': Field is missing., Error at path 'bool_val': Expected type Boolean, but got StringValue."
+          "Failed to decode arguments for method 'test_api_mixed_types': Error at path 'int_val': Field is missing., Error at path 'str_val': Field is missing., Error at path 'bool_val': Expected type Boolean, but got StringValue."
         )
       case other                                        => fail(s"Expected AgentError.ArgumentDecodingFailed, got $other")
     }
@@ -310,7 +324,7 @@ class ToolDispatcherTest extends CatsEffectSuite:
 
   test("dispatcher should ignore extra parameters in the function call") {
     val call = createFunctionCall(
-      "TestApi_mixed_types",
+      "test_api_mixed_types",
       Map(
         "int_val"  -> 42,
         "str_val"  -> "test",
@@ -322,7 +336,7 @@ class ToolDispatcherTest extends CatsEffectSuite:
   }
 
   test("dispatcher should handle wrong type for nested struct") {
-    val call = createFunctionCall("TestApi_nested_struct", Map("person" -> "not a person"))
+    val call = createFunctionCall("test_api_nested_struct", Map("person" -> "not a person"))
     dispatcher.dispatch(call).attempt.map {
       case Left(err: AgentError.ArgumentDecodingFailed) =>
         assert(err.getMessage.contains("Expected type Struct, but got StringValue"))
@@ -335,7 +349,7 @@ class ToolDispatcherTest extends CatsEffectSuite:
       "name"   -> "John",
       "active" -> true
     )
-    val call         = createFunctionCall("TestApi_nested_struct", Map("person" -> personStruct))
+    val call         = createFunctionCall("test_api_nested_struct", Map("person" -> personStruct))
     dispatcher.dispatch(call).attempt.map {
       case Left(err: AgentError.ArgumentDecodingFailed) =>
         assert(err.getMessage.contains("Error at path 'person.age': Field is missing"))
@@ -344,8 +358,8 @@ class ToolDispatcherTest extends CatsEffectSuite:
   }
 
   test("dispatcher should support multiple components") {
-    val testCall     = createFunctionCall("TestApi_no_params")
-    val greetingCall = createFunctionCall("GreetingApi_greet", Map("name" -> "Ada"))
+    val testCall     = createFunctionCall("test_api_no_params")
+    val greetingCall = createFunctionCall("greeting_api_greet", Map("name" -> "Ada"))
     for
       testResponse     <- multiDispatcher.dispatch(testCall)
       greetingResponse <- multiDispatcher.dispatch(greetingCall)
@@ -357,8 +371,8 @@ class ToolDispatcherTest extends CatsEffectSuite:
   test("combine should route calls across dispatchers") {
     val testOnly     = ToolDispatcher.generate[IO](impl)
     val greetingOnly = ToolDispatcher.generate[IO](greeting)
-    val testCall     = createFunctionCall("TestApi_no_params")
-    val greetingCall = createFunctionCall("GreetingApi_greet", Map("name" -> "Ada"))
+    val testCall     = createFunctionCall("test_api_no_params")
+    val greetingCall = createFunctionCall("greeting_api_greet", Map("name" -> "Ada"))
     for
       merged           <- ToolDispatcher.combine(testOnly, greetingOnly)
       testResponse     <- merged.dispatch(testCall)
@@ -367,8 +381,8 @@ class ToolDispatcherTest extends CatsEffectSuite:
     yield
       assertEquals(extractString(testResponse), "no params")
       assertEquals(extractString(greetingResponse), "Hello, Ada")
-      assert(names.contains("TestApi_no_params"))
-      assert(names.contains("GreetingApi_greet"))
+      assert(names.contains("test_api_no_params"))
+      assert(names.contains("greeting_api_greet"))
   }
 
   test("combine should prefer the leftmost dispatcher on name clashes") {
@@ -378,14 +392,14 @@ class ToolDispatcherTest extends CatsEffectSuite:
       def greet(name: String): IO[String] = IO.pure(s"right:$name")
     val left          = ToolDispatcher.generate[IO](leftGreeting)
     val right         = ToolDispatcher.generate[IO](rightGreeting)
-    val call          = createFunctionCall("GreetingApi_greet", Map("name" -> "Ada"))
+    val call          = createFunctionCall("greeting_api_greet", Map("name" -> "Ada"))
     for
       merged <- ToolDispatcher.combine(left, right)
       result <- merged.dispatch(call)
       decls  <- merged.getFunctionDeclarations
     yield
       assertEquals(extractString(result), "left:Ada")
-      assertEquals(decls.count(_.name == "GreetingApi_greet"), 1)
+      assertEquals(decls.count(_.name == "greeting_api_greet"), 1)
   }
 
   test("combine should fail for an unknown method") {
@@ -407,14 +421,14 @@ class ToolDispatcherTest extends CatsEffectSuite:
     val api                = new ScheduleApi[IO]:
       def at(when: OffsetDateTime): IO[String] = IO.pure(when.toString)
     val scheduleDispatcher = ToolDispatcher.generate[IO](api)
-    val call               = createFunctionCall("ScheduleApi_at", Map("when" -> when.toString))
+    val call               = createFunctionCall("schedule_api_at", Map("when" -> when.toString))
     for
       result <- scheduleDispatcher.dispatch(call)
       decls  <- scheduleDispatcher.getFunctionDeclarations
     yield
       assertEquals(extractString(result), when.toString)
       assertEquals(
-        decls.find(_.name == "ScheduleApi_at").flatMap(_.parameters),
+        decls.find(_.name == "schedule_api_at").flatMap(_.parameters),
         Some(
           Schema.obj(
             properties = Map("when" -> Schema.string(format = Some("date-time"))),
@@ -428,7 +442,7 @@ class ToolDispatcherTest extends CatsEffectSuite:
     val api                = new ScheduleApi[IO]:
       def at(when: OffsetDateTime): IO[String] = IO.pure(when.toString)
     val scheduleDispatcher = ToolDispatcher.generate[IO](api)
-    val call               = createFunctionCall("ScheduleApi_at", Map("when" -> "not-a-timestamp"))
+    val call               = createFunctionCall("schedule_api_at", Map("when" -> "not-a-timestamp"))
     scheduleDispatcher.dispatch(call).attempt.map {
       case Left(err: AgentError.ArgumentDecodingFailed) =>
         assertEquals(err.call, call)
@@ -451,17 +465,17 @@ class ToolDispatcherTest extends CatsEffectSuite:
       def ping(): IO[Ping] = Ping("pong").pure[IO]
 
     val polymorphic = make(api)
-    val call        = createFunctionCall("PingApi_ping")
+    val call        = createFunctionCall("ping_api_ping")
     for
       result <- polymorphic.dispatch(call)
       decls  <- polymorphic.getFunctionDeclarations
     yield
       assertEquals(extractString(result), "pong")
-      assert(decls.exists(_.name == "PingApi_ping"))
+      assert(decls.exists(_.name == "ping_api_ping"))
   }
 
   test("dispatcher to should dispatch for single trait") {
-    val call = createFunctionCall("TestApi_no_params")
+    val call = createFunctionCall("test_api_no_params")
     typedDispatcher.dispatch(call).map(response => assertEquals(extractString(response), "no params"))
   }
 
@@ -483,17 +497,17 @@ class ToolDispatcherTest extends CatsEffectSuite:
       def apply(t: Int) = List.fill(t)(make[IO])
 
     val polymorphic = ToolDispatcher.generate[IO](make[IO], A.apply(1)*)
-    val call        = createFunctionCall("PingApi_ping")
+    val call        = createFunctionCall("ping_api_ping")
     for
       result <- polymorphic.dispatch(call)
       decls  <- polymorphic.getFunctionDeclarations
     yield
       assertEquals(extractString(result), "pong")
-      assert(decls.exists(_.name == "PingApi_ping"))
+      assert(decls.exists(_.name == "ping_api_ping"))
   }
 
   test("dispatcher to should dispatch for single trait") {
-    val call = createFunctionCall("TestApi_no_params")
+    val call = createFunctionCall("test_api_no_params")
     typedDispatcher.dispatch(call).map(response => assertEquals(extractString(response), "no params"))
   }
 
@@ -509,8 +523,8 @@ class ToolDispatcherTest extends CatsEffectSuite:
   test("getFunctionDeclarations should include multiple components") {
     multiDispatcher.getFunctionDeclarations.map { declarations =>
       val names = declarations.map(_.name).toSet
-      assert(names.contains("TestApi_no_params"))
-      assert(names.contains("GreetingApi_greet"))
+      assert(names.contains("test_api_no_params"))
+      assert(names.contains("greeting_api_greet"))
     }
   }
 
@@ -529,7 +543,7 @@ class ToolDispatcherTest extends CatsEffectSuite:
 
     val expectedDeclarations = List(
       FunctionDeclaration(
-        "TestApi_list_param",
+        "test_api_list_param",
         None,
         Some(
           Schema.obj(
@@ -539,7 +553,7 @@ class ToolDispatcherTest extends CatsEffectSuite:
         )
       ),
       FunctionDeclaration(
-        "TestApi_mixed_types",
+        "test_api_mixed_types",
         None,
         Some(
           Schema.obj(
@@ -553,7 +567,7 @@ class ToolDispatcherTest extends CatsEffectSuite:
         )
       ),
       FunctionDeclaration(
-        "TestApi_nested_struct",
+        "test_api_nested_struct",
         None,
         Some(
           Schema.obj(
@@ -562,9 +576,9 @@ class ToolDispatcherTest extends CatsEffectSuite:
           )
         )
       ),
-      FunctionDeclaration("TestApi_no_params", None, None),
+      FunctionDeclaration("test_api_no_params", None, None),
       FunctionDeclaration(
-        "TestApi_optional_param",
+        "test_api_optional_param",
         None,
         Some(
           Schema.obj(
@@ -576,16 +590,16 @@ class ToolDispatcherTest extends CatsEffectSuite:
           )
         )
       ),
-      FunctionDeclaration("TestApi_offset_date_time_value", None, None),
-      FunctionDeclaration("TestApi_uuid_value", None, None)
+      FunctionDeclaration("test_api_offset_date_time_value", None, None),
+      FunctionDeclaration("test_api_uuid_value", None, None)
     ).sortBy(_.name)
 
     declarations.map(decls => assertEquals(decls, expectedDeclarations))
   }
 
   private def assertMergedTestAndGreeting(dispatcher: ToolDispatcher[IO]): IO[Unit] =
-    val testCall     = createFunctionCall("TestApi_no_params")
-    val greetingCall = createFunctionCall("GreetingApi_greet", Map("name" -> "Ada"))
+    val testCall     = createFunctionCall("test_api_no_params")
+    val greetingCall = createFunctionCall("greeting_api_greet", Map("name" -> "Ada"))
     for
       testResponse     <- dispatcher.dispatch(testCall)
       greetingResponse <- dispatcher.dispatch(greetingCall)
@@ -593,8 +607,8 @@ class ToolDispatcherTest extends CatsEffectSuite:
     yield
       assertEquals(extractString(testResponse), "no params")
       assertEquals(extractString(greetingResponse), "Hello, Ada")
-      assert(names.contains("TestApi_no_params"))
-      assert(names.contains("GreetingApi_greet"))
+      assert(names.contains("test_api_no_params"))
+      assert(names.contains("greeting_api_greet"))
 
   test("generate Varargs: explicit trailing components are merged into one dispatcher") {
     // `generate(a, b)` — optionalOtherComponents matches Varargs(Seq(b))
@@ -604,14 +618,14 @@ class ToolDispatcherTest extends CatsEffectSuite:
   test("generate Varargs: empty optional list still builds a single-component dispatcher") {
     // `generate(a)` — optionalOtherComponents matches Varargs(Nil)
     val dispatcher = ToolDispatcher.generate[IO](impl)
-    val call       = createFunctionCall("TestApi_no_params")
+    val call       = createFunctionCall("test_api_no_params")
     for
       response <- dispatcher.dispatch(call)
       names    <- dispatcher.getFunctionDeclarations.map(_.map(_.name).toSet)
     yield
       assertEquals(extractString(response), "no params")
-      assert(names.contains("TestApi_no_params"))
-      assert(!names.contains("GreetingApi_greet"))
+      assert(names.contains("test_api_no_params"))
+      assert(!names.contains("greeting_api_greet"))
   }
 
   test("generate collection spread: List(component)* literal is accepted") {
@@ -663,7 +677,7 @@ class ToolDispatcherTest extends CatsEffectSuite:
     val documentedDispatcher = ToolDispatcher.generate[IO](api)
     documentedDispatcher.getFunctionDeclarations.map { decls =>
       assertEquals(
-        decls.find(_.name == "DocumentedApi_submit").flatMap(_.parameters),
+        decls.find(_.name == "documented_api_submit").flatMap(_.parameters),
         Some(
           Schema.obj(
             properties = Map(
@@ -692,7 +706,7 @@ class ToolDispatcherTest extends CatsEffectSuite:
     val customDispatcher = ToolDispatcher.generate[IO](api)
     customDispatcher.getFunctionDeclarations.map { decls =>
       assertEquals(
-        decls.find(_.name == "CustomIdApi_lookup").flatMap(_.parameters),
+        decls.find(_.name == "custom_id_api_lookup").flatMap(_.parameters),
         Some(
           Schema.obj(
             properties = Map("id" -> Schema.string(format = Some("uuid"), description = Some("custom id"))),
@@ -701,4 +715,76 @@ class ToolDispatcherTest extends CatsEffectSuite:
         )
       )
     }
+  }
+
+  test("default configuration renames nested member names recursively") {
+    val api  = new NestedNamingApi[IO]:
+      def saveProfile(userId: String, profile: UserProfile): IO[String] =
+        IO.pure(s"$userId:${profile.firstName}:${profile.addresses.size}")
+    val d    = ToolDispatcher.generate[IO](api)
+    val call = createFunctionCall(
+      "nested_naming_api_save_profile",
+      Map(
+        "user_id" -> "u1",
+        "profile" -> Map(
+          "first_name" -> "Ada",
+          "addresses"  -> List(
+            Map("street_name" -> "Main", "zip_code" -> "10001")
+          )
+        )
+      )
+    )
+    for
+      decls    <- d.getFunctionDeclarations
+      response <- d.dispatch(call)
+    yield
+      val params        = decls.find(_.name == "nested_naming_api_save_profile").flatMap(_.parameters).get
+      assertEquals(params.required, List("user_id", "profile"))
+      assert(params.properties.contains("user_id"))
+      val profileSchema = params.properties("profile")
+      assert(profileSchema.properties.contains("first_name"))
+      assert(profileSchema.properties.contains("addresses"))
+      assertEquals(profileSchema.required, List("first_name", "addresses"))
+      val addressSchema = profileSchema.properties("addresses").items.get
+      assert(addressSchema.properties.contains("street_name"))
+      assert(addressSchema.properties.contains("zip_code"))
+      assertEquals(extractString(response), "u1:Ada:1")
+  }
+
+  test("Configuration.default keeps Scala member and method names") {
+    val api  = new NestedNamingApi[IO]:
+      def saveProfile(userId: String, profile: UserProfile): IO[String] =
+        IO.pure(profile.firstName)
+    val d    = ToolDispatcher.generate[IO](api)(using Configuration.default)
+    val call = createFunctionCall(
+      "NestedNamingApi_saveProfile",
+      Map(
+        "userId"  -> "u1",
+        "profile" -> Map(
+          "firstName" -> "Ada",
+          "addresses" -> List(Map("streetName" -> "Main", "zipCode" -> "10001"))
+        )
+      )
+    )
+    for
+      decls    <- d.getFunctionDeclarations
+      response <- d.dispatch(call)
+    yield
+      assert(decls.exists(_.name == "NestedNamingApi_saveProfile"))
+      val params = decls.head.parameters.get
+      assert(params.properties.contains("userId"))
+      assert(params.properties("profile").properties.contains("firstName"))
+      assertEquals(extractString(response), "Ada")
+  }
+
+  test("nested payload may omit optional and defaulted fields") {
+    val api  = new DefaultedPayloadApi[IO]:
+      def submit(payload: DefaultedPayload): IO[String] =
+        IO.pure(s"${payload.label}:${payload.count}:${payload.note}")
+    val d    = ToolDispatcher.generate[IO](api)
+    val call = createFunctionCall(
+      "defaulted_payload_api_submit",
+      Map("payload" -> Map("label" -> "ok"))
+    )
+    d.dispatch(call).map(response => assertEquals(extractString(response), "ok:1:None"))
   }

@@ -17,9 +17,21 @@ val decoded: Validated[cats.data.NonEmptyChain[Decoder.Error], Int] =
 
 Built-in support includes primitives, `Option`, `List`, `Map[String, _]`, case classes (Mirror derivation), and sealed traits / enums.
 
+An optional `Configuration` argument (default `Configuration.default`, identity) transforms member and constructor names during decode. ToolDispatcher passes its own config so nested keys match the declaration schema.
+
+### Missing fields
+
+When a case-class key is absent:
+
+1. A usable case-class default is applied
+2. Otherwise an `Option` field becomes `None`
+3. Otherwise decoding fails with `MissingField`
+
+This matches schema derivation, which omits optional and defaulted fields from `required`. Defaults that would need earlier parameters are not supported and leave the field required.
+
 ### Sum types
 
-Derived sum decoders expect a discriminator field `_type` with the case name:
+Derived sum decoders expect a discriminator field (default `_type`, configurable via `Configuration.withDiscriminator`) with the case name:
 
 ```scala mdoc:silent
 enum Shape:
@@ -44,9 +56,9 @@ When a tool method returns `F[A]`, the macro summons `ResultEncoder[A]`:
 A  →  ValueEncoder[A]  →  StructEncoder[A]  →  ResultEncoder[A]  →  ToolDispatcher.Result
 ```
 
-- **`ValueEncoder[A]`** — Scala value → `Value`
+- **`ValueEncoder[A]`** — Scala value → `Value` (honors `Configuration` for product/sum field names)
 - **`StructEncoder[A]`** — if the value is already a struct, use it; otherwise wrap as `Struct("value" → …)`
-- **`ResultEncoder[A]`** — `encode(call, value)` builds `ToolDispatcher.Result.Response(FunctionResponse(call, …))`
+- **`ResultEncoder[A]`** — `encode(call, value, config)` builds `ToolDispatcher.Result.Response(FunctionResponse(call, …))`
 
 So a method returning `F[Int]` yields a response like `{"value": 8.0}`.
 
@@ -62,11 +74,11 @@ val encoded: Value = ValueEncoder[Weather].encode(Weather(21.5, "Kyiv"))
 
 ### Special results
 
-| Return type | Encoding |
-|-------------|----------|
-| Ordinary `A` with `ValueEncoder` | `Result.Response(FunctionResponse(call, …))` with wrapped/struct body |
-| `FunctionResponse` | `Result.Response` keeping the returned body, forcing the dispatch `call` |
-| `ToolDispatcher.Result` | `HumanInTheLoop` as-is; `Response` gets the dispatch `call` |
+| Return type                      | Encoding                                                                 |
+| -------------------------------- | ------------------------------------------------------------------------ |
+| Ordinary `A` with `ValueEncoder` | `Result.Response(FunctionResponse(call, …))` with wrapped/struct body    |
+| `FunctionResponse`               | `Result.Response` keeping the returned body, forcing the dispatch `call` |
+| `ToolDispatcher.Result`          | `HumanInTheLoop` as-is; `Response` gets the dispatch `call`              |
 
 ## Circe `Codecs`
 

@@ -124,21 +124,37 @@ This is different from multi-arg `generate`, which merges trait *components* at 
 
 ## Naming contract
 
-| Scala | Tool / JSON name |
-|-------|------------------|
-| Trait `Calculator` | kept as-is → prefix `Calculator` |
-| Method `add` | `add` → tool `Calculator_add` |
-| Method `mixedTypes` | `mixed_types` → `Calculator_mixed_types` |
-| Param `intVal` | `int_val` |
-| Param `strVal` | `str_val` |
+ToolDispatcher takes a circe-style `Configuration` (default `Configuration.snakeCase`) and applies it to tool names, top-level parameters, and **nested** case-class fields in one pass:
 
-Component (trait) names are **not** snake_cased. Only methods and parameters are.
+| Scala | Default (`Configuration.snakeCase`) |
+|-------|-------------------------------------|
+| Trait `Calculator` | `calculator` → prefix `calculator` |
+| Method `add` | `add` → tool `calculator_add` |
+| Method `mixedTypes` | `mixed_types` → `calculator_mixed_types` |
+| Param `intVal` | `int_val` |
+| Nested field `zipCode` | `zip_code` |
+
+```scala mdoc:silent
+import io.github.serhiip.constellations.naming.Configuration
+
+val identityDispatcher =
+  ToolDispatcher.generate[IO](calculator)(using Configuration.default)
+```
+
+Ambient givens also work:
+
+```scala
+given Configuration = Configuration.default.withKebabCaseMemberNames
+val kebabDispatcher = ToolDispatcher.generate[IO](calculator)
+```
+
+`Configuration.default` is all-identity (like circe). Builders such as `withSnakeCaseMemberNames` / `withKebabCaseMethodNames` / `withDiscriminator("kind")` customize transforms. Member naming covers both method parameters and nested product fields.
 
 ```scala mdoc
 import cats.effect.unsafe.implicits.global
 
 val call = FunctionCall(
-  name = "Calculator_add",
+  name = "calculator_add",
   args = Struct(Map(
     "a" -> Value.number(10),
     "b" -> Value.number(5)

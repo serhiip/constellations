@@ -6,6 +6,8 @@ import scala.jdk.CollectionConverters.*
 
 import cats.syntax.option.*
 
+import io.github.serhiip.constellations.naming.Configuration
+
 final case class FunctionCall(name: String, args: Struct, callId: Option[String])
 
 object FunctionCall:
@@ -214,6 +216,9 @@ object Schema:
     )
 
   inline def derived[A]: Schema = ${ SchemaMacros.deriveImpl[A] }
+
+  inline def derivedWith[A](inline config: Configuration): Schema =
+    ${ SchemaMacros.deriveWithImpl[A]('config) }
 
 final case class FunctionDeclaration(name: String, description: Option[String] = None, parameters: Option[Schema] = None)
 

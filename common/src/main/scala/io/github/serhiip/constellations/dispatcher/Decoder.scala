@@ -5,15 +5,18 @@ import java.util.UUID
 
 import scala.compiletime.{constValue, erasedValue, summonInline}
 import scala.deriving.Mirror
+import scala.quoted.*
 
 import cats.Show
 import cats.data.ValidatedNec
 import cats.syntax.all.*
 
 import io.github.serhiip.constellations.common.{Struct, Value}
+import io.github.serhiip.constellations.naming.Configuration
+import io.github.serhiip.constellations.schema.DefaultValues
 
 trait Decoder[P, A]:
-  def decode(proto: P, path: String = "root"): ValidatedNec[Decoder.Error, A]
+  def decode(proto: P, path: String = "root", config: Configuration = Configuration.default): ValidatedNec[Decoder.Error, A]
 
 object Decoder:
   type FromStruct[A] = Decoder[Struct, A]
@@ -36,19 +39,23 @@ object Decoder:
         case Error.InvalidStringValue(_, value, targetType, cause) =>
           val causeMsg = cause.map(c => s" Cause: ${c.getMessage}").getOrElse("")
           s"Cannot parse '$value' into $targetType.$causeMsg"
-        case Error.MissingDiscriminator(_)                         => "Sum type discriminator field '_type' is missing."
+        case Error.MissingDiscriminator(path)                      =>
+          val field = path.lastIndexOf('.') match
+            case -1 => path
+            case i  => path.substring(i + 1)
+          s"Sum type discriminator field '$field' is missing."
         case Error.UnknownDiscriminator(_, typeName, knownTypes)   =>
           s"Unknown type '$typeName'. Expected one of: ${knownTypes.mkString(", ")}."
       s"Error at path '${e.path}': $details"
 
   given Decoder[Value, String] with
-    def decode(value: Value, path: String): ValidatedNec[Error, String] =
+    def decode(value: Value, path: String = "root", config: Configuration = Configuration.default): ValidatedNec[Error, String] =
       value match
         case Value.StringValue(s) => s.validNec
         case _                    => Error.WrongType(path, "String", value.getClass.getSimpleName).invalidNec
 
   given Decoder[Value, Int] with
-    def decode(value: Value, path: String): ValidatedNec[Error, Int] =
+    def decode(value: Value, path: String = "root", config: Configuration = Configuration.default): ValidatedNec[Error, Int] =
       value match
         case Value.NumberValue(n) =>
           if n.isWhole && n >= Int.MinValue && n <= Int.MaxValue then n.toInt.validNec
@@ -56,7 +63,7 @@ object Decoder:
         case _                    => Error.WrongType(path, "Number", value.getClass.getSimpleName).invalidNec
 
   given Decoder[Value, Long] with
-    def decode(value: Value, path: String): ValidatedNec[Error, Long] =
+    def decode(value: Value, path: String = "root", config: Configuration = Configuration.default): ValidatedNec[Error, Long] =
       value match
         case Value.NumberValue(n) =>
           if n.isWhole && n >= Long.MinValue && n <= Long.MaxValue then n.toLong.validNec
@@ -64,7 +71,7 @@ object Decoder:
         case _                    => Error.WrongType(path, "Number", value.getClass.getSimpleName).invalidNec
 
   given Decoder[Value, Float] with
-    def decode(value: Value, path: String): ValidatedNec[Error, Float] =
+    def decode(value: Value, path: String = "root", config: Configuration = Configuration.default): ValidatedNec[Error, Float] =
       value match
         case Value.NumberValue(n) =>
           if n >= Float.MinValue && n <= Float.MaxValue then n.toFloat.validNec
@@ -72,19 +79,19 @@ object Decoder:
         case _                    => Error.WrongType(path, "Number", value.getClass.getSimpleName).invalidNec
 
   given Decoder[Value, Double] with
-    def decode(value: Value, path: String): ValidatedNec[Error, Double] =
+    def decode(value: Value, path: String = "root", config: Configuration = Configuration.default): ValidatedNec[Error, Double] =
       value match
         case Value.NumberValue(n) => n.validNec
         case _                    => Error.WrongType(path, "Number", value.getClass.getSimpleName).invalidNec
 
   given Decoder[Value, Boolean] with
-    def decode(value: Value, path: String): ValidatedNec[Error, Boolean] =
+    def decode(value: Value, path: String = "root", config: Configuration = Configuration.default): ValidatedNec[Error, Boolean] =
       value match
         case Value.BoolValue(b) => b.validNec
         case _                  => Error.WrongType(path, "Boolean", value.getClass.getSimpleName).invalidNec
 
   given Decoder[Value, OffsetDateTime] with
-    def decode(value: Value, path: String): ValidatedNec[Error, OffsetDateTime] =
+    def decode(value: Value, path: String = "root", config: Configuration = Configuration.default): ValidatedNec[Error, OffsetDateTime] =
       value match
         case Value.StringValue(s) =>
           Either
@@ -94,7 +101,7 @@ object Decoder:
         case _                    => Error.WrongType(path, "String", value.getClass.getSimpleName).invalidNec
 
   given Decoder[Value, UUID] with
-    def decode(value: Value, path: String): ValidatedNec[Error, UUID] =
+    def decode(value: Value, path: String = "root", config: Configuration = Configuration.default): ValidatedNec[Error, UUID] =
       value match
         case Value.StringValue(s) =>
           Either
@@ -104,39 +111,55 @@ object Decoder:
         case _                    => Error.WrongType(path, "String", value.getClass.getSimpleName).invalidNec
 
   given Decoder[Value, Struct] with
-    def decode(value: Value, path: String): ValidatedNec[Error, Struct] =
+    def decode(value: Value, path: String = "root", config: Configuration = Configuration.default): ValidatedNec[Error, Struct] =
       value match
         case Value.StructValue(s) => s.validNec
         case _                    => Error.WrongType(path, "Struct", value.getClass.getSimpleName).invalidNec
 
   given Decoder[Value, List[Value]] with
-    def decode(value: Value, path: String): ValidatedNec[Error, List[Value]] =
+    def decode(
+        value: Value,
+        path: String = "root",
+        config: Configuration = Configuration.default
+    ): ValidatedNec[Error, List[Value]] =
       value match
         case Value.ListValue(l) => l.validNec
         case _                  => Error.WrongType(path, "List", value.getClass.getSimpleName).invalidNec
 
   given [A](using d: Decoder[Value, A]): Decoder[Value, Option[A]] with
-    def decode(value: Value, path: String): ValidatedNec[Error, Option[A]] =
+    def decode(
+        value: Value,
+        path: String = "root",
+        config: Configuration = Configuration.default
+    ): ValidatedNec[Error, Option[A]] =
       value match
         case Value.NullValue => None.validNec
-        case _               => d.decode(value, path).map(Some(_))
+        case _               => d.decode(value, path, config).map(Some(_))
 
   given [A](using d: Decoder[Value, A]): Decoder[Value, List[A]] with
-    def decode(value: Value, path: String): ValidatedNec[Error, List[A]] =
+    def decode(
+        value: Value,
+        path: String = "root",
+        config: Configuration = Configuration.default
+    ): ValidatedNec[Error, List[A]] =
       value match
         case Value.ListValue(values) =>
           values.zipWithIndex.traverse { case (v, i) =>
-            d.decode(v, s"$path[$i]")
+            d.decode(v, s"$path[$i]", config)
           }
         case _                       => Error.WrongType(path, "List", value.getClass.getSimpleName).invalidNec
 
   given [A](using d: Decoder[Value, A]): Decoder[Value, Map[String, A]] with
-    def decode(value: Value, path: String): ValidatedNec[Error, Map[String, A]] =
+    def decode(
+        value: Value,
+        path: String = "root",
+        config: Configuration = Configuration.default
+    ): ValidatedNec[Error, Map[String, A]] =
       value match
         case Value.StructValue(Struct(fields)) =>
           fields.toList
             .traverse { case (k, v) =>
-              d.decode(v, s"$path.$k").map(k -> _)
+              d.decode(v, s"$path.$k", config).map(k -> _)
             }
             .map(_.toMap)
         case _                                 => Error.WrongType(path, "Struct", value.getClass.getSimpleName).invalidNec
@@ -144,53 +167,64 @@ object Decoder:
   final class CaseClassDecoder[A](
       decoders: => List[Decoder[Value, ?]],
       labels: => List[String],
+      fallbacks: => List[Option[Any]],
       mirror: Mirror.ProductOf[A]
   ) extends Decoder[Struct, A]:
-    def decode(s: Struct, path: String): ValidatedNec[Error, A] =
+    def decode(s: Struct, path: String = "root", config: Configuration = Configuration.default): ValidatedNec[Error, A] =
       val fields          = s.fields
-      val validatedFields = labels.zip(decoders).map { (label, decoder) =>
-        val fieldPath = if path == "root" then label else s"$path.$label"
-        fields.get(label) match
-          case Some(value) => decoder.decode(value, fieldPath)
-          case None        => Error.MissingField(fieldPath).invalidNec
+      val validatedFields = labels.zip(decoders).zip(fallbacks).map { case ((label, decoder), fallback) =>
+        val wireName  = config.transformMemberNames(label)
+        val fieldPath = if path == "root" then wireName else s"$path.$wireName"
+        fields.get(wireName) match
+          case Some(value) => decoder.decode(value, fieldPath, config)
+          case None        => fallback.fold(Error.MissingField(fieldPath).invalidNec)(_.validNec)
       }
       validatedFields.sequence.map(decoded => mirror.fromProduct(Tuple.fromArray(decoded.toArray)))
 
+  private inline def missingFieldFallbacks[A]: List[Option[Any]] = ${ missingFieldFallbacksImpl[A] }
+
   inline given derivedProduct[A](using m: Mirror.ProductOf[A]): Decoder[Struct, A] =
-    lazy val decoders = summonAll[m.MirroredElemTypes]
-    lazy val labels   = getLabels[m.MirroredElemLabels]
-    new CaseClassDecoder[A](decoders, labels, m)
+    lazy val decoders  = summonAll[m.MirroredElemTypes]
+    lazy val labels    = getLabels[m.MirroredElemLabels]
+    lazy val fallbacks = missingFieldFallbacks[A]
+    new CaseClassDecoder[A](decoders, labels, fallbacks, m)
 
   final class SumTypeDecoder[A](
-      decoders: => Map[String, Decoder[Struct, ? <: A]]
+      decoders: => List[Decoder[Struct, ? <: A]],
+      labels: => List[String]
   ) extends Decoder[Struct, A]:
-    def decode(s: Struct, path: String): ValidatedNec[Error, A] =
+    def decode(s: Struct, path: String = "root", config: Configuration = Configuration.default): ValidatedNec[Error, A] =
       val fields   = s.fields
-      val typeName = fields.get(SumType.discriminatorField).flatMap {
+      val typeName = fields.get(config.discriminator).flatMap {
         case Value.StringValue(s) => Some(s)
         case _                    => None
       }
+      val byName   = labels
+        .zip(decoders)
+        .map { (label, decoder) =>
+          config.transformConstructorNames(label) -> decoder
+        }
+        .toMap
 
       typeName match
         case None    =>
-          Error.MissingDiscriminator(s"$path.${SumType.discriminatorField}").invalidNec
+          Error.MissingDiscriminator(s"$path.${config.discriminator}").invalidNec
         case Some(t) =>
-          decoders.get(t) match
+          byName.get(t) match
             case None          =>
-              Error.UnknownDiscriminator(s"$path.${SumType.discriminatorField}", t, decoders.keys.toSeq).invalidNec
+              Error.UnknownDiscriminator(s"$path.${config.discriminator}", t, byName.keys.toSeq).invalidNec
             case Some(decoder) =>
-              decoder.decode(s, path).asInstanceOf[ValidatedNec[Error, A]]
+              decoder.decode(s, path, config).asInstanceOf[ValidatedNec[Error, A]]
 
   inline given derivedSum[A](using m: Mirror.SumOf[A]): Decoder[Struct, A] =
     lazy val decoders = summonSumDecoders[m.MirroredElemTypes]
     lazy val labels   = getLabels[m.MirroredElemLabels]
-    val map           = labels.zip(decoders).toMap.asInstanceOf[Map[String, Decoder[Struct, ? <: A]]]
-    new SumTypeDecoder[A](map)
+    new SumTypeDecoder[A](decoders.asInstanceOf[List[Decoder[Struct, ? <: A]]], labels)
 
   given [A](using d: => Decoder[Struct, A]): Decoder[Value, A] with
-    def decode(v: Value, path: String): ValidatedNec[Error, A] =
+    def decode(v: Value, path: String = "root", config: Configuration = Configuration.default): ValidatedNec[Error, A] =
       v match
-        case Value.StructValue(s) => d.decode(s, path)
+        case Value.StructValue(s) => d.decode(s, path, config)
         case _                    => Error.WrongType(path, "Struct", v.getClass.getSimpleName).invalidNec
 
   private inline def summonAll[T <: Tuple]: List[Decoder[Value, ?]] =
@@ -207,3 +241,18 @@ object Decoder:
     inline erasedValue[T] match
       case _: EmptyTuple => Nil
       case _: (h *: t)   => constValue[h].asInstanceOf[String] :: getLabels[t]
+
+  private def missingFieldFallbacksImpl[A: Type](using Quotes): Expr[List[Option[Any]]] =
+    import quotes.reflect.*
+    val tpe       = TypeRepr.of[A]
+    val params    =
+      tpe.typeSymbol.primaryConstructor.paramSymss.flatten
+        .filterNot(_.isTypeParam)
+    val fallbacks = params.zipWithIndex.map { case (param, idx) =>
+      val fieldTpe = tpe.memberType(param)
+      DefaultValues.usableDefaultTerm(tpe, idx) match
+        case Some(term)                                    => '{ Some(${ term.asExpr }) }
+        case None if fieldTpe <:< TypeRepr.of[Option[Any]] => '{ Some(None) }
+        case None                                          => '{ None }
+    }
+    '{ List(${ Varargs(fallbacks) }*) }

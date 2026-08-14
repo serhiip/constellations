@@ -39,7 +39,7 @@ class McpToolSpecTest extends CatsEffectSuite:
           tool         = tools.head
         yield
           assertEquals(tools.size, 1)
-          assertEquals(tool.tool().name(), "Calculator_add")
+          assertEquals(tool.tool().name(), "calculator_add")
           assertEquals(tool.tool().inputSchema().required().asScala.toList, List("a", "b"))
   }
 
@@ -51,7 +51,7 @@ class McpToolSpecTest extends CatsEffectSuite:
           mcpToolSpec <- McpToolSpec.core[IO](dispatcher).run(McpToolSpec.defaultConfig)
           tools       <- mcpToolSpec.fromToolDispatcher(ToolDispatcher.generate[IO](Calculator))
           request      =
-            McpSchema.CallToolRequest("Calculator_add", Map[String, Object]("a" -> Integer.valueOf(1), "b" -> Integer.valueOf(2)).asJava)
+            McpSchema.CallToolRequest("calculator_add", Map[String, Object]("a" -> Integer.valueOf(1), "b" -> Integer.valueOf(2)).asJava)
           result      <- IO.blocking(tools.head.callHandler().apply(null, request).block())
         yield
           val content = result.content().get(0).asInstanceOf[McpSchema.TextContent]
@@ -68,16 +68,16 @@ class McpToolSpecTest extends CatsEffectSuite:
           tools       <- mcpToolSpec.fromToolDispatcher(ToolDispatcher.generate[IO](MethodsApi))
           nested       = ju.ArrayList[ju.Map[String, Object]]()
           first        = ju.LinkedHashMap[String, Object]()
-          _            = first.put("className", "Foo")
-          _            = first.put("methodName", "bar")
+          _            = first.put("class_name", "Foo")
+          _            = first.put("method_name", "bar")
           second       = ju.LinkedHashMap[String, Object]()
-          _            = second.put("className", "Baz")
-          _            = second.put("methodName", "qux")
+          _            = second.put("class_name", "Baz")
+          _            = second.put("method_name", "qux")
           _            = nested.add(first)
           _            = nested.add(second)
           args         = ju.HashMap[String, Object]()
           _            = args.put("methods", nested)
-          request      = McpSchema.CallToolRequest("MethodsApi_fixed_methods", args)
+          request      = McpSchema.CallToolRequest("methods_api_fixed_methods", args)
           result      <- IO.blocking(tools.head.callHandler().apply(null, request).block())
         yield
           val content = result.content().get(0).asInstanceOf[McpSchema.TextContent]
