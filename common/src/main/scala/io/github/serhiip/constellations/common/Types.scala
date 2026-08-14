@@ -4,9 +4,14 @@ import java.util.{Collection as JCollection, Map as JMap}
 
 import scala.jdk.CollectionConverters.*
 
+import cats.Show
 import cats.syntax.option.*
 
+import io.circe.syntax.*
+
 import io.github.serhiip.constellations.naming.Configuration
+
+import Codecs.given
 
 final case class FunctionCall(name: String, args: Struct, callId: Option[String])
 
@@ -234,6 +239,8 @@ object FunctionDeclaration:
 
   def fromMethod(className: String, methodName: String, description: String, parameters: Schema): FunctionDeclaration =
     FunctionDeclaration(s"${className}_${methodName}", Some(description), Some(parameters))
+
+  given Show[FunctionDeclaration] = Show.show(_.asJson.spaces2)
 
 final case class FunctionResponse(call: FunctionCall, response: Struct)
 

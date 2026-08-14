@@ -232,6 +232,18 @@ class CodecsSuite extends FunSuite:
     assertEquals(decoded, Right(func))
   }
 
+  test("FunctionDeclaration Show should pretty-print JSON") {
+    val params = Schema.obj(
+      properties = Map("userId" -> Schema.string()),
+      required = List("userId")
+    )
+    val func   = FunctionDeclaration("getUser", "Get user information", params)
+    val shown  = func.show
+
+    assertEquals(shown, func.asJson.spaces2)
+    assertEquals(decode[FunctionDeclaration](shown), Right(func))
+  }
+
   test("FunctionDeclaration.withParameters should encode/decode correctly") {
     val params  = Schema.obj(
       properties = Map(

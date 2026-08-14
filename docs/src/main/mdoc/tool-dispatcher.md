@@ -171,13 +171,19 @@ result match
 
 ## Function declarations
 
-`getFunctionDeclarations` returns schemas built from your traits (names, docstrings, parameter schemas):
+`getFunctionDeclarations` returns schemas built from your traits (names, docstrings, parameter schemas). Those values are easy to print while debugging — `show` renders each declaration as pretty-printed JSON, so you can inspect exactly what will be registered with the model:
 
 ```scala mdoc
-val declarations = dispatcher.getFunctionDeclarations.unsafeRunSync()
-declarations.foreach { decl =>
-  println(s"- ${decl.name}: ${decl.description.getOrElse("")}")
-}
+import cats.syntax.foldable.*
+import cats.syntax.show.*
+
+val printDeclarations =
+  for
+    declarations <- dispatcher.getFunctionDeclarations
+    _            <- declarations.traverse_(d => IO.println(d.show))
+  yield ()
+
+printDeclarations.unsafeRunSync()
 ```
 
 Pass these to your LLM provider as tools, or convert them with [MCP](mcp.md) via `fromToolDispatcher`.
