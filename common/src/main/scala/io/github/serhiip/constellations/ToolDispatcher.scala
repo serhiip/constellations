@@ -24,11 +24,50 @@ trait ToolDispatcher[F[_]]:
   def dispatchAll(calls: List[FunctionCall]): F[ValidatedNec[AgentError, List[ToolDispatcher.Result]]]
   def getFunctionDeclarations: F[List[FunctionDeclaration]]
   def prepare(call: FunctionCall): ValidatedNec[AgentError, F[ToolDispatcher.Result]]
+  def declarationOf(component: String, method: String): Option[FunctionDeclaration] = None
 
 object ToolDispatcher:
+  type Probe[A] = Any
+
   enum Result:
     case Response(result: FunctionResponse)
     case HumanInTheLoop
+
+  extension [F[_]](dispatcher: ToolDispatcher[F])
+    inline def getDeclaration[T[_[_]]](inline select: T[Probe] => Any): Option[FunctionDeclaration] =
+      ${ declarationImpl[T, F]('dispatcher, 'select) }
+
+  private def declarationImpl[T[_[_]]: Type, F[_]: Type](
+      dispatcher: Expr[ToolDispatcher[F]],
+      select: Expr[T[Probe] => Any]
+  )(using Quotes): Expr[Option[FunctionDeclaration]] =
+    import quotes.reflect.*
+    val traitSym = TypeRepr.of[T].typeSymbol
+    if !traitSym.flags.is(Flags.Trait) then report.errorAndAbort(s"${traitSym.fullName} is not a trait.", Position.ofMacroExpansion)
+
+    val methods = new TreeAccumulator[List[Symbol]]:
+      def foldTree(acc: List[Symbol], tree: Tree)(owner: Symbol): List[Symbol] = tree match
+        case Select(_, _) =>
+          val sym = tree.symbol
+          if sym.isDefDef then sym :: acc else foldOverTree(acc, tree)(owner)
+        case _            => foldOverTree(acc, tree)(owner)
+
+    val selected = methods.foldTree(Nil, select.asTerm)(Symbol.spliceOwner).distinct
+    selected match
+      case method :: Nil if method.owner == traitSym || traitSym.declarations.contains(method) =>
+        '{ $dispatcher.declarationOf(${ Expr(traitSym.name) }, ${ Expr(method.name) }) }
+      case method :: Nil                                                                       =>
+        report.errorAndAbort(
+          s"Method '${method.name}' is not a direct declaration of ${traitSym.fullName}; inherited members are not registered as tools.",
+          select.asTerm.pos
+        )
+
+      case Nil  => report.errorAndAbort(s"Selector does not refer to a method of ${traitSym.fullName}.", select.asTerm.pos)
+      case many =>
+        report.errorAndAbort(
+          s"Selector refers to multiple methods of ${traitSym.fullName}: ${many.map(_.name).mkString(", ")}.",
+          select.asTerm.pos
+        )
 
   def observed[F[_]: Tracer: LoggerFactory: MonadThrow: Meter](delegate: ToolDispatcher[F]): F[ToolDispatcher[F]] =
     Meters.create[F].flatMap(observed(delegate, _))
@@ -94,6 +133,9 @@ object ToolDispatcher:
               _     <- logger.trace(s"Function declarations: ${decls.map(_.name).mkString(",")}")
             yield decls
           }
+
+        override def declarationOf(component: String, method: String): Option[FunctionDeclaration] =
+          delegate.declarationOf(component, method)
     }
 
   def noop[F[_]: Applicative]: ToolDispatcher[F] = new ToolDispatcher[F]:
@@ -128,6 +170,9 @@ object ToolDispatcher:
         calls.traverse(prepare).traverse(_.sequence)
 
       def getFunctionDeclarations: F[List[FunctionDeclaration]] = declarations.pure[F]
+
+      override def declarationOf(component: String, method: String): Option[FunctionDeclaration] =
+        owned.iterator.flatMap((d, _) => d.declarationOf(component, method)).nextOption()
 
   inline def to[F[_], T[_[_]]](using config: Configuration = Configuration.snakeCase): T[F] => ToolDispatcher[F] =
     ${ macroImplTo[F, T]('config) }
@@ -290,12 +335,9 @@ object ToolDispatcher:
         )
       }
 
-    def getMethodDeclarations(using Quotes)(
-        traitSym: quotes.reflect.Symbol,
-        config: Expr[Configuration]
-    ): Expr[List[FunctionDeclaration]] =
+    def toolMethods(using Quotes)(traitSym: quotes.reflect.Symbol): List[quotes.reflect.Symbol] =
       import quotes.reflect.*
-      val methods = traitSym.declarations.filter(m =>
+      traitSym.declarations.filter(m =>
         m.isDefDef && !m.flags.is(Flags.Private) && !m.flags.is(Flags.Protected) && !m.flags.is(
           Flags.Synthetic
         ) && !m.flags.is(Flags.Artifact) && !m.flags
@@ -303,7 +345,24 @@ object ToolDispatcher:
             Flags.CaseAccessor
           ) && !m.flags.is(Flags.StableRealizable)
       )
-      Expr.ofList(methods.map(processMethodForDeclaration(traitSym, config)))
+
+    def getMethodDeclarationEntries(using Quotes)(
+        traitSym: quotes.reflect.Symbol,
+        config: Expr[Configuration]
+    ): Expr[List[((String, String), FunctionDeclaration)]] =
+      val entries = toolMethods(traitSym).map { method =>
+        val key  = Expr((traitSym.name, method.name))
+        val decl = processMethodForDeclaration(traitSym, config)(method)
+        '{ $key -> $decl }
+      }
+      Expr.ofList(entries)
+
+    def getMethodDeclarations(using Quotes)(
+        traitSym: quotes.reflect.Symbol,
+        config: Expr[Configuration]
+    ): Expr[List[FunctionDeclaration]] =
+      val entries = getMethodDeclarationEntries(traitSym, config)
+      '{ $entries.map(_._2) }
 
     def processMethodForDispatch[F[_]: Type](using Quotes)(
         repr: quotes.reflect.TypeRepr,
@@ -407,14 +466,7 @@ object ToolDispatcher:
         config: Expr[Configuration]
     ) =
       import quotes.reflect.*
-      val methods = symbol.declarations.filter(m =>
-        m.isDefDef && !m.flags.is(Flags.Private) && !m.flags.is(Flags.Protected) && !m.flags.is(
-          Flags.Synthetic
-        ) && !m.flags.is(Flags.Artifact) && !m.flags
-          .is(
-            Flags.CaseAccessor
-          ) && !m.flags.is(Flags.StableRealizable)
-      )
+      val methods = toolMethods(symbol)
       if methods.isEmpty then report.warning(s"Component ${symbol.fullName} has no public methods to route.", term.pos)
       methods.map(processMethodForDispatch[F](symbol.typeRef.dealias, term, config))
 
@@ -454,11 +506,11 @@ object ToolDispatcher:
         config: Expr[Configuration]
     ): Expr[ToolDispatcher[F]] =
       import quotes.reflect.*
-      val functionDeclarationsExpr =
+      val entriesExpr =
         componentInfo
-          .map { case (_, traitSym) => getMethodDeclarations(traitSym, config) }
+          .map { case (_, traitSym) => getMethodDeclarationEntries(traitSym, config) }
           .reduceLeftOption((left, right) => '{ $left ++ $right })
-          .getOrElse('{ List.empty[FunctionDeclaration] })
+          .getOrElse('{ List.empty[((String, String), FunctionDeclaration)] })
 
       val callables  = componentInfo.flatMap { case (term, traitSym) => processMethodsForDispatch[F](traitSym, term, config) }
       val monadThrow =
@@ -470,7 +522,10 @@ object ToolDispatcher:
         new ToolDispatcher[F]:
           given Applicative[F] = $app
 
-          private val declarations: List[FunctionDeclaration] = $functionDeclarationsExpr
+          private val entries: List[((String, String), FunctionDeclaration)] = $entriesExpr
+          private val declarations: List[FunctionDeclaration]                = entries.map(_._2)
+          private val byName: Map[(String, String), FunctionDeclaration]     =
+            entries.foldLeft(Map.empty[(String, String), FunctionDeclaration])((acc, e) => acc.updatedWith(e._1)(_.orElse(Some(e._2))))
 
           private val preparers: Map[String, FunctionCall => ValidatedNec[AgentError, F[ToolDispatcher.Result]]] = Map(
             ${ Expr.ofList(callables.map { case (k, v) => '{ $k -> $v } }) }*
@@ -486,6 +541,9 @@ object ToolDispatcher:
             calls.traverse(prepare).fold(_.invalid.pure, _.sequence.map(Valid.apply))
 
           def getFunctionDeclarations: F[List[FunctionDeclaration]] = $app.pure(declarations)
+
+          override def declarationOf(component: String, method: String): Option[FunctionDeclaration] =
+            byName.get(component -> method)
       }
 
   def mapK[F[_], G[_]](dispatcher: ToolDispatcher[F])(f: F ~> G): ToolDispatcher[G] = new ToolDispatcher[G]:
@@ -498,6 +556,9 @@ object ToolDispatcher:
       f(dispatcher.dispatchAll(calls))
 
     def getFunctionDeclarations: G[List[FunctionDeclaration]] = f(dispatcher.getFunctionDeclarations)
+
+    override def declarationOf(component: String, method: String): Option[FunctionDeclaration] =
+      dispatcher.declarationOf(component, method)
 
   private def getFunctionDeclarationsSpanAttributes(decls: List[FunctionDeclaration]): List[Attribute[?]] =
     Attribute("function_declaration_count", decls.size.toLong) ::

@@ -788,3 +788,66 @@ class ToolDispatcherTest extends CatsEffectSuite:
     )
     d.dispatch(call).map(response => assertEquals(extractString(response), "ok:1:None"))
   }
+
+  test("getDeclaration resolves a method with parameters") {
+    for decls <- dispatcher.getFunctionDeclarations
+    yield
+      val expected = decls.find(_.name == "test_api_mixed_types")
+      assertEquals(dispatcher.getDeclaration[TestApi](_.mixedTypes), expected)
+  }
+
+  test("getDeclaration resolves a method with an empty parameter list") {
+    val api = new PingApi[IO]:
+      def ping(): IO[Ping] = Ping("pong").pure[IO]
+    val d   = ToolDispatcher.generate[IO](api)
+    for decls <- d.getFunctionDeclarations
+    yield
+      val expected = decls.find(_.name == "ping_api_ping")
+      assertEquals(d.getDeclaration[PingApi](_.ping()), expected)
+  }
+
+  test("getDeclaration is independent of Configuration at the call site") {
+    val api = new NestedNamingApi[IO]:
+      def saveProfile(userId: String, profile: UserProfile): IO[String] =
+        IO.pure(profile.firstName)
+    val d   = ToolDispatcher.generate[IO](api)(using Configuration.default)
+    for decls <- d.getFunctionDeclarations
+    yield
+      val expected = decls.find(_.name == "NestedNamingApi_saveProfile")
+      assertEquals(d.getDeclaration[NestedNamingApi](_.saveProfile), expected)
+  }
+
+  test("getDeclaration works for multi-component generate") {
+    assertEquals(
+      multiDispatcher.getDeclaration[GreetingApi](_.greet).map(_.name),
+      Some("greeting_api_greet")
+    )
+    assertEquals(
+      multiDispatcher.getDeclaration[TestApi](_.noParams()).map(_.name),
+      Some("test_api_no_params")
+    )
+  }
+
+  test("getDeclaration works after combine") {
+    val testOnly     = ToolDispatcher.generate[IO](impl)
+    val greetingOnly = ToolDispatcher.generate[IO](greeting)
+    for merged <- ToolDispatcher.combine(testOnly, greetingOnly)
+    yield
+      assertEquals(merged.getDeclaration[GreetingApi](_.greet).map(_.name), Some("greeting_api_greet"))
+      assertEquals(merged.getDeclaration[TestApi](_.mixedTypes).map(_.name), Some("test_api_mixed_types"))
+  }
+
+  test("getDeclaration works after mapK") {
+    val mapped = ToolDispatcher.mapK(dispatcher)(cats.arrow.FunctionK.id[IO])
+    assertEquals(mapped.getDeclaration[TestApi](_.mixedTypes).map(_.name), Some("test_api_mixed_types"))
+  }
+
+  test("getDeclaration returns None for an unknown component") {
+    assertEquals(dispatcher.getDeclaration[GreetingApi](_.greet), None)
+    assertEquals(ToolDispatcher.noop[IO].getDeclaration[TestApi](_.mixedTypes), None)
+  }
+
+  test("getDeclaration rejects unknown method names at compile time") {
+    val errors = scala.compiletime.testing.typeCheckErrors("dispatcher.getDeclaration[TestApi](_.notAMethod)")
+    assert(errors.nonEmpty, clues(errors))
+  }

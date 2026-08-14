@@ -14,6 +14,10 @@ trait ToolDispatcher[F[_]]:
   def dispatch(call: FunctionCall): F[ToolDispatcher.Result]
   def dispatchAll(calls: List[FunctionCall]): F[ValidatedNec[AgentError, List[ToolDispatcher.Result]]]
   def getFunctionDeclarations: F[List[FunctionDeclaration]]
+  def declarationOf(component: String, method: String): Option[FunctionDeclaration]
+
+// extension — preferred lookup by method reference
+dispatcher.getDeclaration[Calculator](_.add) // Option[FunctionDeclaration]
 
 enum ToolDispatcher.Result:
   case Response(result: FunctionResponse)
@@ -21,6 +25,8 @@ enum ToolDispatcher.Result:
 ```
 
 `dispatchAll` validates every call first (name lookup + argument decoding), aggregating failures with `ValidatedNec`. If **any** call is invalid it returns `Invalid` and executes **nothing**. If all are valid it executes each call **reusing the arguments already parsed** during validation (no second decode). Prefer `dispatchAll` for batches; `dispatch` remains for single calls and raises the first `AgentError` in `F`.
+
+`getDeclaration[T](_.method)` is a compile-time-checked debug helper: it looks up the generated declaration for a real trait method (a typo is a compile error). Prefer it over `declarationOf`, which takes raw Scala names. Methods with an empty parameter list must be written `_.method()`.
 
 ## Trait rules
 
