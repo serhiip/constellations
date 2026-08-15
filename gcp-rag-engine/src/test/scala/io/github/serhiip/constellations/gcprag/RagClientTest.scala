@@ -13,10 +13,14 @@ import org.mockito.invocation.InvocationOnMock
 import com.google.api.gax.longrunning.OperationFuture
 import com.google.cloud.aiplatform.v1.{RagContexts, RetrieveContextsRequest, RetrieveContextsResponse, VertexRagServiceClient}
 import com.google.cloud.aiplatform.v1beta1.{
+  BatchCreateRagDataSchemasOperationMetadata,
+  BatchCreateRagDataSchemasRequest,
+  BatchCreateRagDataSchemasResponse,
+  BatchCreateRagMetadataOperationMetadata,
+  BatchCreateRagMetadataRequest,
+  BatchCreateRagMetadataResponse,
   CreateRagCorpusOperationMetadata,
   CreateRagCorpusRequest,
-  CreateRagDataSchemaRequest,
-  CreateRagMetadataRequest,
   DeleteOperationMetadata,
   DeleteRagCorpusRequest,
   DeleteRagFileRequest,
@@ -27,7 +31,9 @@ import com.google.cloud.aiplatform.v1beta1.{
   ImportRagFilesRequest,
   ImportRagFilesResponse,
   ListRagCorporaRequest,
+  ListRagDataSchemasRequest,
   ListRagFilesRequest,
+  ListRagMetadataRequest,
   RagCorpus,
   RagDataSchema,
   RagFile,
@@ -173,7 +179,7 @@ final class RagClientTest extends CatsEffectSuite:
 
     when(data.getRagFile(any(classOf[GetRagFileRequest]))).thenReturn(file)
     when(data.listRagFiles(any(classOf[ListRagFilesRequest]))).thenReturn(page)
-    when(page.iterateAll()).thenReturn(java.util.List.of(file))
+    when(page.iterateAll()).thenReturn(List(file).asJava)
 
     for
       got  <- client.getFile(fileName)
@@ -208,7 +214,7 @@ final class RagClientTest extends CatsEffectSuite:
       .when(data)
       .importRagFilesAsync(any(classOf[ImportRagFilesRequest]))
     when(data.listRagFiles(any(classOf[ListRagFilesRequest]))).thenReturn(page)
-    when(page.iterateAll()).thenReturn(java.util.List.of(file))
+    when(page.iterateAll()).thenReturn(List(file).asJava)
 
     for
       started  <- client.importFiles(
@@ -249,7 +255,7 @@ final class RagClientTest extends CatsEffectSuite:
       .when(data)
       .importRagFilesAsync(any(classOf[ImportRagFilesRequest]))
     when(data.listRagFiles(any(classOf[ListRagFilesRequest]))).thenReturn(page)
-    when(page.iterateAll()).thenReturn(java.util.List.of())
+    when(page.iterateAll()).thenReturn(List.empty[RagFile].asJava)
 
     val source = GcsImportSource(NEL.one("gs://bucket/doc.txt"), resultSink = ImportResultSink.Gcs("gs://bucket/results/"))
 
@@ -262,26 +268,46 @@ final class RagClientTest extends CatsEffectSuite:
       assertEquals(captor.getValue.getImportRagFilesConfig.getImportResultGcsSink.getOutputUriPrefix, "gs://bucket/results/")
   }
 
-  test("createDataSchema builds CreateRagDataSchemaRequest") {
+  test("createDataSchema builds BatchCreateRagDataSchemasRequest") {
     val data   = mockDataClient()
     val rag    = mockRagClient()
     val client = RagClient.create[IO](config, data, rag)
 
-    when(data.createRagDataSchema(any(classOf[CreateRagDataSchemaRequest])))
-      .thenReturn(RagDataSchema.getDefaultInstance)
+    stubSchemaList(data)
+    stubBatchCreateSchemas(data)
 
     client.createDataSchema(corpusName, DataSchema("tenantid")).map { _ =>
-      val captor  = ArgumentCaptor.forClass(classOf[CreateRagDataSchemaRequest])
-      verify(data).createRagDataSchema(captor.capture())
-      val request = captor.getValue
+      val captor  = ArgumentCaptor.forClass(classOf[BatchCreateRagDataSchemasRequest])
+      verify(data).batchCreateRagDataSchemasAsync(captor.capture())
+      val batch   = captor.getValue
+      assertEquals(batch.getParent, corpusName)
+      assertEquals(batch.getRequestsCount, 1)
+      val request = batch.getRequests(0)
       assertEquals(request.getParent, corpusName)
       assertEquals(request.getRagDataSchemaId, "tenantid")
       assertEquals(request.getRagDataSchema.getKey, "tenantid")
       assertEquals(request.getRagDataSchema.getSchemaDetails.getType, RagMetadataSchemaDetails.DataType.STRING)
       assertEquals(
+        request.getRagDataSchema.getSchemaDetails.getGranularity,
+        RagMetadataSchemaDetails.Granularity.GRANULARITY_FILE_LEVEL
+      )
+      assertEquals(
         request.getRagDataSchema.getSchemaDetails.getSearchStrategy.getSearchStrategyType,
         RagMetadataSchemaDetails.SearchStrategy.SearchStrategyType.EXACT_SEARCH
       )
+    }
+  }
+
+  test("createDataSchema skips keys that already exist") {
+    val data     = mockDataClient()
+    val rag      = mockRagClient()
+    val client   = RagClient.create[IO](config, data, rag)
+    val existing = RagDataSchema.newBuilder().setKey("tenantid").build()
+
+    stubSchemaList(data, List(existing))
+
+    client.createDataSchema(corpusName, DataSchema("tenantid")).map { _ =>
+      verify(data, times(0)).batchCreateRagDataSchemasAsync(any(classOf[BatchCreateRagDataSchemasRequest]))
     }
   }
 
@@ -290,19 +316,44 @@ final class RagClientTest extends CatsEffectSuite:
     val rag    = mockRagClient()
     val client = RagClient.create[IO](config, data, rag)
 
-    when(data.createRagMetadata(any(classOf[CreateRagMetadataRequest])))
-      .thenReturn(RagMetadata.getDefaultInstance)
+    stubMetadataList(data)
+    stubBatchCreateMetadata(data)
 
     client
       .setFileMetadata(fileName, NEL.one(MetadataEntry("tenantid", MetadataValue.Str("user-42"))))
       .map { _ =>
-        val captor  = ArgumentCaptor.forClass(classOf[CreateRagMetadataRequest])
-        verify(data).createRagMetadata(captor.capture())
-        val request = captor.getValue
+        val captor  = ArgumentCaptor.forClass(classOf[BatchCreateRagMetadataRequest])
+        verify(data).batchCreateRagMetadataAsync(captor.capture())
+        val batch   = captor.getValue
+        assertEquals(batch.getParent, fileName)
+        assertEquals(batch.getRequestsCount, 1)
+        val request = batch.getRequests(0)
         assertEquals(request.getParent, fileName)
         assertEquals(request.getRagMetadataId, "tenantid")
         assertEquals(request.getRagMetadata.getUserSpecifiedMetadata.getKey, "tenantid")
         assertEquals(request.getRagMetadata.getUserSpecifiedMetadata.getValue.getStrValue, "user-42")
+        verify(data, times(0)).updateRagMetadata(any(classOf[RagMetadata]))
+      }
+  }
+
+  test("setFileMetadata updates existing RagMetadata keys") {
+    val data     = mockDataClient()
+    val rag      = mockRagClient()
+    val client   = RagClient.create[IO](config, data, rag)
+    val existing = RagMetadata.newBuilder().setName(s"$fileName/ragMetadata/tenantid").build()
+
+    stubMetadataList(data, List(existing))
+    when(data.updateRagMetadata(any(classOf[RagMetadata]))).thenReturn(RagMetadata.getDefaultInstance)
+
+    client
+      .setFileMetadata(fileName, NEL.one(MetadataEntry("tenantid", MetadataValue.Str("user-42"))))
+      .map { _ =>
+        verify(data, times(0)).batchCreateRagMetadataAsync(any(classOf[BatchCreateRagMetadataRequest]))
+        val captor = ArgumentCaptor.forClass(classOf[RagMetadata])
+        verify(data).updateRagMetadata(captor.capture())
+        assertEquals(captor.getValue.getName, s"$fileName/ragMetadata/tenantid")
+        assertEquals(captor.getValue.getUserSpecifiedMetadata.getKey, "tenantid")
+        assertEquals(captor.getValue.getUserSpecifiedMetadata.getValue.getStrValue, "user-42")
       }
   }
 
@@ -323,9 +374,11 @@ final class RagClientTest extends CatsEffectSuite:
       .when(data)
       .importRagFilesAsync(any(classOf[ImportRagFilesRequest]))
     when(data.listRagFiles(any(classOf[ListRagFilesRequest]))).thenReturn(page)
-    when(page.iterateAll()).thenReturn(java.util.List.of())
-    when(data.createRagDataSchema(any(classOf[CreateRagDataSchemaRequest]))).thenReturn(RagDataSchema.getDefaultInstance)
-    when(data.createRagMetadata(any(classOf[CreateRagMetadataRequest]))).thenReturn(RagMetadata.getDefaultInstance)
+    when(page.iterateAll()).thenReturn(List.empty[RagFile].asJava)
+    stubSchemaList(data)
+    stubBatchCreateSchemas(data)
+    stubMetadataList(data)
+    stubBatchCreateMetadata(data)
 
     val source = GcsImportSource(
       uris = NEL.one("gs://bucket/docs/*.txt"),
@@ -342,12 +395,13 @@ final class RagClientTest extends CatsEffectSuite:
       started <- client.importFiles(corpusName, source)
       _       <- started.await
     yield
-      verify(data).createRagDataSchema(any(classOf[CreateRagDataSchemaRequest]))
-      val metaCaptor = ArgumentCaptor.forClass(classOf[CreateRagMetadataRequest])
-      verify(data, times(1)).createRagMetadata(metaCaptor.capture())
+      verify(data).batchCreateRagDataSchemasAsync(any(classOf[BatchCreateRagDataSchemasRequest]))
+      val metaCaptor = ArgumentCaptor.forClass(classOf[BatchCreateRagMetadataRequest])
+      verify(data, times(1)).batchCreateRagMetadataAsync(metaCaptor.capture())
       assertEquals(metaCaptor.getValue.getParent, expected)
-      assertEquals(metaCaptor.getValue.getRagMetadataId, "tenantid")
-      assertEquals(metaCaptor.getValue.getRagMetadata.getUserSpecifiedMetadata.getValue.getStrValue, "user-42")
+      assertEquals(metaCaptor.getValue.getRequestsCount, 1)
+      assertEquals(metaCaptor.getValue.getRequests(0).getRagMetadataId, "tenantid")
+      assertEquals(metaCaptor.getValue.getRequests(0).getRagMetadata.getUserSpecifiedMetadata.getValue.getStrValue, "user-42")
   }
 
   test("importFiles rejects metadata.entries with a BigQuery result sink") {
@@ -446,7 +500,7 @@ final class RagClientTest extends CatsEffectSuite:
     val corpus = RagCorpus.newBuilder().setName(corpusName).setDisplayName("docs").build()
 
     when(data.listRagCorpora(any(classOf[ListRagCorporaRequest]))).thenReturn(page)
-    when(page.iterateAll()).thenReturn(java.util.List.of(corpus))
+    when(page.iterateAll()).thenReturn(List(corpus).asJava)
 
     client.listCorpora.map { result =>
       assertEquals(result, List(Corpus(corpusName, "docs", None)))
@@ -565,7 +619,7 @@ final class RagClientTest extends CatsEffectSuite:
     when(data.getOperationsClient).thenReturn(ops)
     when(ops.getOperation(opName)).thenReturn(done)
     when(data.listRagFiles(any(classOf[ListRagFilesRequest]))).thenReturn(page)
-    when(page.iterateAll()).thenReturn(java.util.List.of(file))
+    when(page.iterateAll()).thenReturn(List(file).asJava)
 
     client.getImportResult(handle, corpusName).map { result =>
       assertEquals(
@@ -682,7 +736,7 @@ final class RagClientTest extends CatsEffectSuite:
     when(data.getOperationsClient).thenReturn(ops)
     when(ops.getOperation(opName)).thenReturn(done)
     when(data.listRagFiles(any(classOf[ListRagFilesRequest]))).thenReturn(page)
-    when(page.iterateAll()).thenReturn(java.util.List.of(file))
+    when(page.iterateAll()).thenReturn(List(file).asJava)
 
     client.getImportResult(handle, corpusName, sinkGcs = Some(sinkPath)).map { result =>
       assertEquals(result.partialFailuresGcsPath, Some(sinkPath))
@@ -709,12 +763,42 @@ final class RagClientTest extends CatsEffectSuite:
     when(data.getOperationsClient).thenReturn(ops)
     when(ops.getOperation(opName)).thenReturn(done)
     when(data.listRagFiles(any(classOf[ListRagFilesRequest]))).thenReturn(page)
-    when(page.iterateAll()).thenReturn(java.util.List.of(file))
+    when(page.iterateAll()).thenReturn(List(file).asJava)
 
     client.getImportResult(handle, corpusName, sinkBq = Some(bqPath)).map { result =>
       assertEquals(result.partialFailuresBigQueryTable, Some(bqPath))
     }
   }
+
+  private def stubSchemaList(data: VertexRagDataServiceClient, schemas: List[RagDataSchema] = Nil): Unit =
+    val page = mock(classOf[VertexRagDataServiceClient.ListRagDataSchemasPagedResponse])
+    when(data.listRagDataSchemas(any(classOf[ListRagDataSchemasRequest]))).thenReturn(page)
+    when(page.iterateAll()).thenReturn(schemas.asJava)
+    ()
+
+  private def stubMetadataList(data: VertexRagDataServiceClient, metadata: List[RagMetadata] = Nil): Unit =
+    val page = mock(classOf[VertexRagDataServiceClient.ListRagMetadataPagedResponse])
+    when(data.listRagMetadata(any(classOf[ListRagMetadataRequest]))).thenReturn(page)
+    when(page.iterateAll()).thenReturn(metadata.asJava)
+    ()
+
+  private def stubBatchCreateSchemas(data: VertexRagDataServiceClient): Unit =
+    doReturn(
+      completed[BatchCreateRagDataSchemasResponse, BatchCreateRagDataSchemasOperationMetadata](
+        BatchCreateRagDataSchemasResponse.getDefaultInstance,
+        opName
+      )
+    ).when(data).batchCreateRagDataSchemasAsync(any(classOf[BatchCreateRagDataSchemasRequest]))
+    ()
+
+  private def stubBatchCreateMetadata(data: VertexRagDataServiceClient): Unit =
+    doReturn(
+      completed[BatchCreateRagMetadataResponse, BatchCreateRagMetadataOperationMetadata](
+        BatchCreateRagMetadataResponse.getDefaultInstance,
+        opName
+      )
+    ).when(data).batchCreateRagMetadataAsync(any(classOf[BatchCreateRagMetadataRequest]))
+    ()
 
   private def mockDataClient(): VertexRagDataServiceClient =
     mock(classOf[VertexRagDataServiceClient])

@@ -102,7 +102,9 @@ On `RagClient.Error.ImportFailed` with a GCS sink path, `report` reads `partialF
 
 ## File metadata (multi-tenant filters)
 
-Vertex exposes searchable file metadata on the **`v1beta1` data API** (`CreateRagDataSchema` / `CreateRagMetadata`). This client uses that path for ingestion while retrieval stays on `v1` (`metadata_filter`).
+Vertex exposes searchable file metadata on the **`v1beta1` data API**. Schemas are created with **`BatchCreateRagDataSchemas`** (an LRO). File values are attached with **`BatchCreateRagMetadata`** (also an LRO); existing keys are updated with `UpdateRagMetadata` (PATCH). Unary `CreateRagDataSchema` / `CreateRagMetadata` exist in the proto but return `UNIMPLEMENTED` in every region we have probed — `v1` REST does not register the `ragDataSchemas` collection at all. This client stays on `v1beta1` `VertexRagDataServiceClient` for ingestion; retrieval stays on `v1` (`metadata_filter`). The batch RPCs exist in `us-east4` (and the other RAG regions); region was never the blocker.
+
+The Scala API still looks like `createDataSchema` / `setFileMetadata` (`F[Unit]`). The adapter lists existing keys, batches the rest (max 500 per request), awaits the LRO, and treats `ALREADY_EXISTS` as success so callers do not need to change.
 
 1. Define corpus keys (`DataSchema`; keys must match `[a-z][a-z0-9-]{0,62}` — no underscores).
 2. Attach values per RagFile (`MetadataEntry`), either via `GcsImportSource.metadata.entries` or `setFileMetadata` on an explicit file name.
@@ -135,7 +137,7 @@ _ <- rag.setFileMetadata(
      )
 ```
 
-When `entries` are set, `resultSink` must be `ImportResultSink.Gcs`. After the LRO succeeds, the client reads that NDJSON ledger and calls `setFileMetadata` only for rows with `Status=OK` and a `FileId`, using the resource name `{corpus}/ragFiles/{fileId}`. That set is scoped to this import operation — not a corpus-wide “new since snapshot” diff. Schema creation treats `ALREADY_EXISTS` as success. Skipped/reimport rows without a usable `FileId` (or non-OK status) are not stamped.
+When `entries` are set, `resultSink` must be `ImportResultSink.Gcs`. After the LRO succeeds, the client reads that NDJSON ledger and calls `setFileMetadata` only for rows with `Status=OK` and a `FileId`, using the resource name `{corpus}/ragFiles/{fileId}`. That set is scoped to this import operation — not a corpus-wide “new since snapshot” diff. Schema and metadata create are idempotent: existing keys are skipped (schemas) or PATCHed (file values), and a racing `ALREADY_EXISTS` on the batch LRO is treated as success. Skipped/reimport rows without a usable `FileId` (or non-OK status) are not stamped.
 
 ## Similarity search
 
@@ -147,7 +149,7 @@ val sim = RagEngine.Similarity.simple[IO, String](
   rag,
   corpus.name,
   RetrievalConfig(
-    metadataFilter = Some("""tenantid == "user-42""""), // CEL; keys must exist via CreateRagDataSchema + RagMetadata
+    metadataFilter = Some("""tenantid == "user-42""""), // CEL; keys must exist via BatchCreateRagDataSchemas + RagMetadata
     ragFileIds = List("ragFiles/abc", "ragFiles/def")   // optional allowlist of RagFile ids
   )
 )

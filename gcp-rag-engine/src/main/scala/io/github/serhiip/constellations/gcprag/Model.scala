@@ -42,7 +42,7 @@ enum MetadataType:
 enum MetadataSearch:
   case Exact, None
 
-/** Corpus-level key definition (`CreateRagDataSchema`). Keys must match `[a-z][a-z0-9-]{0,62}`. */
+/** Corpus-level key definition (`BatchCreateRagDataSchemas`). Keys must match `[a-z][a-z0-9-]{0,62}`. */
 final case class DataSchema(
     key: String,
     dataType: MetadataType = MetadataType.String,
@@ -87,7 +87,7 @@ final case class RetrievedContext(text: String, sourceUri: Option[String], sourc
 final case class UpdateCorpusRequest(name: String, displayName: Option[String] = None, description: Option[String] = None)
 
 enum LroKind:
-  case CreateCorpus, UpdateCorpus, DeleteCorpus, ImportFiles, DeleteFile
+  case CreateCorpus, UpdateCorpus, DeleteCorpus, ImportFiles, DeleteFile, CreateDataSchema, CreateFileMetadata
 
 final case class LroHandle(name: String, kind: LroKind)
 

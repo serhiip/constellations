@@ -28,6 +28,8 @@ import com.google.cloud.aiplatform.v1.{
   VertexRagServiceSettings
 }
 import com.google.cloud.aiplatform.v1beta1.{
+  BatchCreateRagDataSchemasRequest,
+  BatchCreateRagMetadataRequest,
   BigQueryDestination,
   CreateRagCorpusRequest,
   CreateRagDataSchemaRequest,
@@ -43,7 +45,9 @@ import com.google.cloud.aiplatform.v1beta1.{
   ImportRagFilesRequest,
   ImportRagFilesResponse,
   ListRagCorporaRequest,
+  ListRagDataSchemasRequest,
   ListRagFilesRequest,
+  ListRagMetadataRequest,
   MetadataValue as GMetadataValue,
   RagCorpus,
   RagDataSchema,
@@ -588,7 +592,7 @@ object RagClient:
         val request = ImportRagFilesRequest.newBuilder().setParent(corpusName).setImportRagFilesConfig(importConfigBuilder.build()).build()
 
         for
-          _       <- metadata.schemas.traverse_(createDataSchema(corpusName, _))
+          _       <- NEL.fromList(metadata.schemas).traverse_(createDataSchemas(corpusName, _))
           started <- startLro(LroKind.ImportFiles, dataClient.importRagFilesAsync(request)) { response =>
                        finishImport(corpusName, response, sinkGcs, sinkBq).flatTap { _ =>
                          (metadata.entries, sinkGcs).tupled.traverse_ { (entries, path) =>
@@ -606,58 +610,17 @@ object RagClient:
       }
 
     def createDataSchema(corpusName: String, schema: DataSchema): F[Unit] =
-      val details = RagMetadataSchemaDetails
-        .newBuilder()
-        .setType(toSchemaDataType(schema.dataType))
-        .setGranularity(RagMetadataSchemaDetails.Granularity.GRANULARITY_FILE_LEVEL)
-        .setSearchStrategy(
-          RagMetadataSchemaDetails.SearchStrategy
-            .newBuilder()
-            .setSearchStrategyType(toSearchStrategy(schema.search))
-            .build()
-        )
-        .build()
-      val body    = RagDataSchema.newBuilder().setKey(schema.key).setSchemaDetails(details).build()
-      val request = CreateRagDataSchemaRequest
-        .newBuilder()
-        .setParent(corpusName)
-        .setRagDataSchema(body)
-        .setRagDataSchemaId(schema.key)
-        .build()
-      Sync[F]
-        .blocking(dataClient.createRagDataSchema(request))
-        .void
-        .recoverWith {
-          case err: ApiException if err.getStatusCode.getCode == StatusCode.Code.ALREADY_EXISTS => ().pure[F]
-        }
-        .adaptError(Error.ApiFailure("create-data-schema", _))
+      createDataSchemas(corpusName, NEL.one(schema))
 
     def setFileMetadata(fileName: String, entries: NEL[MetadataEntry]): F[Unit] =
-      entries
-        .traverse_ { entry =>
-          val metadata = RagMetadata
-            .newBuilder()
-            .setUserSpecifiedMetadata(
-              UserSpecifiedMetadata.newBuilder().setKey(entry.key).setValue(toMetadataValue(entry.value)).build()
-            )
-            .build()
-          val request  = CreateRagMetadataRequest
-            .newBuilder()
-            .setParent(fileName)
-            .setRagMetadata(metadata)
-            .setRagMetadataId(entry.key)
-            .build()
-          Sync[F]
-            .blocking(dataClient.createRagMetadata(request))
-            .void
-            .recoverWith {
-              case err: ApiException if err.getStatusCode.getCode == StatusCode.Code.ALREADY_EXISTS =>
-                Sync[F]
-                  .blocking(dataClient.updateRagMetadata(metadata.toBuilder.setName(s"$fileName/ragMetadata/${entry.key}").build()))
-                  .void
-            }
-        }
-        .adaptError(Error.ApiFailure("set-file-metadata", _))
+      val op =
+        for
+          existing            <- listMetadataKeys(fileName)
+          (toUpdate, toCreate) = entries.toList.partition(entry => existing.contains(entry.key))
+          _                   <- batchCreateFileMetadata(fileName, toCreate)
+          _                   <- toUpdate.traverse_(updateFileMetadata(fileName, _))
+        yield ()
+      op.adaptError(Error.ApiFailure("set-file-metadata", _))
 
     def listFiles(corpusName: String): F[List[RagFileInfo]] =
       Sync[F]
@@ -747,6 +710,118 @@ object RagClient:
         case err: Error => err
         case err        => Error.ApiFailure("get-import-result", err)
       }
+
+    private val MaxBatchCreate = 500
+
+    private def createDataSchemas(corpusName: String, schemas: NEL[DataSchema]): F[Unit] =
+      val op =
+        for
+          existing  <- listSchemaKeys(corpusName)
+          remaining  = schemas.filterNot(schema => existing.contains(schema.key))
+          _         <- remaining.grouped(MaxBatchCreate).toList.flatMap(NEL.fromList).traverse_(batchCreateDataSchemas(corpusName, _))
+        yield ()
+      op.adaptError(Error.ApiFailure("create-data-schema", _))
+
+    private def listSchemaKeys(corpusName: String): F[Set[String]] =
+      Sync[F].blocking(
+        dataClient
+          .listRagDataSchemas(ListRagDataSchemasRequest.newBuilder().setParent(corpusName).build())
+          .iterateAll()
+          .asScala
+          .map(schema => resourceKey(schema.getName, schema.getKey))
+          .toSet
+      )
+
+    private def batchCreateDataSchemas(corpusName: String, schemas: NEL[DataSchema]): F[Unit] =
+      val batch = BatchCreateRagDataSchemasRequest
+        .newBuilder()
+        .setParent(corpusName)
+        .addAllRequests(schemas.map(toCreateSchemaRequest(corpusName, _)).toList.asJava)
+        .build()
+      startLro(LroKind.CreateDataSchema, dataClient.batchCreateRagDataSchemasAsync(batch))(_ => ().pure[F])
+        .flatMap(_.await)
+        .recoverWith {
+          case err if alreadyExists(err) => ().pure[F]
+        }
+
+    private def toCreateSchemaRequest(corpusName: String, schema: DataSchema): CreateRagDataSchemaRequest =
+      val details = RagMetadataSchemaDetails
+        .newBuilder()
+        .setType(toSchemaDataType(schema.dataType))
+        .setGranularity(RagMetadataSchemaDetails.Granularity.GRANULARITY_FILE_LEVEL)
+        .setSearchStrategy(
+          RagMetadataSchemaDetails.SearchStrategy
+            .newBuilder()
+            .setSearchStrategyType(toSearchStrategy(schema.search))
+            .build()
+        )
+        .build()
+      val body    = RagDataSchema.newBuilder().setKey(schema.key).setSchemaDetails(details).build()
+      CreateRagDataSchemaRequest
+        .newBuilder()
+        .setParent(corpusName)
+        .setRagDataSchema(body)
+        .setRagDataSchemaId(schema.key)
+        .build()
+
+    private def listMetadataKeys(fileName: String): F[Set[String]] =
+      Sync[F].blocking(
+        dataClient
+          .listRagMetadata(ListRagMetadataRequest.newBuilder().setParent(fileName).build())
+          .iterateAll()
+          .asScala
+          .map { metadata =>
+            val protoKey = Option.when(metadata.hasUserSpecifiedMetadata)(metadata.getUserSpecifiedMetadata.getKey).getOrElse("")
+            resourceKey(metadata.getName, protoKey)
+          }
+          .toSet
+      )
+
+    private def batchCreateFileMetadata(fileName: String, entries: List[MetadataEntry]): F[Unit] =
+      if entries.isEmpty then ().pure[F]
+      else
+        entries.grouped(MaxBatchCreate).toList.traverse_ { chunk =>
+          val batch = BatchCreateRagMetadataRequest
+            .newBuilder()
+            .setParent(fileName)
+            .addAllRequests(chunk.map(toCreateMetadataRequest(fileName, _)).asJava)
+            .build()
+          startLro(LroKind.CreateFileMetadata, dataClient.batchCreateRagMetadataAsync(batch))(_ => ().pure[F])
+            .flatMap(_.await)
+            .recoverWith {
+              case err if alreadyExists(err) => chunk.traverse_(updateFileMetadata(fileName, _))
+            }
+        }
+
+    private def toCreateMetadataRequest(fileName: String, entry: MetadataEntry): CreateRagMetadataRequest =
+      CreateRagMetadataRequest
+        .newBuilder()
+        .setParent(fileName)
+        .setRagMetadata(toRagMetadata(entry))
+        .setRagMetadataId(entry.key)
+        .build()
+
+    private def updateFileMetadata(fileName: String, entry: MetadataEntry): F[Unit] =
+      Sync[F].blocking(dataClient.updateRagMetadata(toRagMetadata(entry).toBuilder.setName(s"$fileName/ragMetadata/${entry.key}").build())).void
+
+    private def toRagMetadata(entry: MetadataEntry): RagMetadata =
+      RagMetadata
+        .newBuilder()
+        .setUserSpecifiedMetadata(UserSpecifiedMetadata.newBuilder().setKey(entry.key).setValue(toMetadataValue(entry.value)).build())
+        .build()
+
+    private def resourceKey(name: String, protoKey: String): String =
+      Option(protoKey).filter(_.nonEmpty).getOrElse(name.split('/').lastOption.getOrElse(name))
+
+    private def alreadyExists(err: Throwable): Boolean =
+      Iterator
+        .iterate(err)(_.getCause)
+        .takeWhile(_ != null)
+        .take(8)
+        .exists {
+          case api: ApiException => api.getStatusCode.getCode == StatusCode.Code.ALREADY_EXISTS
+          case _                 => false
+        }
 
     private def finishImport(
         corpusName: String,

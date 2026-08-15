@@ -1,6 +1,7 @@
 package io.github.serhiip.constellations.common
 
 import cats.syntax.all.*
+import io.circe.Json
 import io.circe.parser.decode
 import io.circe.syntax.*
 import munit.FunSuite
@@ -13,7 +14,7 @@ class CodecsSuite extends FunSuite:
     val json    = value.asJson
     val decoded = decode[Value](json.noSpaces)
 
-    assertEquals(json, io.circe.Json.Null)
+    assertEquals(json, Json.Null)
     assertEquals(decoded, Right(value))
   }
 
@@ -22,7 +23,7 @@ class CodecsSuite extends FunSuite:
     val json    = value.asJson
     val decoded = decode[Value](json.noSpaces)
 
-    assertEquals(json, io.circe.Json.fromDoubleOrNull(42.5))
+    assertEquals(json, Json.fromDoubleOrNull(42.5))
     assertEquals(decoded, Right(value))
   }
 
@@ -31,7 +32,7 @@ class CodecsSuite extends FunSuite:
     val json    = value.asJson
     val decoded = decode[Value](json.noSpaces)
 
-    assertEquals(json, io.circe.Json.fromString("hello world"))
+    assertEquals(json, Json.fromString("hello world"))
     assertEquals(decoded, Right(value))
   }
 
@@ -40,7 +41,7 @@ class CodecsSuite extends FunSuite:
     val json    = value.asJson
     val decoded = decode[Value](json.noSpaces)
 
-    assertEquals(json, io.circe.Json.fromBoolean(true))
+    assertEquals(json, Json.fromBoolean(true))
     assertEquals(decoded, Right(value))
   }
 
