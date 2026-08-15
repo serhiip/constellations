@@ -2,7 +2,7 @@ package io.github.serhiip.constellations.schema
 
 import scala.quoted.*
 
-import io.github.serhiip.constellations.common.{Schema, llmHint}
+import io.github.serhiip.constellations.common.{Docstrings, Schema, llmHint}
 import io.github.serhiip.constellations.naming.Configuration
 
 object SchemaMacros:
@@ -86,7 +86,7 @@ object SchemaMacros:
           }
 
     def normalizeDocstring(raw: Option[String]): Option[String] =
-      raw.map(_.stripPrefix("/**").stripSuffix("*/").trim).filter(_.nonEmpty)
+      Docstrings.sanitize(raw)
 
     def withDocstring(schemaExpr: Expr[Schema], docstring: Option[String]): Expr[Schema] =
       normalizeDocstring(docstring).fold(schemaExpr)(doc => '{ $schemaExpr.copy(description = Some(${ Expr(doc) })) })

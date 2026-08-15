@@ -26,15 +26,17 @@ val fromPairs = Struct("ok" -> Value.bool(true))
 
 ## Manual Schema builders
 
-```scala mdoc:silent
-val personSchema: Schema = Schema.obj(
+```scala mdoc
+import cats.syntax.show.*
+
+Schema.obj(
   description = Some("A person"),
   properties = Map(
     "name" -> Schema.string(description = Some("Full name")),
     "age" -> Schema.integer(minimum = Some(0))
   ),
   required = List("name", "age")
-)
+).show
 ```
 
 Helpers: `Schema.string`, `.number`, `.integer`, `.boolean`, `.array`, `.obj`.
@@ -43,7 +45,7 @@ Helpers: `Schema.string`, `.number`, `.integer`, `.boolean`, `.array`, `.obj`.
 
 Derive JSON Schema from case classes and sealed hierarchies:
 
-```scala mdoc:silent
+```scala mdoc
 import io.github.serhiip.constellations.common.{Schema, llmHint}
 import io.github.serhiip.constellations.schema.ToSchema
 
@@ -53,9 +55,10 @@ final case class Person(
     age: Int
 )
 
-val derived: Schema = Schema.derived[Person]
-val viaTypeclass: Schema = ToSchema[Person].schema
+Schema.derived[Person].show
 ```
+
+`ToSchema[Person].schema` is the same value.
 
 Supported:
 
@@ -71,10 +74,7 @@ These are provided as `given ToSchema[...]` instances in the `ToSchema` companio
 
 Provide your own `given ToSchema[T]` to control how a type maps to `Schema`. Derivation honors it wherever `T` appears — as a top-level type, a nested field, or inside `Option` / `List` / `Seq`:
 
-```scala mdoc:silent
-import io.github.serhiip.constellations.common.Schema
-import io.github.serhiip.constellations.schema.ToSchema
-
+```scala mdoc
 final case class Temperature(celsius: Double)
 object Temperature:
   given ToSchema[Temperature] =
@@ -83,7 +83,7 @@ object Temperature:
 final case class Reading(id: String, temperature: Temperature, history: List[Temperature])
 
 // `temperature` and each item of `history` use the custom Temperature schema
-val readingSchema: Schema = Schema.derived[Reading]
+Schema.derived[Reading].show
 ```
 
 ### `@llmHint`

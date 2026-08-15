@@ -33,6 +33,7 @@ final case class DocumentedPayload(
 )
 
 trait DocumentedApi[F[_]]:
+  /** Send a documented payload. */
   def submit(payload: DocumentedPayload): F[String]
 
 final case class CustomId(value: String)
@@ -676,8 +677,10 @@ class ToolDispatcherTest extends CatsEffectSuite:
       def submit(payload: DocumentedPayload): IO[String] = IO.pure(payload.label)
     val documentedDispatcher = ToolDispatcher.generate[IO](api)
     documentedDispatcher.getFunctionDeclarations.map { decls =>
+      val submit = decls.find(_.name == "documented_api_submit")
+      assertEquals(submit.flatMap(_.description), Some("Send a documented payload."))
       assertEquals(
-        decls.find(_.name == "documented_api_submit").flatMap(_.parameters),
+        submit.flatMap(_.parameters),
         Some(
           Schema.obj(
             properties = Map(

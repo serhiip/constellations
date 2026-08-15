@@ -225,6 +225,8 @@ object Schema:
   inline def derivedWith[A](inline config: Configuration): Schema =
     ${ SchemaMacros.deriveWithImpl[A]('config) }
 
+  given Show[Schema] = Show.show(_.asJson.spaces2)
+
 final case class FunctionDeclaration(name: String, description: Option[String] = None, parameters: Option[Schema] = None)
 
 object FunctionDeclaration:

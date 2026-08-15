@@ -290,7 +290,7 @@ object ToolDispatcher:
       import quotes.reflect.*
       val traitName  = Expr(traitSym.name)
       val methodName = Expr(method.name)
-      val docstring  = method.docstring
+      val docstring  = Docstrings.sanitize(method.docstring)
 
       def paramType(param: Symbol): TypeRepr =
         param.tree match
@@ -307,7 +307,7 @@ object ToolDispatcher:
             val paramTpe        = paramType(param)
             val paramSchemaExpr = paramTpe.asType match
               case '[t] => '{ summonInline[ToSchema[t]].schemaWith($config) }
-            val doc             = param.docstring
+            val doc             = Docstrings.sanitize(param.docstring)
             val schemaWithDesc  = doc match
               case Some(d) => '{ $paramSchemaExpr.copy(description = Some(${ Expr(d) })) }
               case None    => paramSchemaExpr

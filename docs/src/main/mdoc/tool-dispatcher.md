@@ -191,8 +191,60 @@ yield rendered).unsafeRunSync()
 To inspect a single tool by its Scala method (without hard-coding the rendered name), use `getDeclaration`. Lookup keys are the **raw** trait and method names, so it stays correct regardless of the `Configuration` used when the dispatcher was built. Empty-parameter methods need the `()` form:
 
 ```scala mdoc
-dispatcher.getDeclaration[Calculator](_.add).fold("")(_.show)
+dispatcher.getDeclaration[Calculator](_.add).map(_.show).get
 ```
+
+`@llmHint` does not annotate trait methods. It annotates **parameter types** (case-class fields and the class itself) and is applied through `ToSchema` when the declaration schema is built. Use it for field descriptions, bounds, patterns, and examples — `@llmHint(description = …)` wins over a type-level docstring:
+
+```scala mdoc:silent
+trait Catalog[F[_]]:
+  /** Look up a product by SKU. */
+  def lookup(item: CatalogItem): F[String]
+
+  /** Register a shopper email. */
+  def register(contact: ShopperContact): F[String]
+
+final case class CatalogItem(
+    @llmHint(
+      description = Some("Stock-keeping unit"),
+      minLength = Some(3L),
+      maxLength = Some(12L),
+      pattern = Some("[A-Z0-9]+"),
+      example = Some("SKU12")
+    )
+    sku: String,
+    @llmHint(description = Some("Quantity to reserve"), minimum = Some(1.0), maximum = Some(99.0))
+    quantity: Int
+)
+
+/** Overridden by the class-level @llmHint description. */
+@llmHint(description = Some("Shopper contact details"), title = Some("contact"))
+final case class ShopperContact(
+    @llmHint(
+      description = Some("Email address"),
+      format = Some("email"),
+      example = Some("ada@example.com")
+    )
+    email: String
+)
+
+val catalog = new Catalog[IO]:
+  def lookup(item: CatalogItem): IO[String] = IO.pure(item.sku)
+  def register(contact: ShopperContact): IO[String] = IO.pure(contact.email)
+
+val catalogDispatcher: ToolDispatcher[IO] =
+  ToolDispatcher.generate[IO](catalog)
+```
+
+```scala mdoc
+catalogDispatcher.getDeclaration[Catalog](_.lookup).map(_.show).get
+```
+
+```scala mdoc
+catalogDispatcher.getDeclaration[Catalog](_.register).map(_.show).get
+```
+
+See [Values & schemas](value-and-types.md) for the full `@llmHint` field list.
 
 Pass these to your LLM provider as tools, or convert them with [MCP](mcp.md) via `fromToolDispatcher`.
 
@@ -286,7 +338,7 @@ From method signatures the macro supports:
 - Case classes (nested objects)
 - Sealed traits / enums (string enums)
 
-ToolDispatcher parameter schemas use **docstrings**, not `@llmHint`. For standalone schema derivation with `@llmHint`, see [Values & schemas](value-and-types.md).
+Method and parameter **docstrings** become the declaration / top-level parameter descriptions. Nested field metadata comes from `@llmHint` (and type-level docstrings) via `ToSchema` — see the examples above and [Values & schemas](value-and-types.md).
 
 ## Next
 
