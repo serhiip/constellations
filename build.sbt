@@ -161,6 +161,12 @@ lazy val docs = project
     name                                       := "constellations-docs",
     moduleName                                 := "constellations-docs",
     publish / skip                             := true,
+    // mdoc emits `$doc.binder(x)` as a non-Unit statement; keep -Werror for everything else.
+    tpolecatExcludeOptions ++= Set(
+      org.typelevel.scalacoptions.ScalacOptions.warnUnusedLocals,
+      org.typelevel.scalacoptions.ScalacOptions.warnNonUnitStatement,
+      org.typelevel.scalacoptions.ScalacOptions.warnValueDiscard
+    ),
     mdocIn                                     := baseDirectory.value / "src" / "main" / "mdoc",
     mdocOut                                    := baseDirectory.value / ".." / "website" / "docs",
     mdocVariables                              := Map(

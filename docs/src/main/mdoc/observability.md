@@ -8,7 +8,6 @@ Constellations components can be wrapped with OpenTelemetry tracing, log4cats lo
 
 ```scala mdoc:compile-only
 import cats.MonadThrow
-import cats.effect.IO
 import org.typelevel.log4cats.LoggerFactory
 import org.typelevel.otel4s.metrics.Meter
 import org.typelevel.otel4s.trace.Tracer

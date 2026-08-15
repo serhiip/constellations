@@ -180,19 +180,23 @@ result match
 `getFunctionDeclarations` returns schemas built from your traits (names, docstrings, parameter schemas). Those values are easy to print while debugging — `show` renders each declaration as pretty-printed JSON, so you can inspect exactly what will be registered with the model:
 
 ```scala mdoc
-import cats.syntax.foldable.*
 import cats.syntax.show.*
 
-val printDeclarations =
-  for
-    declarations <- dispatcher.getFunctionDeclarations
-    _            <- declarations.traverse_(d => IO.println(d.show))
-  yield ()
+(for
+  declarations <- dispatcher.getFunctionDeclarations
+  rendered      = declarations.map(_.show).mkString("\n")
+yield rendered).unsafeRunSync()
+```
 
-printDeclarations.unsafeRunSync()
+To inspect a single tool by its Scala method (without hard-coding the rendered name), use `getDeclaration`. Lookup keys are the **raw** trait and method names, so it stays correct regardless of the `Configuration` used when the dispatcher was built. Empty-parameter methods need the `()` form:
+
+```scala mdoc
+dispatcher.getDeclaration[Calculator](_.add).fold("")(_.show)
 ```
 
 Pass these to your LLM provider as tools, or convert them with [MCP](mcp.md) via `fromToolDispatcher`.
+
+Overloaded methods share one entry (they already collide on tool name today); the first declaration wins. Methods with `using` parameter lists eta-expand by applying the given, so a selector for those needs the givens in scope.
 
 ## Results and HumanInTheLoop
 
@@ -235,7 +239,6 @@ Both cases carry the original `FunctionCall` (including `callId` when the provid
 - `MonadThrow[F]`
 
 ```scala mdoc:compile-only
-import cats.effect.IO
 import cats.MonadThrow
 import org.typelevel.log4cats.LoggerFactory
 import org.typelevel.otel4s.metrics.Meter
@@ -262,7 +265,6 @@ See [Observability](observability.md).
 ```scala mdoc:silent
 import cats.~>
 import scala.concurrent.Future
-import scala.concurrent.ExecutionContext.Implicits.global
 
 val futureDispatcher: ToolDispatcher[Future] =
   ToolDispatcher.mapK(dispatcher)(new (IO ~> Future) {
