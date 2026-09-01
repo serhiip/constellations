@@ -77,7 +77,7 @@ object Dependencies {
   )
 
   val mcp = Seq(
-    "io.modelcontextprotocol.sdk" % "mcp" % "1.1.1"
+    "io.modelcontextprotocol.sdk" % "mcp" % "1.1.4"
   )
 
   val awsBedrock = Seq(
