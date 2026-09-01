@@ -73,7 +73,7 @@ object Dependencies {
   )
 
   val googleCloudNio = Seq(
-    "com.google.cloud" % "google-cloud-nio" % "0.127.34"
+    "com.google.cloud" % "google-cloud-nio" % "0.127.38"
   )
 
   val mcp = Seq(
