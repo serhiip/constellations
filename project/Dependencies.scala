@@ -1,10 +1,10 @@
 import sbt.*
 
 object Dependencies {
-  val catsEffectVersion      = "3.6.0"
-  val otel4sVersion          = "1.0.0"
+  val catsEffectVersion      = "3.6.4"
+  val otel4sVersion          = "1.0.1"
   val munitCatsEffectVersion = "2.0.0"
-  val munitVersion           = "1.0.0"
+  val munitVersion           = "1.0.4"
   val scalacheckVersion      = "1.18.1"
   val circeVersion           = "0.14.10"
   val http4sVersion          = "0.23.30"
@@ -40,7 +40,7 @@ object Dependencies {
   )
 
   val logback = Seq(
-    "ch.qos.logback" % "logback-classic" % "1.5.16"
+    "ch.qos.logback" % "logback-classic" % "1.5.38"
   )
 
   val circe = Seq(
@@ -61,7 +61,7 @@ object Dependencies {
     "org.scalameta"   %% "munit"             % munitVersion           % Test,
     "org.scalameta"   %% "munit-scalacheck"  % munitVersion           % Test,
     "org.scalacheck"  %% "scalacheck"        % scalacheckVersion      % Test,
-    "com.google.jimfs" % "jimfs"             % "1.3.0"                % Test
+    "com.google.jimfs" % "jimfs"             % "1.3.2"                % Test
   )
 
   val googleGenai = Seq(
@@ -77,15 +77,15 @@ object Dependencies {
   )
 
   val mcp = Seq(
-    "io.modelcontextprotocol.sdk" % "mcp" % "1.1.1"
+    "io.modelcontextprotocol.sdk" % "mcp" % "1.1.4"
   )
 
   val awsBedrock = Seq(
-    "software.amazon.awssdk" % "bedrockruntime" % "2.46.15"
+    "software.amazon.awssdk" % "bedrockruntime" % "2.46.21"
   )
 
   val awsSignin = Seq(
-    "software.amazon.awssdk" % "signin" % "2.46.15"
+    "software.amazon.awssdk" % "signin" % "2.46.21"
   )
 
   val mockito = Seq(

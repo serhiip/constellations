@@ -6,13 +6,7 @@ import cats.MonadThrow
 import cats.syntax.all.*
 import fs2.{Chunk, Stream}
 import io.circe.parser.parse
-import software.amazon.awssdk.services.bedrockruntime.model.{
-  ContentBlock,
-  ConverseResponse,
-  ImageBlock,
-  ImageFormat,
-  StopReason
-}
+import software.amazon.awssdk.services.bedrockruntime.model.{ContentBlock, ConverseResponse, ImageBlock, ImageFormat, StopReason}
 
 import io.github.serhiip.constellations.*
 import io.github.serhiip.constellations.bedrock.Codecs

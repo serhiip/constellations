@@ -3,7 +3,6 @@ package io.github.serhiip.constellations
 import java.net.URI
 import java.util.UUID
 
-
 import cats.Applicative
 import cats.effect.{IO, IOApp}
 import cats.effect.std.{Console, Env}
@@ -52,50 +51,52 @@ class DiagnosticFunctionsDefault[F[_]: Applicative] extends DiagnosticFunctions[
 
 object DispatcherEncodingExample extends IOApp.Simple:
   def run: IO[Unit] =
-    val factory = Slf4jFactory.create[IO]
+    val factory             = Slf4jFactory.create[IO]
     given LoggerFactory[IO] = factory
-    factory.create.flatMap { implicit logger =>
-      for
-        apiKeyOpt                  <- Env[IO].get("OPENROUTER_API_KEY")
-        apiKey                     <- apiKeyOpt.liftTo[IO](new RuntimeException("OPENROUTER_API_KEY is not set"))
-        model                       = sys.env.getOrElse("OPENROUTER_MODEL", "google/gemini-3-pro-preview")
-        _                          <- Client
-                                        .resource[IO](apiKey, Client.Config())
-                                        .use { client =>
-                                          for
-                                            dispatcher <- ToolDispatcher.observed(
-                                                            ToolDispatcher.generate[IO](
-                                                              ExampleFunctionsImpl[IO],
-                                                              DiagnosticFunctionsDefault[IO]
-                                                            )
-                                                          )
-                                            decls      <- dispatcher.getFunctionDeclarations
-                                            rawInvoker  = OpenRouter.chatCompletion(
-                                                            client,
-                                                            OpenRouter.Config(
-                                                              model = model,
-                                                              temperature = 0.7.some,
-                                                              systemPrompt =
-                                                                "You are a helpful assistant. Use the provided tools when relevant. Use full function names for tool calls.".some
-                                                            ),
-                                                            decls
-                                                          )
-                                            invoker     <- Invoker.observed(rawInvoker)
-                                            files      <- Files[IO](URI.create("file:///tmp/"))
-                                            rawExecutor = Stateful[IO, ChatCompletionResponse](
-                                                            Stateful.Config(functionCallLimit = 5),
-                                                            invoker,
-                                                            files
-                                                          )
-                                            executor    = Executor(rawExecutor)
-                                            rawMemory  <- Memory.inMemory[IO, UUID]
-                                            memory      <- Memory(rawMemory)
-                                            _          <- IO.println("ToolDispatcher encoding example with OpenRouter. Type 'exit' to quit.\n")
-                                            _          <- replLoop(dispatcher, executor, memory)
-                                          yield ()
-                                        }
-      yield ()
-    }.handleErrorWith(err => IO.println(s"Error: ${err.getMessage}"))
+    factory.create
+      .flatMap { implicit logger =>
+        for
+          apiKeyOpt <- Env[IO].get("OPENROUTER_API_KEY")
+          apiKey    <- apiKeyOpt.liftTo[IO](new RuntimeException("OPENROUTER_API_KEY is not set"))
+          model      = sys.env.getOrElse("OPENROUTER_MODEL", "google/gemini-3-pro-preview")
+          _         <- Client
+                         .resource[IO](apiKey, Client.Config())
+                         .use { client =>
+                           for
+                             dispatcher <- ToolDispatcher.observed(
+                                             ToolDispatcher.generate[IO](
+                                               ExampleFunctionsImpl[IO],
+                                               DiagnosticFunctionsDefault[IO]
+                                             )
+                                           )
+                             decls      <- dispatcher.getFunctionDeclarations
+                             rawInvoker  = OpenRouter.chatCompletion(
+                                             client,
+                                             OpenRouter.Config(
+                                               model = model,
+                                               temperature = 0.7.some,
+                                               systemPrompt =
+                                                 "You are a helpful assistant. Use the provided tools when relevant. Use full function names for tool calls.".some
+                                             ),
+                                             decls
+                                           )
+                             invoker    <- Invoker.observed(rawInvoker)
+                             files      <- Files[IO](URI.create("file:///tmp/"))
+                             rawExecutor = Stateful[IO, ChatCompletionResponse](
+                                             Stateful.Config(functionCallLimit = 5),
+                                             invoker,
+                                             files
+                                           )
+                             executor    = Executor(rawExecutor)
+                             rawMemory  <- Memory.inMemory[IO, UUID]
+                             memory     <- Memory(rawMemory)
+                             _          <- IO.println("ToolDispatcher encoding example with OpenRouter. Type 'exit' to quit.\n")
+                             _          <- replLoop(dispatcher, executor, memory)
+                           yield ()
+                         }
+        yield ()
+      }
+      .handleErrorWith(err => IO.println(s"Error: ${err.getMessage}"))
 
   private def replLoop(
       dispatcher: ToolDispatcher[IO],
