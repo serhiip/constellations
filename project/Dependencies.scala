@@ -65,7 +65,7 @@ object Dependencies {
   )
 
   val googleGenai = Seq(
-    "com.google.genai" % "google-genai" % "1.18.0"
+    "com.google.genai" % "google-genai" % "1.68.0"
   )
 
   val googleCloudAiplatform = Seq(
