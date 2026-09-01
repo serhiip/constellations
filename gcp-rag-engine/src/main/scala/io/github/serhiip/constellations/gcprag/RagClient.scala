@@ -716,9 +716,9 @@ object RagClient:
     private def createDataSchemas(corpusName: String, schemas: NEL[DataSchema]): F[Unit] =
       val op =
         for
-          existing  <- listSchemaKeys(corpusName)
-          remaining  = schemas.filterNot(schema => existing.contains(schema.key))
-          _         <- remaining.grouped(MaxBatchCreate).toList.flatMap(NEL.fromList).traverse_(batchCreateDataSchemas(corpusName, _))
+          existing <- listSchemaKeys(corpusName)
+          remaining = schemas.filterNot(schema => existing.contains(schema.key))
+          _        <- remaining.grouped(MaxBatchCreate).toList.flatMap(NEL.fromList).traverse_(batchCreateDataSchemas(corpusName, _))
         yield ()
       op.adaptError(Error.ApiFailure("create-data-schema", _))
 
@@ -802,7 +802,9 @@ object RagClient:
         .build()
 
     private def updateFileMetadata(fileName: String, entry: MetadataEntry): F[Unit] =
-      Sync[F].blocking(dataClient.updateRagMetadata(toRagMetadata(entry).toBuilder.setName(s"$fileName/ragMetadata/${entry.key}").build())).void
+      Sync[F]
+        .blocking(dataClient.updateRagMetadata(toRagMetadata(entry).toBuilder.setName(s"$fileName/ragMetadata/${entry.key}").build()))
+        .void
 
     private def toRagMetadata(entry: MetadataEntry): RagMetadata =
       RagMetadata
