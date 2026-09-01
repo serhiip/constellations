@@ -1,7 +1,7 @@
 import sbt.*
 
 object Dependencies {
-  val catsEffectVersion      = "3.6.0"
+  val catsEffectVersion      = "3.6.4"
   val otel4sVersion          = "1.0.0"
   val munitCatsEffectVersion = "2.0.0"
   val munitVersion           = "1.0.4"
