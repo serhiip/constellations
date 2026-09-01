@@ -6,7 +6,7 @@ object Dependencies {
   val munitCatsEffectVersion = "2.0.0"
   val munitVersion           = "1.0.0"
   val scalacheckVersion      = "1.18.1"
-  val circeVersion           = "0.14.10"
+  val circeVersion           = "0.14.16"
   val http4sVersion          = "0.23.30"
   val catsRetryVersion       = "4.0.0"
   val log4catsCoreVersion    = "2.7.1"
