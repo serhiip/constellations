@@ -17,7 +17,7 @@ object Dependencies {
     "org.typelevel"    %% "cats-effect"        % catsEffectVersion,
     "org.typelevel"    %% "cats-effect-kernel" % catsEffectVersion,
     "org.typelevel"    %% "cats-effect-std"    % catsEffectVersion,
-    "org.typelevel"    %% "cats-mtl"           % "1.5.0",
+    "org.typelevel"    %% "cats-mtl"           % "1.7.0",
     "com.github.cb372" %% "cats-retry"         % catsRetryVersion
   )
 
