@@ -11,7 +11,7 @@ object Dependencies {
   val catsRetryVersion       = "4.0.0"
   val log4catsCoreVersion    = "2.7.1"
   val log4catsSlf4jVersion   = "2.7.1"
-  val fs2Version             = "3.11.0"
+  val fs2Version             = "3.13.0"
 
   val catsEffect = Seq(
     "org.typelevel"    %% "cats-effect"        % catsEffectVersion,
