@@ -81,7 +81,7 @@ object Dependencies {
   )
 
   val awsBedrock = Seq(
-    "software.amazon.awssdk" % "bedrockruntime" % "2.46.15"
+    "software.amazon.awssdk" % "bedrockruntime" % "2.46.21"
   )
 
   val awsSignin = Seq(
