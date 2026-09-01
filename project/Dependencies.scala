@@ -89,7 +89,7 @@ object Dependencies {
   )
 
   val mockito = Seq(
-    "org.mockito" % "mockito-core" % "5.14.2" % Test
+    "org.mockito" % "mockito-core" % "5.23.0" % Test
   )
 
   val constellationsCommon =
