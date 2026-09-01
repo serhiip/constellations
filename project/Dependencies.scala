@@ -9,7 +9,7 @@ object Dependencies {
   val circeVersion           = "0.14.16"
   val http4sVersion          = "0.23.36"
   val catsRetryVersion       = "4.0.0"
-  val log4catsCoreVersion    = "2.7.1"
+  val log4catsCoreVersion    = "2.8.0"
   val log4catsSlf4jVersion   = "2.7.1"
   val fs2Version             = "3.13.0"
 
