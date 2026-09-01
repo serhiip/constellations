@@ -69,7 +69,7 @@ object Dependencies {
   )
 
   val googleCloudAiplatform = Seq(
-    "com.google.cloud" % "google-cloud-aiplatform" % "3.94.0"
+    "com.google.cloud" % "google-cloud-aiplatform" % "3.97.0"
   )
 
   val googleCloudNio = Seq(
