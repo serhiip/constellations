@@ -149,6 +149,9 @@ protected object MessageHandler:
         "image_url" -> Json.obj("url" -> Json.fromString(dataUrl))
       )
 
+  private def toolResultContent(content: FunctionResponse): Json =
+    Json.fromString(content.response.asJson.noSpaces)
+
   def gemini: MessageHandler = new:
     def convertUserMessage(content: List[ContentPart]): Json =
       content match
@@ -158,7 +161,7 @@ protected object MessageHandler:
     def convertToolResultMessage(content: FunctionResponse): ChatMessage =
       ChatMessage(
         role = "tool",
-        content = Some(Json.fromString(content.response.asJson.noSpaces)),
+        content = Some(toolResultContent(content)),
         toolCallId = content.call.callId
       )
 
@@ -169,7 +172,7 @@ protected object MessageHandler:
     def convertToolResultMessage(content: FunctionResponse): ChatMessage =
       ChatMessage(
         role = "tool",
-        content = Some(Json.fromString(content.response.asJson.noSpaces)),
+        content = Some(toolResultContent(content)),
         toolCallId = content.call.callId,
         name = Some(content.call.name)
       )
@@ -181,7 +184,7 @@ protected object MessageHandler:
     def convertToolResultMessage(content: FunctionResponse): ChatMessage =
       ChatMessage(
         role = "tool",
-        content = Some(content.response.asJson),
+        content = Some(toolResultContent(content)),
         toolCallId = content.call.callId,
         name = Some(content.call.name)
       )

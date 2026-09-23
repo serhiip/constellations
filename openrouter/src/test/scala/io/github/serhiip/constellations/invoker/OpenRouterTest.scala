@@ -365,13 +365,14 @@ class OpenRouterTest extends CatsEffectSuite:
       // The arguments should be the JSON string representation of calculatorArgs
       assertEquals(toolCall.function.arguments, """{"a":2.0,"b":3.0}""")
 
-      // Check the tool result message (model "gpt-4o" has no openai/ prefix, so default handler → JSON object)
+      // Check the tool result message (model "gpt-4o" has no openai/ prefix, so default handler → JSON string)
       assertEquals(request.messages(2).role, "tool")
       assertEquals(request.messages(2).name, Some("calculator"))
       assert(request.messages(2).toolCallId.isDefined)
+      val toolContent = io.circe.parser.parse(request.messages(2).content.get.asString.get).toOption.get
       assertEquals(
-        request.messages(2).content,
-        Some(Json.obj("result" -> Json.fromDoubleOrNull(5.0), "operation" -> Json.fromString("addition")))
+        toolContent,
+        Json.obj("result" -> Json.fromDoubleOrNull(5.0), "operation" -> Json.fromString("addition"))
       )
   }
 
@@ -780,8 +781,7 @@ class OpenRouterTest extends CatsEffectSuite:
       assertEquals(toolResultMessage.name, Some("calculator")) // Default should have name field
       assert(toolResultMessage.toolCallId.isDefined)
       assertEquals(toolResultMessage.toolCallId.get, "call-123")
-      // Content should be a JSON object for default handler
-      val contentObject = toolResultMessage.content.get.asObject.get
+      val contentObject = io.circe.parser.parse(toolResultMessage.content.get.asString.get).toOption.get.asObject.get
       assertEquals(contentObject("result").get.asNumber.get.toDouble, 5.0)
   }
 
@@ -883,5 +883,6 @@ class OpenRouterTest extends CatsEffectSuite:
     assertEquals(result.role, "tool")
     assertEquals(result.name, Some("calculator"))
     assertEquals(result.toolCallId, "call-123".some)
-    assertEquals(result.content.get.asObject.get("result").get.asNumber.get.toDouble, 5.0)
+    val contentObject = io.circe.parser.parse(result.content.get.asString.get).toOption.get.asObject.get
+    assertEquals(contentObject("result").get.asNumber.get.toDouble, 5.0)
   }
