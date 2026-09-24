@@ -65,15 +65,15 @@ object Dependencies {
   )
 
   val googleGenai = Seq(
-    "com.google.genai" % "google-genai" % "1.18.0"
+    "com.google.genai" % "google-genai" % "1.68.0"
   )
 
   val googleCloudAiplatform = Seq(
-    "com.google.cloud" % "google-cloud-aiplatform" % "3.94.0"
+    "com.google.cloud" % "google-cloud-aiplatform" % "3.97.0"
   )
 
   val googleCloudNio = Seq(
-    "com.google.cloud" % "google-cloud-nio" % "0.127.34"
+    "com.google.cloud" % "google-cloud-nio" % "0.127.38"
   )
 
   val mcp = Seq(
