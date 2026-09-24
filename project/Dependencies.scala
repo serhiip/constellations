@@ -3,21 +3,21 @@ import sbt.*
 object Dependencies {
   val catsEffectVersion      = "3.6.0"
   val otel4sVersion          = "1.0.0"
-  val munitCatsEffectVersion = "2.0.0"
+  val munitCatsEffectVersion = "2.2.0"
   val munitVersion           = "1.0.0"
   val scalacheckVersion      = "1.18.1"
-  val circeVersion           = "0.14.10"
-  val http4sVersion          = "0.23.30"
+  val circeVersion           = "0.14.16"
+  val http4sVersion          = "0.23.36"
   val catsRetryVersion       = "4.0.0"
-  val log4catsCoreVersion    = "2.7.1"
-  val log4catsSlf4jVersion   = "2.7.1"
-  val fs2Version             = "3.11.0"
+  val log4catsCoreVersion    = "2.8.0"
+  val log4catsSlf4jVersion   = "2.8.0"
+  val fs2Version             = "3.13.0"
 
   val catsEffect = Seq(
     "org.typelevel"    %% "cats-effect"        % catsEffectVersion,
     "org.typelevel"    %% "cats-effect-kernel" % catsEffectVersion,
     "org.typelevel"    %% "cats-effect-std"    % catsEffectVersion,
-    "org.typelevel"    %% "cats-mtl"           % "1.5.0",
+    "org.typelevel"    %% "cats-mtl"           % "1.7.0",
     "com.github.cb372" %% "cats-retry"         % catsRetryVersion
   )
 
