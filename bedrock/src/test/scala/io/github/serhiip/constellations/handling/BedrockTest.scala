@@ -92,8 +92,8 @@ final class BedrockHandlingTest extends CatsEffectSuite:
   }
 
   test("getImages extracts image blocks") {
-    val bytes = Array[Byte](1, 2, 3, 4)
-    val image = ImageBlock
+    val bytes    = Array[Byte](1, 2, 3, 4)
+    val image    = ImageBlock
       .builder()
       .format(ImageFormat.PNG)
       .source(ImageSource.builder().bytes(SdkBytes.fromByteArray(bytes)).build())
@@ -111,7 +111,7 @@ final class BedrockHandlingTest extends CatsEffectSuite:
   }
 
   test("getImages fails when image source has no bytes") {
-    val image = ImageBlock
+    val image    = ImageBlock
       .builder()
       .format(ImageFormat.JPEG)
       .source(ImageSource.builder().build())

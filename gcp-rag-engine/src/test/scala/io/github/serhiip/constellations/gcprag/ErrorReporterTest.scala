@@ -51,7 +51,7 @@ final class ErrorReporterTest extends CatsEffectSuite:
           assertEquals(result.importedCount, 1L)
           assertEquals(result.failedCount, 1L)
           assertEquals(result.partialFailuresGcsPath, Some(sinkPath))
-        case other => fail(s"expected Ior.Both, got $other")
+        case other                      => fail(s"expected Ior.Both, got $other")
       }
     }
   }
@@ -69,7 +69,7 @@ final class ErrorReporterTest extends CatsEffectSuite:
         case Ior.Left(failures) =>
           assertEquals(failures.size, 1)
           assertEquals(failures.head.status, "INVALID_ARGUMENT")
-        case other => fail(s"expected Ior.Left, got $other")
+        case other              => fail(s"expected Ior.Left, got $other")
       }
     }
   }
@@ -103,7 +103,7 @@ final class ErrorReporterTest extends CatsEffectSuite:
         case Left(err: ErrorReporter.Error.DecodeFailed) =>
           assertEquals(err.path, sinkPath)
           assert(err.message.nonEmpty)
-        case other => fail(s"expected DecodeFailed, got $other")
+        case other                                       => fail(s"expected DecodeFailed, got $other")
       }
     }
   }

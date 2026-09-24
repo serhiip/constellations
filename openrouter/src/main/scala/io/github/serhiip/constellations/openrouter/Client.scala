@@ -258,7 +258,9 @@ case class ModelPricing(
 
 object ModelPricing:
   private given Decoder[BigDecimal] =
-    Decoder.decodeBigDecimal.or(Decoder.decodeString.emap(s => Either.catchOnly[NumberFormatException](BigDecimal(s)).leftMap(_.getMessage)))
+    Decoder.decodeBigDecimal.or(
+      Decoder.decodeString.emap(s => Either.catchOnly[NumberFormatException](BigDecimal(s)).leftMap(_.getMessage))
+    )
 
   given Codec[ModelPricing] = ConfiguredCodec.derived
 
@@ -901,6 +903,6 @@ object Client:
   def mapK[F[_], G[_]](client: Client[F])(f: F ~> G): Client[G] = new Client[G]:
     def createChatCompletion(request: ChatCompletionRequest): G[ChatCompletionResponse] = f(client.createChatCompletion(request))
     def createCompletion(request: CompletionRequest): G[CompletionResponse]             = f(client.createCompletion(request))
-    def createEmbeddings(request: EmbeddingsRequest): G[EmbeddingsResponse]              = f(client.createEmbeddings(request))
+    def createEmbeddings(request: EmbeddingsRequest): G[EmbeddingsResponse]             = f(client.createEmbeddings(request))
     def listModels(): G[ModelsResponse]                                                 = f(client.listModels())
     def getGenerationStats(generationId: String): G[GenerationStats]                    = f(client.getGenerationStats(generationId))
