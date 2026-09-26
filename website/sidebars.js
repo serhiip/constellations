@@ -47,6 +47,7 @@ const sidebars = {
         'openrouter',
         'google-genai',
         'gcp-rag-engine',
+        'typesafe-ai',
       ],
     },
 

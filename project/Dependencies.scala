@@ -107,4 +107,6 @@ object Dependencies {
   val constellationsBedrock = awsBedrock ++ circe ++ testing
 
   val constellationsMcp = mcp ++ catsEffect ++ circe ++ testing
+
+  val constellationsTypesafeAi = http4s ++ circe ++ testing ++ logging
 }

@@ -78,6 +78,7 @@ lazy val root = (project in file("."))
     `constellations-gcp-rag-engine`,
     `constellations-bedrock`,
     `constellations-mcp`,
+    `constellations-typesafe-ai`,
     `constellations-examples`,
     docs
   )
@@ -140,11 +141,27 @@ lazy val `constellations-mcp` = (project in file("mcp"))
   )
   .dependsOn(`constellations-common`)
 
+lazy val `constellations-typesafe-ai` = (project in file("typesafe-ai"))
+  .settings(commonReleaseSettings)
+  .settings(
+    name         := "constellations-typesafe-ai",
+    scalaVersion := "3.9.0",
+    libraryDependencies ++= Dependencies.constellationsTypesafeAi,
+    // Scala 3.9 deprecates -Xfatal-warnings (emitted by tpolecat); replace with -Werror.
+    scalacOptions --= Seq("-Xfatal-warnings"),
+    scalacOptions += "-Werror"
+  )
+  .dependsOn(`constellations-common`)
+
 lazy val `constellations-examples` = (project in file("examples"))
   .settings(
     name           := "constellations-examples",
+    scalaVersion   := "3.9.0",
     libraryDependencies ++= Dependencies.logging ++ Dependencies.logback ++ Dependencies.googleCloudNio ++ Dependencies.awsSignin,
-    publish / skip := true
+    publish / skip := true,
+    // Scala 3.9 deprecates -Xfatal-warnings (emitted by tpolecat); replace with -Werror.
+    scalacOptions --= Seq("-Xfatal-warnings"),
+    scalacOptions += "-Werror"
   )
   .dependsOn(
     `constellations-core`,
@@ -152,7 +169,8 @@ lazy val `constellations-examples` = (project in file("examples"))
     `constellations-gcp-rag-engine`,
     `constellations-openrouter`,
     `constellations-bedrock`,
-    `constellations-mcp`
+    `constellations-mcp`,
+    `constellations-typesafe-ai`
   )
 
 lazy val docs = project
@@ -160,6 +178,7 @@ lazy val docs = project
   .settings(
     name                                       := "constellations-docs",
     moduleName                                 := "constellations-docs",
+    scalaVersion                               := "3.9.0",
     publish / skip                             := true,
     // mdoc emits `$doc.binder(x)` as a non-Unit statement; keep -Werror for everything else.
     tpolecatExcludeOptions ++= Set(
@@ -180,7 +199,8 @@ lazy val docs = project
         `constellations-core`,
         `constellations-openrouter`,
         `constellations-google-genai`,
-        `constellations-gcp-rag-engine`
+        `constellations-gcp-rag-engine`,
+        `constellations-typesafe-ai`
       ),
     syncApiDocs                                := {
       val _           = (Compile / unidoc).value
@@ -201,5 +221,6 @@ lazy val docs = project
     `constellations-core`,
     `constellations-openrouter`,
     `constellations-google-genai`,
-    `constellations-gcp-rag-engine`
+    `constellations-gcp-rag-engine`,
+    `constellations-typesafe-ai`
   )
