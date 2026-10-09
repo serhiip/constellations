@@ -20,7 +20,7 @@ import tools.jackson.databind.json.JsonMapper
 import io.github.serhiip.constellations.ToolDispatcher
 import io.github.serhiip.constellations.common.Codecs.given
 import io.github.serhiip.constellations.common.Observability.*
-import io.github.serhiip.constellations.common.{FunctionCall, FunctionDeclaration, Struct}
+import io.github.serhiip.constellations.common.{FunctionCall, FunctionDeclaration, Schema, Struct}
 
 trait McpToolSpec[F[_]]:
   def fromToolDispatcher(toolDispatcher: ToolDispatcher[F]): F[List[McpToolSpec.AsyncToolSpecification]]
@@ -53,7 +53,8 @@ object McpToolSpec:
         .builder()
         .tool(toMcpTool(declaration, jsonMapper))
         .callHandler((_, request) =>
-          val call = FunctionCall(declaration.name, Struct.fromMap(request.arguments().asScala.toMap), None)
+          val args = Option(request.arguments()).fold(Map.empty)(_.asScala.toMap)
+          val call = FunctionCall(declaration.name, Struct.fromMap(args), None)
           Mono
             .fromFuture(dispatcher.unsafeToCompletableFuture(toolDispatcher.dispatch(call).map(toCallToolResult)))
             .onErrorResume(error => Mono.just(toErrorResult(error)))
@@ -63,7 +64,8 @@ object McpToolSpec:
     private def toMcpTool(declaration: FunctionDeclaration, jsonMapper: McpJsonMapper): McpSchema.Tool =
       val builder = McpSchema.Tool.builder().name(declaration.name)
       declaration.description.foreach(builder.description)
-      declaration.parameters.foreach(schema => builder.inputSchema(jsonMapper, schema.asJson.noSpaces))
+      val schema = declaration.parameters.getOrElse(Schema.obj())
+      builder.inputSchema(jsonMapper, schema.asJson.noSpaces)
       builder.build()
 
     private def toCallToolResult(result: ToolDispatcher.Result): McpSchema.CallToolResult =

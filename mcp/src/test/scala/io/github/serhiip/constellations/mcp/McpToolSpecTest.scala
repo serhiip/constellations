@@ -20,6 +20,12 @@ class McpToolSpecTest extends CatsEffectSuite:
   object Calculator extends Calculator[IO]:
     def add(a: Int, b: Int): IO[Int] = IO.pure(a + b)
 
+  trait Status[F[_]]:
+    def listEntities(): F[List[String]]
+
+  object Status extends Status[IO]:
+    def listEntities(): IO[List[String]] = IO.pure(List("alpha"))
+
   final case class MethodPath(className: String, methodName: String)
 
   trait MethodsApi[F[_]]:
@@ -41,6 +47,38 @@ class McpToolSpecTest extends CatsEffectSuite:
           assertEquals(tools.size, 1)
           assertEquals(tool.tool().name(), "calculator_add")
           assertEquals(tool.tool().inputSchema().required().asScala.toList, List("a", "b"))
+  }
+
+  test("no-arg method publishes an empty object input schema") {
+    Dispatcher
+      .parallel[IO]
+      .use: dispatcher =>
+        for
+          mcpToolSpec <- McpToolSpec.core[IO](dispatcher).run(McpToolSpec.defaultConfig)
+          tools       <- mcpToolSpec.fromToolDispatcher(ToolDispatcher.generate[IO](Status))
+          tool         = tools.head.tool()
+        yield
+          assertEquals(tools.size, 1)
+          assertEquals(tool.name(), "status_list_entities")
+          assert(tool.inputSchema() != null)
+          assertEquals(tool.inputSchema().`type`(), "object")
+          val properties = Option(tool.inputSchema().properties()).fold(Map.empty[String, McpSchema.JsonSchema])(_.asScala.toMap)
+          assertEquals(properties, Map.empty)
+  }
+
+  test("no-arg tool call tolerates a missing arguments map") {
+    Dispatcher
+      .parallel[IO]
+      .use: dispatcher =>
+        for
+          mcpToolSpec <- McpToolSpec.core[IO](dispatcher).run(McpToolSpec.defaultConfig)
+          tools       <- mcpToolSpec.fromToolDispatcher(ToolDispatcher.generate[IO](Status))
+          request      = McpSchema.CallToolRequest("status_list_entities", null)
+          result      <- IO.blocking(tools.head.callHandler().apply(null, request).block())
+        yield
+          val content = result.content().get(0).asInstanceOf[McpSchema.TextContent]
+          assertEquals(result.isError().booleanValue(), false, clue = content.text())
+          assertEquals(content.text(), """{"value":["alpha"]}""")
   }
 
   test("generated tool dispatches MCP arguments through the dispatcher") {
