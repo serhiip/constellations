@@ -27,6 +27,7 @@ import com.google.cloud.aiplatform.v1beta1.{
   FileStatus,
   GetRagCorpusRequest,
   GetRagFileRequest,
+  GcsSource,
   ImportRagFilesOperationMetadata,
   ImportRagFilesRequest,
   ImportRagFilesResponse,
@@ -402,6 +403,82 @@ final class RagClientTest extends CatsEffectSuite:
       assertEquals(metaCaptor.getValue.getRequestsCount, 1)
       assertEquals(metaCaptor.getValue.getRequests(0).getRagMetadataId, "tenantid")
       assertEquals(metaCaptor.getValue.getRequests(0).getRagMetadata.getUserSpecifiedMetadata.getValue.getStrValue, "user-42")
+  }
+
+  test("importFiles stamps listed file metadata when the sink cannot be read") {
+    val data       = mockDataClient()
+    val rag        = mockRagClient()
+    val imported   = "gs://bucket/doc.txt"
+    val listedName = s"$corpusName/ragFiles/5812671852947145478"
+    val page       = mock(classOf[VertexRagDataServiceClient.ListRagFilesPagedResponse])
+    val listed     = RagFile.newBuilder().setName(listedName).setGcsSource(GcsSource.newBuilder().addUris(imported).build()).build()
+    val client     = RagClient.create[IO](
+      config,
+      data,
+      rag,
+      ImportResultLedger.core(_ => IO.raiseError(RuntimeException("trailing slash")))
+    )
+
+    doReturn(completed[ImportRagFilesResponse, ImportRagFilesOperationMetadata](ImportRagFilesResponse.getDefaultInstance, opName))
+      .when(data)
+      .importRagFilesAsync(any(classOf[ImportRagFilesRequest]))
+    when(data.listRagFiles(any(classOf[ListRagFilesRequest]))).thenReturn(page)
+    when(page.iterateAll()).thenReturn(List(listed).asJava)
+    stubMetadataList(data)
+    stubBatchCreateMetadata(data)
+
+    val source = GcsImportSource(
+      uris = NEL.one(imported),
+      resultSink = defaultSink,
+      metadata = Some(ImportFileMetadata(entries = Some(NEL.one(MetadataEntry("contextid", MetadataValue.Str("ctx-1"))))))
+    )
+
+    for
+      started <- client.importFiles(corpusName, source)
+      _       <- started.await
+    yield
+      val metaCaptor = ArgumentCaptor.forClass(classOf[BatchCreateRagMetadataRequest])
+      verify(data, times(1)).batchCreateRagMetadataAsync(metaCaptor.capture())
+      assertEquals(metaCaptor.getValue.getParent, listedName)
+  }
+
+  test("importFiles fails with import-result-sink when the sink cannot be read and no listed file matches") {
+    val data   = mockDataClient()
+    val rag    = mockRagClient()
+    val page   = mock(classOf[VertexRagDataServiceClient.ListRagFilesPagedResponse])
+    val listed = RagFile
+      .newBuilder()
+      .setName(s"$corpusName/ragFiles/other")
+      .setGcsSource(GcsSource.newBuilder().addUris("gs://bucket/other.txt").build())
+      .build()
+    val client = RagClient.create[IO](
+      config,
+      data,
+      rag,
+      ImportResultLedger.core(_ => IO.raiseError(RuntimeException("trailing slash")))
+    )
+
+    doReturn(completed[ImportRagFilesResponse, ImportRagFilesOperationMetadata](ImportRagFilesResponse.getDefaultInstance, opName))
+      .when(data)
+      .importRagFilesAsync(any(classOf[ImportRagFilesRequest]))
+    when(data.listRagFiles(any(classOf[ListRagFilesRequest]))).thenReturn(page)
+    when(page.iterateAll()).thenReturn(List(listed).asJava)
+
+    val source = GcsImportSource(
+      uris = NEL.one("gs://bucket/doc.txt"),
+      resultSink = defaultSink,
+      metadata = Some(ImportFileMetadata(entries = Some(NEL.one(MetadataEntry("contextid", MetadataValue.Str("ctx-1"))))))
+    )
+
+    for
+      started <- client.importFiles(corpusName, source)
+      result  <- started.await.attempt
+    yield result match
+      case Left(RagClient.Error.ApiFailure("import-result-sink", cause)) =>
+        assertEquals(cause.getMessage, "trailing slash")
+        verify(data, times(0)).batchCreateRagMetadataAsync(any(classOf[BatchCreateRagMetadataRequest]))
+      case other                                                         =>
+        fail(s"expected ApiFailure(import-result-sink), got $other")
   }
 
   test("importFiles rejects metadata.entries with a BigQuery result sink") {

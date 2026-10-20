@@ -594,9 +594,9 @@ object RagClient:
         for
           _       <- NEL.fromList(metadata.schemas).traverse_(createDataSchemas(corpusName, _))
           started <- startLro(LroKind.ImportFiles, dataClient.importRagFilesAsync(request)) { response =>
-                       finishImport(corpusName, response, sinkGcs, sinkBq).flatTap { _ =>
+                       finishImport(corpusName, response, sinkGcs, sinkBq).flatTap { result =>
                          (metadata.entries, sinkGcs).tupled.traverse_ { (entries, path) =>
-                           stampImportedMetadata(corpusName, path, entries)
+                           stampImportedMetadata(corpusName, path, entries, result.files, source.uris)
                          }
                        }
                      }
@@ -716,9 +716,9 @@ object RagClient:
     private def createDataSchemas(corpusName: String, schemas: NEL[DataSchema]): F[Unit] =
       val op =
         for
-          existing  <- listSchemaKeys(corpusName)
-          remaining  = schemas.filterNot(schema => existing.contains(schema.key))
-          _         <- remaining.grouped(MaxBatchCreate).toList.flatMap(NEL.fromList).traverse_(batchCreateDataSchemas(corpusName, _))
+          existing <- listSchemaKeys(corpusName)
+          remaining = schemas.filterNot(schema => existing.contains(schema.key))
+          _        <- remaining.grouped(MaxBatchCreate).toList.flatMap(NEL.fromList).traverse_(batchCreateDataSchemas(corpusName, _))
         yield ()
       op.adaptError(Error.ApiFailure("create-data-schema", _))
 
@@ -802,7 +802,9 @@ object RagClient:
         .build()
 
     private def updateFileMetadata(fileName: String, entry: MetadataEntry): F[Unit] =
-      Sync[F].blocking(dataClient.updateRagMetadata(toRagMetadata(entry).toBuilder.setName(s"$fileName/ragMetadata/${entry.key}").build())).void
+      Sync[F]
+        .blocking(dataClient.updateRagMetadata(toRagMetadata(entry).toBuilder.setName(s"$fileName/ragMetadata/${entry.key}").build()))
+        .void
 
     private def toRagMetadata(entry: MetadataEntry): RagMetadata =
       RagMetadata
@@ -898,19 +900,31 @@ object RagClient:
         case MetadataValue.Bool(v)    => builder.setBoolValue(v)
       builder.build()
 
-    private def stampImportedMetadata(corpusName: String, sinkPath: String, entries: NEL[MetadataEntry]): F[Unit] =
-      ledger
-        .read(sinkPath)
-        .flatMap { outcomes =>
-          outcomes
-            .collect {
-              case outcome if outcome.status == "OK" =>
-                outcome.fileId.map(ImportResultLedger.ragFileName(corpusName, _))
-            }
-            .flatten
-            .traverse_(fileName => setFileMetadata(fileName, entries))
-        }
-        .adaptError(Error.ApiFailure("import-result-sink", _))
+    private def stampImportedMetadata(
+        corpusName: String,
+        sinkPath: String,
+        entries: NEL[MetadataEntry],
+        files: List[RagFileInfo],
+        uris: NEL[String]
+    ): F[Unit] =
+      for
+        read <- ledger.read(sinkPath).attempt
+        _    <- read match
+                  case Right(outcomes) =>
+                    outcomes
+                      .collect {
+                        case outcome if outcome.status == "OK" =>
+                          outcome.fileId.map(ImportResultLedger.ragFileName(corpusName, _))
+                      }
+                      .flatten
+                      .traverse_(setFileMetadata(_, entries))
+                      .adaptError(Error.ApiFailure("import-result-sink", _))
+                  case Left(err)       =>
+                    val imported = uris.toNes                    
+                    val matched = files.filter(_.sourceUris.exists(imported.contains))
+                    if matched.isEmpty then Error.ApiFailure("import-result-sink", err).raiseError
+                    else matched.traverse_(file => setFileMetadata(file.name, entries))
+      yield ()
 
     private def toFile(file: RagFile): RagFileInfo =
       val status     = Option.when(file.hasFileStatus)(file.getFileStatus)
