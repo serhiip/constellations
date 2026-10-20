@@ -22,7 +22,7 @@ import org.http4s.headers.{Authorization, `Content-Type`, `Retry-After`}
 import org.typelevel.ci.CIString
 import org.typelevel.log4cats.{Logger, LoggerFactory, StructuredLogger}
 import org.typelevel.otel4s.Attribute
-import org.typelevel.otel4s.metrics.{Counter, Meter}
+import org.typelevel.otel4s.metrics.{BucketBoundaries, Counter, Histogram, Meter}
 import org.typelevel.otel4s.trace.Tracer
 
 import io.github.serhiip.constellations.common.Observability
@@ -49,7 +49,8 @@ object Client:
       requestCounter: Counter[F, Long],
       errorCounter: Counter[F, Long],
       inputTokenCounter: Counter[F, Long],
-      outputTokenCounter: Counter[F, Long]
+      outputTokenCounter: Counter[F, Long],
+      requestDuration: Histogram[F, Double]
   )
 
   enum Error extends RuntimeException:
@@ -96,7 +97,7 @@ object Client:
 
   def observed[F[_]: Async: Tracer: StructuredLogger](
       delegate: Client[F],
-      meters: Option[Meters[F]] = none
+      meters: Meters[F]
   ): Client[F] =
     new:
       def systemOne[Q <: AnyNamedTuple](request: SystemOneRequest[Q]): F[SystemOneResponse[Q]] =
@@ -112,16 +113,17 @@ object Client:
           .logged: logger =>
             for
               _      <- logger.trace(s"Evaluating ${request.questions.length} questions with model ${request.model}")
-              _      <- meters.traverse_(_.requestCounter.inc(attrs*))
-              result <- delegate.systemOne(request).onError {
+              _      <- meters.requestCounter.inc(attrs*)
+              result <- meters.requestDuration
+                          .recordDuration(SECONDS, attrs*)
+                          .surround(delegate.systemOne(request))
+                          .onError {
                           case e: Client.Error => addResponseStatus(e).flatTap(_ => recordError(attrs, e))
-                          case _               => meters.traverse_(_.errorCounter.inc(attrs*))
+                          case _               => meters.errorCounter.inc(attrs*)
                         }
               _      <- addResponseStatus(200)
-              _      <- meters.traverse_(m =>
-                          result.usage.inputTokens.traverse_(n => m.inputTokenCounter.add(n.toLong, attrs*)) *>
-                            result.usage.outputTokens.traverse_(n => m.outputTokenCounter.add(n.toLong, attrs*))
-                        )
+              _      <- result.usage.inputTokens.traverse_(n => meters.inputTokenCounter.add(n.toLong, attrs*))
+              _      <- result.usage.outputTokens.traverse_(n => meters.outputTokenCounter.add(n.toLong, attrs*))
               _      <- logger.trace(
                           s"System One returned ${result.rawAnswers.size} answers, model=${result.model}, usage=${result.usage}"
                         )
@@ -134,10 +136,13 @@ object Client:
           .logged: logger =>
             for
               _      <- logger.trace("Listing available models")
-              _      <- meters.traverse_(_.requestCounter.inc(operationAttr))
-              result <- delegate.listModels().onError {
+              _      <- meters.requestCounter.inc(operationAttr)
+              result <- meters.requestDuration
+                          .recordDuration(SECONDS, operationAttr)
+                          .surround(delegate.listModels())
+                          .onError {
                           case e: Client.Error => addResponseStatus(e).flatTap(_ => recordError(List(operationAttr), e))
-                          case _               => meters.traverse_(_.errorCounter.inc(operationAttr))
+                          case _               => meters.errorCounter.inc(operationAttr)
                         }
               _      <- addResponseStatus(200)
               _      <- logger.trace(s"Found ${result.models.size} models")
@@ -145,7 +150,7 @@ object Client:
 
       private def recordError(attrs: Seq[Attribute[?]], error: Client.Error): F[Unit] =
         val errorCodeAttr = Attribute("error_code", errorCode(error))
-        meters.traverse_(_.errorCounter.inc(attrs :+ errorCodeAttr))
+        meters.errorCounter.inc(attrs :+ errorCodeAttr)
 
       private def errorCode(error: Client.Error): String =
         error match
@@ -291,10 +296,17 @@ object Client:
       errorCounter              <- Meter[F].counter[Long](Observability.Metrics.name("typesafe_error_count")).create.toResource
       inputTokenCounter         <- Meter[F].counter[Long](Observability.Metrics.name("typesafe_input_token_count")).create.toResource
       outputTokenCounter        <- Meter[F].counter[Long](Observability.Metrics.name("typesafe_output_token_count")).create.toResource
-      meters                     = Meters(requestCounter, errorCounter, inputTokenCounter, outputTokenCounter)
+      requestDuration           <- Meter[F]
+                                     .histogram[Double](Observability.Metrics.name("typesafe_request_duration"))
+                                     .withUnit("s")
+                                     .withDescription("Latency of TypeSafe client requests")
+                                     .withExplicitBucketBoundaries(BucketBoundaries(0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 15, 30))
+                                     .create
+                                     .toResource
+      meters                     = Meters(requestCounter, errorCounter, inputTokenCounter, outputTokenCounter, requestDuration)
       httpClient                <- createHttpClient(config)
       baseClient                 = create(configureClient(httpClient, config), apiKey, config)
-    yield observed(baseClient, meters.some)
+    yield observed(baseClient, meters)
 
   def mapK[F[_], G[_]](client: Client[F])(f: F ~> G): Client[G] = new Client[G]:
     def systemOne[Q <: AnyNamedTuple](request: SystemOneRequest[Q]): G[SystemOneResponse[Q]] = f(client.systemOne(request))

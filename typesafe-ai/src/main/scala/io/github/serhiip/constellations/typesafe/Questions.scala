@@ -79,12 +79,12 @@ object Question:
     Question.Noul(instructions, criteria)
 
   inline def noul[N <: Tuple, V <: Tuple](instructions: into[Instructions], criteria: NamedTuple[N, V])(using
-      JsonFields[V]
+      fields: JsonFields[V]
   ): Question.Noul =
     inline if !constValue[AllContainedIn[N, ("yes", "no")]] then error("noul criteria labels must be yes and/or no")
     else
       val ns     = Fields.names[N]
-      val vs     = summon[JsonFields[V]](criteria.toTuple)
+      val vs     = fields(criteria.toTuple)
       val mapped = ns
         .zip(vs)
         .map {
@@ -99,23 +99,23 @@ object Question:
       )
 
   inline def choice[N <: Tuple, V <: Tuple](instructions: into[Instructions], criteria: NamedTuple[N, V])(using
-      JsonFields[V]
+      fields: JsonFields[V]
   ): Question.Choice[N] =
     inline if constValue[Tuple.Size[V]] == 0 then error("choice criteria must be non-empty")
     else inline if !constValue[NoneContainedIn[N, AnswerMembers]] then
       error("choice option labels are exposed as fields on the answer and must not shadow its members: selected, choice, confidence, probability, probabilities")
     else
       val ns      = Fields.names[N]
-      val vs      = summon[JsonFields[V]](criteria.toTuple)
+      val vs      = fields(criteria.toTuple)
       val entries = NonEmptyList.fromListUnsafe(ns.zip(vs))
       Question.Choice(instructions, NonEmptyMap.of(entries.head, entries.tail*))
 
   inline def score[L <: Tuple](instructions: into[Instructions], levels: L)(using
-      JsonFields[L]
+      fields: JsonFields[L]
   ): Question.Score[Tuple.Size[L]] =
     inline if constValue[Tuple.Size[L]] < 2 || constValue[Tuple.Size[L]] > 10 then error("score criteria must have between 2 and 10 levels")
     else
-      val values = summon[JsonFields[L]](levels)
+      val values = fields(levels)
       Question.Score(instructions, NonEmptyList.fromListUnsafe(values))
 
   object Dynamic:
@@ -167,11 +167,11 @@ object SystemOneRequest:
       state: into[State],
       questions: NamedTuple[N, V],
       model: String = Model.jevLatest
-  )(using QuestionFields[V]): SystemOneRequest[NamedTuple[N, V]] =
+  )(using fields: QuestionFields[V]): SystemOneRequest[NamedTuple[N, V]] =
     inline if constValue[Tuple.Size[V]] == 0 then error("questions must be non-empty")
     else
       val ns      = Fields.names[N]
-      val vs      = summon[QuestionFields[V]](questions.toTuple)
+      val vs      = fields(questions.toTuple)
       val entries = NonEmptyList.fromListUnsafe(ns.zip(vs))
       make(state, NonEmptyMap.of(entries.head, entries.tail*), model)
 

@@ -24,6 +24,7 @@ yarn-error.log*
 
 # Scaladoc generated content
 /static/api
+/.generated-api
 
 # Yarn
 yarn.lock
