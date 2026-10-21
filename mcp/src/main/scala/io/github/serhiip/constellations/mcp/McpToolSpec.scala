@@ -64,7 +64,7 @@ object McpToolSpec:
     private def toMcpTool(declaration: FunctionDeclaration, jsonMapper: McpJsonMapper): McpSchema.Tool =
       val builder = McpSchema.Tool.builder().name(declaration.name)
       declaration.description.foreach(builder.description)
-      val schema = declaration.parameters.getOrElse(Schema.obj())
+      val schema  = declaration.parameters.getOrElse(Schema.obj())
       builder.inputSchema(jsonMapper, schema.asJson.noSpaces)
       builder.build()
 

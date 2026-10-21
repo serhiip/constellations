@@ -854,7 +854,8 @@ final class ClientTest extends CatsEffectSuite:
   }
 
   test("ModelPricing decodes from API string values") {
-    val json = """{"prompt":"0.00001","completion":"0.00004","request":"0","image":"0.00765","web_search":"0.01","internal_reasoning":"0","input_cache_read":"0.0000025"}"""
+    val json =
+      """{"prompt":"0.00001","completion":"0.00004","request":"0","image":"0.00765","web_search":"0.01","internal_reasoning":"0","input_cache_read":"0.0000025"}"""
     parse(json).flatMap(_.as[ModelPricing]) match
       case Right(pricing) =>
         assertEquals(pricing.prompt, BigDecimal("0.00001"))

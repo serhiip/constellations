@@ -30,12 +30,12 @@ final class ClientTest extends CatsEffectSuite:
     parse(body).fold(error => fail(error.message), identity)
 
   test("Question encoder writes noul, choice, and score discriminators") {
-    val noul = Question.noul("Does this convey urgency?", (yes = "Explicitly time-sensitive", no = "No urgency"))
+    val noul   = Question.noul("Does this convey urgency?", (yes = "Explicitly time-sensitive", no = "No urgency"))
     val choice = Question.choice(
       "Which team should handle this?",
       (billing = "Payments, invoicing, refunds", technical = "Bugs, outages, integrations")
     )
-    val score = Question.score("How frustrated is the customer?", ("Calm", "Frustrated", "Very angry"))
+    val score  = Question.score("How frustrated is the customer?", ("Calm", "Frustrated", "Very angry"))
 
     assertEquals(
       Encoder[Question].apply(noul),
@@ -389,8 +389,8 @@ final class ClientTest extends CatsEffectSuite:
         .withHeaders(`Retry-After`.unsafeFromLong(60))
         .withEntity(body)
     )
-    val client  = createTestClient(stubClient)
-    val request = SystemOneRequest.dynamic("state", "q" -> Question.noul("yes?"))
+    val client     = createTestClient(stubClient)
+    val request    = SystemOneRequest.dynamic("state", "q" -> Question.noul("yes?"))
 
     client.systemOne(request).attempt.map { result =>
       assert(result.isLeft)
@@ -399,7 +399,7 @@ final class ClientTest extends CatsEffectSuite:
           assertEquals(err.message, "Rate limit exceeded")
           assertEquals(err.retryAfter, Some(60.seconds))
           assert(err.getMessage.contains("Rate Limited: Rate limit exceeded"))
-        case other =>
+        case other                         =>
           fail(s"Expected RateLimited, got $other")
       }
     }
@@ -427,7 +427,7 @@ final class ClientTest extends CatsEffectSuite:
           assertEquals(err.status, 418)
           assertEquals(err.message, "I'm a teapot")
           assert(err.getMessage.contains("Unexpected Error (status 418)"))
-        case other =>
+        case other                        =>
           fail(s"Expected Unexpected, got $other")
       }
     }
