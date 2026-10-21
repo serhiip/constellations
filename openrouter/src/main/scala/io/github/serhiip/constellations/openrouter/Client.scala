@@ -6,7 +6,7 @@ import cats.effect.std.Supervisor
 import cats.effect.syntax.resource.*
 import cats.effect.{Async, Clock, Concurrent, Resource}
 import cats.syntax.all.*
-import cats.{Functor, Semigroupal, Show}
+import cats.{Applicative, Functor, Semigroupal, Show}
 import cats.~>
 
 import org.typelevel.ci.CIString
@@ -258,7 +258,9 @@ case class ModelPricing(
 
 object ModelPricing:
   private given Decoder[BigDecimal] =
-    Decoder.decodeBigDecimal.or(Decoder.decodeString.emap(s => Either.catchOnly[NumberFormatException](BigDecimal(s)).leftMap(_.getMessage)))
+    Decoder.decodeBigDecimal.or(
+      Decoder.decodeString.emap(s => Either.catchOnly[NumberFormatException](BigDecimal(s)).leftMap(_.getMessage))
+    )
 
   given Codec[ModelPricing] = ConfiguredCodec.derived
 
@@ -463,6 +465,32 @@ object Client:
       numMediaCompletionCounter: Counter[F, Long],
       numSearchResultsCounter: Counter[F, Long]
   )
+
+  object Meters:
+    def apply[F[_]: Meter: Applicative]: F[Meters[F]] =
+      val meter = Meter[F]
+      (
+        meter.counter[Long](Metrics.name("request_token_count")).create,
+        meter.counter[Long](Metrics.name("response_token_count")).create,
+        meter.counter[Long](Metrics.name("openrouter_request_count")).create,
+        meter.counter[Long](Metrics.name("openrouter_error_count")).create,
+        meter.counter[Double](Metrics.name("generation_total_cost")).create,
+        meter.counter[Double](Metrics.name("generation_usage")).create,
+        meter.counter[Double](Metrics.name("generation_cache_discount")).create,
+        meter.counter[Double](Metrics.name("generation_upstream_inference_cost")).create,
+        meter.counter[Long](Metrics.name("generation_latency")).create,
+        meter.counter[Long](Metrics.name("generation_moderation_latency")).create,
+        meter.counter[Long](Metrics.name("generation_time")).create,
+        meter.counter[Long](Metrics.name("generation_tokens_prompt")).create,
+        meter.counter[Long](Metrics.name("generation_tokens_completion")).create,
+        meter.counter[Long](Metrics.name("generation_native_tokens_prompt")).create,
+        meter.counter[Long](Metrics.name("generation_native_tokens_completion")).create,
+        meter.counter[Long](Metrics.name("generation_native_tokens_reasoning")).create,
+        meter.counter[Long](Metrics.name("generation_native_tokens_cached")).create,
+        meter.counter[Long](Metrics.name("generation_num_media_prompt")).create,
+        meter.counter[Long](Metrics.name("generation_num_media_completion")).create,
+        meter.counter[Long](Metrics.name("generation_num_search_results")).create
+      ).mapN(Meters.apply)
 
   enum Error extends RuntimeException:
     case BadRequest(message: String, errorDetails: ErrorDetails)
@@ -844,52 +872,8 @@ object Client:
     for
       given StructuredLogger[F] <- LoggerFactory[F].create.toResource
       statsSupervisor           <- Supervisor[F]
-
-      openRouterRequestCounter      <- Meter[F].counter[Long](Metrics.name("openrouter_request_count")).create.toResource
-      openRouterErrorCounter        <- Meter[F].counter[Long](Metrics.name("openrouter_error_count")).create.toResource
-      totalCostCounter              <- Meter[F].counter[Double](Metrics.name("generation_total_cost")).create.toResource
-      usageCounter                  <- Meter[F].counter[Double](Metrics.name("generation_usage")).create.toResource
-      cacheDiscountCounter          <- Meter[F].counter[Double](Metrics.name("generation_cache_discount")).create.toResource
-      upstreamInferenceCostCounter  <- Meter[F].counter[Double](Metrics.name("generation_upstream_inference_cost")).create.toResource
-      latencyCounter                <- Meter[F].counter[Long](Metrics.name("generation_latency")).create.toResource
-      moderationLatencyCounter      <- Meter[F].counter[Long](Metrics.name("generation_moderation_latency")).create.toResource
-      generationTimeCounter         <- Meter[F].counter[Long](Metrics.name("generation_time")).create.toResource
-      tokensPromptCounter           <- Meter[F].counter[Long](Metrics.name("generation_tokens_prompt")).create.toResource
-      tokensCompletionCounter       <- Meter[F].counter[Long](Metrics.name("generation_tokens_completion")).create.toResource
-      nativeTokensPromptCounter     <- Meter[F].counter[Long](Metrics.name("generation_native_tokens_prompt")).create.toResource
-      nativeTokensCompletionCounter <- Meter[F].counter[Long](Metrics.name("generation_native_tokens_completion")).create.toResource
-      nativeTokensReasoningCounter  <- Meter[F].counter[Long](Metrics.name("generation_native_tokens_reasoning")).create.toResource
-      nativeTokensCachedCounter     <- Meter[F].counter[Long](Metrics.name("generation_native_tokens_cached")).create.toResource
-      numMediaPromptCounter         <- Meter[F].counter[Long](Metrics.name("generation_num_media_prompt")).create.toResource
-      numMediaCompletionCounter     <- Meter[F].counter[Long](Metrics.name("generation_num_media_completion")).create.toResource
-      numSearchResultsCounter       <- Meter[F].counter[Long](Metrics.name("generation_num_search_results")).create.toResource
-      requestTokenCounter           <- Meter[F].counter[Long](Metrics.name("request_token_count")).create.toResource
-      responseTokenCounter          <- Meter[F].counter[Long](Metrics.name("response_token_count")).create.toResource
-
-      meters = Meters[F](
-                 requestTokenCounter = requestTokenCounter,
-                 responseTokenCounter = responseTokenCounter,
-                 requestCounter = openRouterRequestCounter,
-                 errorCounter = openRouterErrorCounter,
-                 totalCostCounter = totalCostCounter,
-                 usageCounter = usageCounter,
-                 cacheDiscountCounter = cacheDiscountCounter,
-                 upstreamInferenceCostCounter = upstreamInferenceCostCounter,
-                 latencyCounter = latencyCounter,
-                 moderationLatencyCounter = moderationLatencyCounter,
-                 generationTimeCounter = generationTimeCounter,
-                 tokensPromptCounter = tokensPromptCounter,
-                 tokensCompletionCounter = tokensCompletionCounter,
-                 nativeTokensPromptCounter = nativeTokensPromptCounter,
-                 nativeTokensCompletionCounter = nativeTokensCompletionCounter,
-                 nativeTokensReasoningCounter = nativeTokensReasoningCounter,
-                 nativeTokensCachedCounter = nativeTokensCachedCounter,
-                 numMediaPromptCounter = numMediaPromptCounter,
-                 numMediaCompletionCounter = numMediaCompletionCounter,
-                 numSearchResultsCounter = numSearchResultsCounter
-               )
-
-      httpClient <- createHttpClient(config)
+      meters                    <- Meters[F].toResource
+      httpClient                <- createHttpClient(config)
 
       instrumentedClient <- instrumentHttp4sClient("openrouter", httpClient).toResource
 
@@ -901,6 +885,6 @@ object Client:
   def mapK[F[_], G[_]](client: Client[F])(f: F ~> G): Client[G] = new Client[G]:
     def createChatCompletion(request: ChatCompletionRequest): G[ChatCompletionResponse] = f(client.createChatCompletion(request))
     def createCompletion(request: CompletionRequest): G[CompletionResponse]             = f(client.createCompletion(request))
-    def createEmbeddings(request: EmbeddingsRequest): G[EmbeddingsResponse]              = f(client.createEmbeddings(request))
+    def createEmbeddings(request: EmbeddingsRequest): G[EmbeddingsResponse]             = f(client.createEmbeddings(request))
     def listModels(): G[ModelsResponse]                                                 = f(client.listModels())
     def getGenerationStats(generationId: String): G[GenerationStats]                    = f(client.getGenerationStats(generationId))
