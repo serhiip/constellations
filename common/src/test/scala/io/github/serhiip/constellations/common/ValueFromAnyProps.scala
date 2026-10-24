@@ -1,7 +1,22 @@
 package io.github.serhiip.constellations.common
 
-import java.lang.{Boolean as JBoolean, Number as JNumber}
-import java.util as ju
+import java.lang.{Boolean as JBoolean, Long as JLong, Number as JNumber}
+import java.util.{
+  ArrayList,
+  Arrays,
+  Collections,
+  Comparator,
+  HashMap as JHashMap,
+  HashSet as JHashSet,
+  Hashtable,
+  LinkedHashMap as JLinkedHashMap,
+  LinkedHashSet,
+  LinkedList,
+  Set as JSet,
+  TreeMap as JTreeMap,
+  TreeSet as JTreeSet,
+  Vector as JVector
+}
 import java.util.concurrent.{ConcurrentHashMap, CopyOnWriteArrayList}
 
 import scala.collection.immutable.{
@@ -15,7 +30,6 @@ import scala.collection.immutable.{
 }
 import scala.collection.mutable.{ArrayBuffer, LinkedHashMap as MutLinkedHashMap, ListBuffer, HashMap as MutHashMap, HashSet as MutHashSet}
 import scala.jdk.CollectionConverters.*
-import scala.util.Try
 
 import munit.ScalaCheckSuite
 import org.scalacheck.Prop.{forAll, propBoolean}
@@ -58,18 +72,18 @@ class ValueFromAnyProps extends ScalaCheckSuite:
     Gen.double.map(d => if d.isNaN || d.isInfinite then 0.0 else d)
 
   private val genLeaf: Gen[(Any, Value)] = Gen.oneOf(
-    Gen.const((null: Any, Value.NullValue)),
-    Gen.alphaNumStr.map(s => (s: Any, Value.StringValue(s))),
+    Gen.const((null, Value.NullValue)),
+    Gen.alphaNumStr.map(s => (s, Value.StringValue(s))),
     Gen.oneOf(true, false).flatMap { b =>
-      Gen.oneOf((b: Any, Value.BoolValue(b)), (JBoolean.valueOf(b): Any, Value.BoolValue(b)))
+      Gen.oneOf((b, Value.BoolValue(b)), (JBoolean.valueOf(b), Value.BoolValue(b)))
     },
-    genFiniteDouble.map(d => (d: Any, Value.NumberValue(d))),
-    genFiniteDouble.map(d => (d.toFloat: Any, Value.NumberValue(d.toFloat.toDouble))),
+    genFiniteDouble.map(d => (d, Value.NumberValue(d))),
+    genFiniteDouble.map(d => (d.toFloat, Value.NumberValue(d.toFloat.toDouble))),
     Gen.chooseNum(Int.MinValue, Int.MaxValue).flatMap { i =>
-      Gen.oneOf((i: Any, Value.NumberValue(i.toDouble)), (Integer.valueOf(i): Any, Value.NumberValue(i.toDouble)))
+      Gen.oneOf((i, Value.NumberValue(i.toDouble)), (Integer.valueOf(i), Value.NumberValue(i.toDouble)))
     },
     Gen.chooseNum(Long.MinValue, Long.MaxValue).flatMap { l =>
-      Gen.oneOf((l: Any, Value.NumberValue(l.toDouble)), (java.lang.Long.valueOf(l): Any, Value.NumberValue(l.toDouble)))
+      Gen.oneOf((l, Value.NumberValue(l.toDouble)), (JLong.valueOf(l), Value.NumberValue(l.toDouble)))
     }
   )
 
@@ -130,33 +144,54 @@ class ValueFromAnyProps extends ScalaCheckSuite:
       case SeqKind.ScalaHashSet             => ImmHashSet.from(items)
       case SeqKind.ScalaTreeSet             => treeSetOrHashSet(items)
       case SeqKind.ScalaMutHashSet          => MutHashSet.from(items)
-      case SeqKind.JavaArrayList            => new ju.ArrayList(items.asJava)
-      case SeqKind.JavaLinkedList           => new ju.LinkedList(items.asJava)
-      case SeqKind.JavaVector               => new ju.Vector(items.asJava)
+      case SeqKind.JavaArrayList            => new ArrayList(items.asJava)
+      case SeqKind.JavaLinkedList           => new LinkedList(items.asJava)
+      case SeqKind.JavaVector               => new JVector(items.asJava)
       case SeqKind.JavaCopyOnWriteArrayList => new CopyOnWriteArrayList(items.asJava)
-      case SeqKind.JavaArraysAsList         => ju.Arrays.asList(items*)
-      case SeqKind.JavaUnmodifiableList     => ju.Collections.unmodifiableList(new ju.ArrayList(items.asJava))
-      case SeqKind.JavaHashSet              => new ju.HashSet(items.asJava)
-      case SeqKind.JavaLinkedHashSet        => new ju.LinkedHashSet(items.asJava)
+      case SeqKind.JavaArraysAsList         => Arrays.asList(items*)
+      case SeqKind.JavaUnmodifiableList     => Collections.unmodifiableList(new ArrayList(items.asJava))
+      case SeqKind.JavaHashSet              => new JHashSet(items.asJava)
+      case SeqKind.JavaLinkedHashSet        => new LinkedHashSet(items.asJava)
       case SeqKind.JavaTreeSet              => javaTreeSetOrHashSet(items)
 
-  private def isTreeSetSafe(value: Any): Boolean =
+  private def treeSetOrHashSet(items: List[Any]): Any =
+    if uniformComparable(items) then ImmTreeSet.from(items)(using treeOrdering)
+    else ImmHashSet.from(items)
+
+  private def javaTreeSetOrHashSet(items: List[Any]): JSet[Any] =
+    val set: JSet[Any] =
+      if uniformComparable(items) then new JTreeSet[Any](treeComparator)
+      else new JHashSet[Any]
+    set.addAll(items.asJava)
+    set
+
+  // Set equality probes a TreeSet with whatever element it is comparing, including null.
+  private val treeOrdering: Ordering[Any] = new Ordering[Any]:
+    def compare(x: Any, y: Any): Int =
+      (x, y) match
+        case (null, null) => 0
+        case (null, _)    => -1
+        case (_, null)    => 1
+        case _            =>
+          val byClass = x.getClass.getName.compareTo(y.getClass.getName)
+          if byClass != 0 then byClass
+          else
+            x match
+              case c: Comparable[?] => c.asInstanceOf[Comparable[Any]].compareTo(y)
+              case _                => Integer.compare(System.identityHashCode(x), System.identityHashCode(y))
+
+  private val treeComparator: Comparator[Any] = (x, y) => treeOrdering.compare(x, y)
+
+  private def uniformComparable(items: List[Any]): Boolean =
+    items match
+      case head :: tail =>
+        isTreeElement(head) && tail.forall(item => isTreeElement(item) && item.getClass == head.getClass)
+      case Nil          => true
+
+  private def isTreeElement(value: Any): Boolean =
     value match
       case _: String | _: JNumber | _: JBoolean => true
       case _                                    => false
-
-  private given comparableOrdering: Ordering[Any] =
-    Ordering.fromLessThan { (a, b) =>
-      a.asInstanceOf[Comparable[Any]].compareTo(b) < 0
-    }
-
-  private def treeSetOrHashSet(items: List[Any]): Any =
-    if items.forall(isTreeSetSafe) then Try(ImmTreeSet.from(items)).getOrElse(ImmHashSet.from(items))
-    else ImmHashSet.from(items)
-
-  private def javaTreeSetOrHashSet(items: List[Any]): Any =
-    if items.forall(isTreeSetSafe) then Try(new ju.TreeSet(items.asJava)).getOrElse(new ju.HashSet(items.asJava))
-    else new ju.HashSet(items.asJava)
 
   private def materializeMap(fields: List[(String, Any)], kind: MapKind): Any =
     val map      = fields.toMap
@@ -168,14 +203,14 @@ class ValueFromAnyProps extends ScalaCheckSuite:
       case MapKind.ScalaListMap          => ListMap.from(map)
       case MapKind.ScalaMutHashMap       => MutHashMap.from(map)
       case MapKind.ScalaMutLinkedHashMap => MutLinkedHashMap.from(map)
-      case MapKind.JavaHashMap           => new ju.HashMap(map.asJava)
-      case MapKind.JavaLinkedHashMap     => new ju.LinkedHashMap(map.asJava)
-      case MapKind.JavaTreeMap           => new ju.TreeMap(map.asJava)
+      case MapKind.JavaHashMap           => new JHashMap(map.asJava)
+      case MapKind.JavaLinkedHashMap     => new JLinkedHashMap(map.asJava)
+      case MapKind.JavaTreeMap           => new JTreeMap(map.asJava)
       case MapKind.JavaHashtable         =>
-        if hasNulls then new ju.HashMap(map.asJava) else new ju.Hashtable(map.asJava)
+        if hasNulls then new JHashMap(map.asJava) else new Hashtable(map.asJava)
       case MapKind.JavaConcurrentHashMap =>
-        if hasNulls then new ju.HashMap(map.asJava) else new ConcurrentHashMap(map.asJava)
-      case MapKind.JavaUnmodifiableMap   => ju.Collections.unmodifiableMap(new ju.HashMap(map.asJava))
+        if hasNulls then new JHashMap(map.asJava) else new ConcurrentHashMap(map.asJava)
+      case MapKind.JavaUnmodifiableMap   => Collections.unmodifiableMap(new JHashMap(map.asJava))
 
   private def valuesEqual(actual: Value, expected: Value): Boolean =
     (actual, expected) match
