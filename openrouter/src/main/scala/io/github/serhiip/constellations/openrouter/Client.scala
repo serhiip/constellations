@@ -169,12 +169,13 @@ case class ChatMessage(
     toolCalls: Option[List[ToolCall]] = None,
     toolCallId: Option[String] = None,
     name: Option[String] = None,
-    images: Option[List[ImageUrlContent]] = None
+    images: Option[List[ImageUrlContent]] = None,
+    reasoning: Option[String] = None
 ) derives ConfiguredCodec:
 
   override def toString: String =
     val imagesInfo = images.fold("None")(imgs => s"Some(count=${imgs.size})")
-    s"ChatMessage($role,$content,$toolCalls,$toolCallId,$name,$imagesInfo)"
+    s"ChatMessage($role,$content,$toolCalls,$toolCallId,$name,$imagesInfo,$reasoning)"
 
 given Codec[ChatMessage] =
   val c = ConfiguredCodec.derived[ChatMessage]

@@ -583,6 +583,9 @@ final class ClientTest extends CatsEffectSuite:
           assertEquals(toolCalls.head.id, "tool_ExampleFunctions_getWeather_xYz9AbCdEfGhIjKlMnOpQr")
           assertEquals(toolCalls.head.function.name, "ExampleFunctions_getWeather")
           assertEquals(toolCalls.head.function.arguments, """{"city":"london"}""")
+          val reasoning = response.choices.head.message.reasoning.getOrElse(fail("reasoning missing"))
+          assert(reasoning.startsWith("**Assessing Weather Data Retrieval**"))
+          assert(!reasoning.contains("VGVzdEVuY3J5cHRlZERhdGFCbG9i"))
         }
     )
   }
@@ -613,6 +616,7 @@ final class ClientTest extends CatsEffectSuite:
     assertEquals(json.hcursor.downField("tools").focus, None)
     assertEquals(json.hcursor.downField("tool_choice").focus, None)
     assertEquals(json.hcursor.downField("modalities").focus, None)
+    assertEquals(json.hcursor.downField("messages").downArray.downField("reasoning").focus, None)
   }
 
   test("createChatCompletion should handle tool results") {

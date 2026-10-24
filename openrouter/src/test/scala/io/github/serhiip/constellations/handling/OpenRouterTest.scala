@@ -18,6 +18,16 @@ class OpenRouterTest extends FunSuite:
 
   private val handling = OpenRouter()
 
+  private def responseWith(message: ChatMessage, finishReason: Option[String] = Some("stop")): ChatCompletionResponse =
+    ChatCompletionResponse(
+      id = "test-id",
+      `object` = "chat.completion",
+      created = 1234567890L,
+      model = "test-model",
+      choices = List(ChatCompletionChoice(index = 0, message = message, finishReason = finishReason)),
+      usage = ChatCompletionUsage(promptTokens = 10, completionTokens = 5, totalTokens = 15)
+    )
+
   test("OpenRouter handling should work with IO effect type") {
     val response = ChatCompletionResponse(
       id = "test-id",
@@ -60,6 +70,46 @@ class OpenRouterTest extends FunSuite:
       ),
       usage = ChatCompletionUsage(promptTokens = 10, completionTokens = 0, totalTokens = 10)
     )
+
+    assertEquals(handling.getTextFromResponse(response), None)
+  }
+
+  test("OpenRouter handling should join text parts and skip image parts") {
+    val content = Json.arr(
+      Json.obj("type" -> Json.fromString("text"), "text" -> Json.fromString("Hello ")),
+      Json.obj("type" -> Json.fromString("image_url"), "image_url" -> Json.obj("url" -> Json.fromString("data:image/png;base64,abc"))),
+      Json.obj("type" -> Json.fromString("text"), "text" -> Json.fromString("world")),
+      Json.obj("type" -> Json.fromString("text"), "text" -> Json.fromString("   "))
+    )
+    val response = responseWith(ChatMessage(role = "assistant", content = content.some, reasoning = "ignored".some))
+
+    assertEquals(handling.getTextFromResponse(response), Some("Hello world"))
+  }
+
+  test("OpenRouter handling should prefer content over reasoning") {
+    val response = responseWith(
+      ChatMessage(role = "assistant", content = Json.fromString("answer").some, reasoning = "chain of thought".some)
+    )
+
+    assertEquals(handling.getTextFromResponse(response), Some("answer"))
+  }
+
+  test("OpenRouter handling should use reasoning when content is blank") {
+    val response = responseWith(
+      ChatMessage(role = "assistant", content = Json.fromString("  ").some, reasoning = "the reply".some)
+    )
+
+    assertEquals(handling.getTextFromResponse(response), Some("the reply"))
+  }
+
+  test("OpenRouter handling should use reasoning when content is missing") {
+    val response = responseWith(ChatMessage(role = "assistant", reasoning = "only reasoning".some))
+
+    assertEquals(handling.getTextFromResponse(response), Some("only reasoning"))
+  }
+
+  test("OpenRouter handling should ignore blank reasoning") {
+    val response = responseWith(ChatMessage(role = "assistant", content = Json.fromString("").some, reasoning = "  ".some))
 
     assertEquals(handling.getTextFromResponse(response), None)
   }

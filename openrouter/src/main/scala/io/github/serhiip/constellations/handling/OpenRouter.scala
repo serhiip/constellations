@@ -5,6 +5,7 @@ import java.util.Base64
 import cats.MonadThrow
 import cats.syntax.all.*
 import fs2.{Chunk, Stream}
+import io.circe.Json
 import io.circe.parser.*
 
 import io.github.serhiip.constellations.*
@@ -26,20 +27,17 @@ object OpenRouter:
 
   given Handling[ChatCompletionResponse] with
     override def structuredOutput(response: ChatCompletionResponse): Either[Throwable, Struct] =
-      response.choices.headOption match
-        case Some(ChatCompletionChoice(_, ChatMessage(_, Some(content), _, _, _, _), _)) =>
+      response.choices.headOption.flatMap(_.message.content) match
+        case Some(content) =>
           content.as[Struct].leftMap(e => RuntimeException(s"Failed to parse structured output: ${e.getMessage}"))
-        case Some(ChatCompletionChoice(_, ChatMessage(_, None, _, _, _, _), _))          => Struct.empty.asRight
-        case None                                                                        => Struct.empty.asRight
+        case None          => Struct.empty.asRight
 
     override def getTextFromResponse(response: ChatCompletionResponse): Option[String] =
-      response.choices.headOption match
-        case Some(ChatCompletionChoice(_, ChatMessage(_, Some(content), _, _, _, _), _)) => content.asString.filterNot(_.isBlank)
-        case _                                                                           => none
+      response.choices.headOption.flatMap(choice => textFrom(choice.message))
 
     override def getFunctionCalls(response: ChatCompletionResponse): Either[Throwable, List[FunctionCall]] =
-      response.choices.headOption match
-        case Some(ChatCompletionChoice(_, ChatMessage(_, _, Some(toolCalls), _, _, _), _)) =>
+      response.choices.headOption.flatMap(_.message.toolCalls) match
+        case Some(toolCalls) =>
           toolCalls.traverse { toolCall =>
             val argsJson = Option(toolCall.function.arguments).filterNot(_.isBlank).getOrElse("{}")
             decode[Struct](argsJson).bimap(
@@ -47,7 +45,7 @@ object OpenRouter:
               struct => FunctionCall(toolCall.function.name, struct, toolCall.id.some)
             )
           }
-        case Some(ChatCompletionChoice(_, ChatMessage(_, _, None, _, _, _), _)) | None     => List.empty[FunctionCall].asRight
+        case None            => List.empty[FunctionCall].asRight
 
     override def finishReason(response: ChatCompletionResponse): FinishReason =
       response.choices.headOption match
@@ -59,6 +57,24 @@ object OpenRouter:
             case "content_filter" => FinishReason.ContentFilter
             case _                => FinishReason.Error
         case Some(ChatCompletionChoice(_, _, None)) | None        => FinishReason.Error
+
+    private def textFrom(message: ChatMessage): Option[String] =
+      message.content.flatMap(textFromContent).orElse(message.reasoning.filterNot(_.isBlank))
+
+    private def textFromContent(content: Json): Option[String] =
+      content.asString.filterNot(_.isBlank).orElse(textFromParts(content))
+
+    private def textFromParts(content: Json): Option[String] =
+      content.asArray.flatMap { parts =>
+        val text = parts.flatMap(textFromPart).mkString
+        Option.when(text.nonEmpty)(text)
+      }
+
+    private def textFromPart(part: Json): Option[String] =
+      val partType = part.hcursor.get[String]("type").toOption
+      Option
+        .when(!partType.exists(_.contains("image")))(part.hcursor.get[String]("text").toOption.filterNot(_.isBlank))
+        .flatten
 
   given [F[_]: MonadThrow]: AssetsHandling[F, ChatCompletionResponse] with
     private val DataUrl = raw"^data:(image/[-+.\w]+);base64,(.*)$$".r
