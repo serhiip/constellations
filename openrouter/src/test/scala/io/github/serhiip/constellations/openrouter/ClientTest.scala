@@ -10,8 +10,6 @@ import org.http4s.*
 import org.http4s.circe.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.client.Client as HTTPClient
-import org.typelevel.log4cats.noop.NoOpLogger
-import org.typelevel.log4cats.StructuredLogger
 
 final class ClientTest extends CatsEffectSuite:
 
@@ -22,8 +20,7 @@ final class ClientTest extends CatsEffectSuite:
     HTTPClient[F] { _ => Resource.pure(response) }
 
   private def createTestClient(stubClient: HTTPClient[IO]): Client[IO] =
-    given StructuredLogger[IO] = NoOpLogger[IO]
-    Client.apply[IO](stubClient, testApiKey, testConfig)
+    Client.core[IO](stubClient, testApiKey, testConfig)
 
   private val sampleUsage = ChatCompletionUsage(promptTokens = 50, completionTokens = 15, totalTokens = 65)
 
@@ -616,6 +613,7 @@ final class ClientTest extends CatsEffectSuite:
     assertEquals(json.hcursor.downField("tools").focus, None)
     assertEquals(json.hcursor.downField("tool_choice").focus, None)
     assertEquals(json.hcursor.downField("modalities").focus, None)
+    assertEquals(json.hcursor.downField("trace").focus, None)
     assertEquals(json.hcursor.downField("messages").downArray.downField("reasoning").focus, None)
   }
 
@@ -711,9 +709,8 @@ final class ClientTest extends CatsEffectSuite:
       usage = sampleUsage
     )
 
-    val stubClient             = createStubClient(Response[IO](Status.Ok).withEntity(expectedResponse))
-    given StructuredLogger[IO] = NoOpLogger[IO]
-    val client                 = Client.apply[IO](stubClient, testApiKey, configWithAttribution)
+    val stubClient = createStubClient(Response[IO](Status.Ok).withEntity(expectedResponse))
+    val client     = Client.core[IO](stubClient, testApiKey, configWithAttribution)
 
     val request = ChatCompletionRequest(
       model = "gpt-4o",

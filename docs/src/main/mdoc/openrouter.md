@@ -26,14 +26,16 @@ Create a client:
 ```scala
 import io.github.serhiip.constellations.openrouter.*
 import cats.effect.IO
-import org.http4s.ember.client.EmberClientBuilder
+import org.typelevel.otel4s.metrics.Meter
 
 val config = Client.Config(
   appUrl = Some("https://my-app.com"),
   appTitle = Some("My AI App")
 )
 
-Client.resource[IO]("your-api-key", config).use { client =>
+given Meter[IO] = Meter.noop[IO]
+
+Client.HTTP[IO](config).map(http => Client.core(http, "your-api-key", config)).use { client =>
   // Use client here
 }
 ```

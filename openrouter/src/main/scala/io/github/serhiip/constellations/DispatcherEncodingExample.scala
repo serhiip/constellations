@@ -59,8 +59,9 @@ object DispatcherEncodingExample extends IOApp.Simple:
         apiKeyOpt                  <- Env[IO].get("OPENROUTER_API_KEY")
         apiKey                     <- apiKeyOpt.liftTo[IO](new RuntimeException("OPENROUTER_API_KEY is not set"))
         model                       = sys.env.getOrElse("OPENROUTER_MODEL", "google/gemini-3-pro-preview")
-        _                          <- Client
-                                        .resource[IO](apiKey, Client.Config())
+        _                          <-                                         Client
+                                          .HTTP[IO](Client.Config())
+                                          .map(http => Client.core(http, apiKey, Client.Config()))
                                         .use { client =>
                                           for
                                             dispatcher <- ToolDispatcher.observed(
