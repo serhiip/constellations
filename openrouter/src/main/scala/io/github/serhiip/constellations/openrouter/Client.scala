@@ -708,13 +708,13 @@ object Client:
                                   .setStatus(StatusCode.Error, t.getMessage) >> logger
                                   .warn(t)("Error while fetching generation stats") >> span.recordException(t)
                               )
-            _             <- addResponseStatus(200)
-            _             <- span.setStatus(StatusCode.Ok)
-            _             <- logger.trace(s"Generation stats retrieved for model ${result.model}")
-            enrichedAttrs  = GenerationStatsHandler.generationStatsAttributes(result)
-            _              = span.addLink(linkTo, enrichedAttrs*)
-            _             <- span.addAttributes(enrichedAttrs*)
-            _             <- generationStatsHandler.onGenerationStats(result)
+            _            <- addResponseStatus(200)
+            _            <- span.setStatus(StatusCode.Ok)
+            _            <- logger.trace(s"Generation stats retrieved for model ${result.model}")
+            enrichedAttrs = GenerationStatsHandler.generationStatsAttributes(result)
+            _             = span.addLink(linkTo, enrichedAttrs*)
+            _            <- span.addAttributes(enrichedAttrs*)
+            _            <- generationStatsHandler.onGenerationStats(result)
           yield result
 
     private def recordClientError(attrs: Seq[Attribute[?]], error: Client.Error): F[Unit] =

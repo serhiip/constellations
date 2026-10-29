@@ -14,7 +14,7 @@ class SimilarityTest extends FunSuite:
   private val emb2dOrth = NEL.of(0f, 1f).toList
 
   private def stubEmbeddings: Embeddings[F] = new Embeddings[F]:
-    def embed(text: String): F[NEL[Float]] = emb2dNel.pure[F]
+    def embed(text: String): F[NEL[Float]]                  = emb2dNel.pure[F]
     def embedBatch(texts: NEL[String]): F[NEL[List[Float]]] =
       NEL
         .fromListUnsafe(texts.toList.map {
@@ -35,7 +35,7 @@ class SimilarityTest extends FunSuite:
     assertEquals(fa.value, Right(expected): Either[Throwable, A])
 
   test("cosineInMemory returns closest by cosine distance") {
-    val items = NEL.of(("a", "text_a"), ("b", "text_b"), ("c", "text_c"))
+    val items  = NEL.of(("a", "text_a"), ("b", "text_b"), ("c", "text_c"))
     val result = for
       sim     <- Similarity.cosineInMemory[F, String](items, stubEmbeddings)
       closest <- sim.findClosest(emb2dNel, k = 1)
@@ -44,7 +44,7 @@ class SimilarityTest extends FunSuite:
   }
 
   test("cosineInMemory ranks by k") {
-    val items = NEL.of(("far", "far"), ("close", "close"), ("mid", "mid"))
+    val items  = NEL.of(("far", "far"), ("close", "close"), ("mid", "mid"))
     val result = for
       sim  <- Similarity.cosineInMemory[F, String](items, stubEmbeddings)
       top2 <- sim.findClosest(emb2dNel, k = 2)
@@ -53,7 +53,7 @@ class SimilarityTest extends FunSuite:
   }
 
   test("cosineInMemory returns all items when k >= items count") {
-    val items = NEL.of(("a", "text_a"), ("b", "text_b"))
+    val items  = NEL.of(("a", "text_a"), ("b", "text_b"))
     val result = for
       sim <- Similarity.cosineInMemory[F, String](items, stubEmbeddings)
       r   <- sim.findClosest(emb2dNel, k = 10)
@@ -62,7 +62,7 @@ class SimilarityTest extends FunSuite:
   }
 
   test("cosineInMemory fails on query dimension mismatch") {
-    val items = NEL.one(("a", "text_a"))
+    val items  = NEL.one(("a", "text_a"))
     val result = for
       sim <- Similarity.cosineInMemory[F, String](items, stubEmbeddings)
       r   <- sim.findClosest(NEL.of(1f, 0f, 0f), k = 1)
@@ -71,7 +71,7 @@ class SimilarityTest extends FunSuite:
   }
 
   test("cosineInMemory returns at least one result when k <= 0") {
-    val items = NEL.of(("a", "text_a"), ("b", "text_b"))
+    val items  = NEL.of(("a", "text_a"), ("b", "text_b"))
     val result = for
       sim <- Similarity.cosineInMemory[F, String](items, stubEmbeddings)
       r   <- sim.findClosest(emb2dNel, k = 0)
@@ -80,7 +80,7 @@ class SimilarityTest extends FunSuite:
   }
 
   test("textViaEmbeddings finds closest by text query") {
-    val items = NEL.of(("item_a", "item_a"), ("item_b", "item_b"))
+    val items  = NEL.of(("item_a", "item_a"), ("item_b", "item_b"))
     val result = for
       embSim  <- Similarity.cosineInMemory[F, String](items, stubEmbeddings)
       textSim  = Similarity.textViaEmbeddings(stubEmbeddings, embSim)
@@ -91,7 +91,7 @@ class SimilarityTest extends FunSuite:
 
   test("cosineInMemory fails when batch embeddings have mismatched dimensions") {
     val mismatched = new Embeddings[F]:
-      def embed(text: String): F[NEL[Float]]                      = emb2dNel.pure[F]
+      def embed(text: String): F[NEL[Float]]                  = emb2dNel.pure[F]
       def embedBatch(texts: NEL[String]): F[NEL[List[Float]]] =
         NEL.of(emb2d, List(1f, 0f, 0f)).pure[F]
 

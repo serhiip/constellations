@@ -11,8 +11,7 @@ import io.circe.derivation.{Configuration, ConfiguredEncoder}
 import io.circe.syntax.*
 import io.circe.{Encoder, Json}
 
-given Configuration = Configuration.default.withSnakeCaseMemberNames
-  .withDefaults
+given Configuration = Configuration.default.withSnakeCaseMemberNames.withDefaults
   .withDiscriminator("type")
   .withTransformConstructorNames(_.toLowerCase)
 
@@ -103,7 +102,9 @@ object Question:
   ): Question.Choice[N] =
     inline if constValue[Tuple.Size[V]] == 0 then error("choice criteria must be non-empty")
     else inline if !constValue[NoneContainedIn[N, AnswerMembers]] then
-      error("choice option labels are exposed as fields on the answer and must not shadow its members: selected, choice, confidence, probability, probabilities")
+      error(
+        "choice option labels are exposed as fields on the answer and must not shadow its members: selected, choice, confidence, probability, probabilities"
+      )
     else
       val ns      = Fields.names[N]
       val vs      = fields(criteria.toTuple)

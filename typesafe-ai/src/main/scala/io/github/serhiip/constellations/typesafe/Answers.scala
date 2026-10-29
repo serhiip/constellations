@@ -108,8 +108,7 @@ object SystemOneResponse:
   ): SystemOneResponse[Q] =
     apply(model, answers, usage, request.questions.toSortedMap)
 
-  private[typesafe] final case class Raw(model: String, answers: Map[String, Answer[?]], usage: Usage = Usage())
-      derives ConfiguredCodec
+  private[typesafe] final case class Raw(model: String, answers: Map[String, Answer[?]], usage: Usage = Usage()) derives ConfiguredCodec
 
   private[typesafe] def decodeRaw: Decoder[(String, Map[String, Answer[?]], Usage)] =
     Decoder[Raw].map(Tuple.fromProductTyped)
