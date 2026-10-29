@@ -75,11 +75,11 @@ class OpenRouterTest extends FunSuite:
   }
 
   test("OpenRouter handling should join text parts and skip image parts") {
-    val content = Json.arr(
-      Json.obj("type" -> Json.fromString("text"), "text" -> Json.fromString("Hello ")),
+    val content  = Json.arr(
+      Json.obj("type" -> Json.fromString("text"), "text"           -> Json.fromString("Hello ")),
       Json.obj("type" -> Json.fromString("image_url"), "image_url" -> Json.obj("url" -> Json.fromString("data:image/png;base64,abc"))),
-      Json.obj("type" -> Json.fromString("text"), "text" -> Json.fromString("world")),
-      Json.obj("type" -> Json.fromString("text"), "text" -> Json.fromString("   "))
+      Json.obj("type" -> Json.fromString("text"), "text"           -> Json.fromString("world")),
+      Json.obj("type" -> Json.fromString("text"), "text"           -> Json.fromString("   "))
     )
     val response = responseWith(ChatMessage(role = "assistant", content = content.some, reasoning = "ignored".some))
 

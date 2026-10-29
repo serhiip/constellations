@@ -875,11 +875,11 @@ class OpenRouterTest extends CatsEffectSuite:
   }
 
   test("MessageHandler.default.convertToolResultMessage should include name field") {
-    val content = FunctionResponse(
+    val content       = FunctionResponse(
       FunctionCall("calculator", Struct.empty, "call-123".some),
       Struct(Map("result" -> Value.number(5.0)))
     )
-    val result  = MessageHandler.default.convertToolResultMessage(content)
+    val result        = MessageHandler.default.convertToolResultMessage(content)
     assertEquals(result.role, "tool")
     assertEquals(result.name, Some("calculator"))
     assertEquals(result.toolCallId, "call-123".some)

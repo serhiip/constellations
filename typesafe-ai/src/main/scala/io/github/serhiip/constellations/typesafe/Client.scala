@@ -118,9 +118,9 @@ object Client:
                           .recordDuration(SECONDS, attrs*)
                           .surround(delegate.systemOne(request))
                           .onError {
-                          case e: Client.Error => addResponseStatus(e).flatTap(_ => recordError(attrs, e))
-                          case _               => meters.errorCounter.inc(attrs*)
-                        }
+                            case e: Client.Error => addResponseStatus(e).flatTap(_ => recordError(attrs, e))
+                            case _               => meters.errorCounter.inc(attrs*)
+                          }
               _      <- addResponseStatus(200)
               _      <- result.usage.inputTokens.traverse_(n => meters.inputTokenCounter.add(n.toLong, attrs*))
               _      <- result.usage.outputTokens.traverse_(n => meters.outputTokenCounter.add(n.toLong, attrs*))
@@ -141,9 +141,9 @@ object Client:
                           .recordDuration(SECONDS, operationAttr)
                           .surround(delegate.listModels())
                           .onError {
-                          case e: Client.Error => addResponseStatus(e).flatTap(_ => recordError(List(operationAttr), e))
-                          case _               => meters.errorCounter.inc(operationAttr)
-                        }
+                            case e: Client.Error => addResponseStatus(e).flatTap(_ => recordError(List(operationAttr), e))
+                            case _               => meters.errorCounter.inc(operationAttr)
+                          }
               _      <- addResponseStatus(200)
               _      <- logger.trace(s"Found ${result.models.size} models")
             yield result
@@ -197,13 +197,13 @@ object Client:
         )
 
       def systemOne[Q <: AnyNamedTuple](request: SystemOneRequest[Q]): F[SystemOneResponse[Q]] =
-        val uri = config.baseUri / "v1" / "systemone"
+        val uri                                                = config.baseUri / "v1" / "systemone"
         given Decoder[(String, Map[String, Answer[?]], Usage)] = SystemOneResponse.decodeRaw
         client
           .run(Request[F](POST, uri).withHeaders(baseHeaders).withEntity(request: SystemOneRequest[?]))
           .use { response =>
-            decodeResponse[(String, Map[String, Answer[?]], Usage)]("system-one")(response).map {
-              case (model, answers, usage) => SystemOneResponse(model, answers, usage, request)
+            decodeResponse[(String, Map[String, Answer[?]], Usage)]("system-one")(response).map { case (model, answers, usage) =>
+              SystemOneResponse(model, answers, usage, request)
             }
           }
 
@@ -220,12 +220,12 @@ object Client:
           }
         else
           for
-            body        <- response.as[Json].attempt.map(_.toOption)
-            message      = extractErrorMessage(body).getOrElse(response.status.reason)
-            retryAfter   = parseRetryAfter(response)
-            domainError  = classifyError(response.status, message, body, requestId, retryAfter)
-            _           <- Logger[F].error(domainError)(s"TypeSafe API error during $operation")
-            result      <- domainError.raiseError[F, A]
+            body       <- response.as[Json].attempt.map(_.toOption)
+            message     = extractErrorMessage(body).getOrElse(response.status.reason)
+            retryAfter  = parseRetryAfter(response)
+            domainError = classifyError(response.status, message, body, requestId, retryAfter)
+            _          <- Logger[F].error(domainError)(s"TypeSafe API error during $operation")
+            result     <- domainError.raiseError[F, A]
           yield result
 
       private def extractErrorMessage(body: Option[Json]): Option[String] =
@@ -252,15 +252,15 @@ object Client:
           retryAfter: Option[FiniteDuration]
       ): Client.Error =
         status.code match
-          case 400                  => Client.Error.BadRequest(message, body, requestId)
-          case 401                  => Client.Error.Unauthorized(message, body, requestId)
-          case 403                  => Client.Error.PermissionDenied(message, body, requestId)
-          case 404                  => Client.Error.NotFound(message, body, requestId)
-          case 422                  => Client.Error.UnprocessableEntity(message, body, requestId)
-          case 429                  => Client.Error.RateLimited(message, retryAfter, body, requestId)
-          case 529                  => Client.Error.Overloaded(message, body, requestId)
-          case code if code >= 500  => Client.Error.InternalServer(message, body, requestId)
-          case code                 => Client.Error.Unexpected(code, message, body, requestId)
+          case 400                 => Client.Error.BadRequest(message, body, requestId)
+          case 401                 => Client.Error.Unauthorized(message, body, requestId)
+          case 403                 => Client.Error.PermissionDenied(message, body, requestId)
+          case 404                 => Client.Error.NotFound(message, body, requestId)
+          case 422                 => Client.Error.UnprocessableEntity(message, body, requestId)
+          case 429                 => Client.Error.RateLimited(message, retryAfter, body, requestId)
+          case 529                 => Client.Error.Overloaded(message, body, requestId)
+          case code if code >= 500 => Client.Error.InternalServer(message, body, requestId)
+          case code                => Client.Error.Unexpected(code, message, body, requestId)
 
   private def createHttpClient[F[_]: Async: Network](config: Config): Resource[F, HTTPClient[F]] =
     EmberClientBuilder

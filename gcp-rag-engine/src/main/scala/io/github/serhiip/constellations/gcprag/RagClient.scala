@@ -920,8 +920,8 @@ object RagClient:
                       .traverse_(setFileMetadata(_, entries))
                       .adaptError(Error.ApiFailure("import-result-sink", _))
                   case Left(err)       =>
-                    val imported = uris.toNes                    
-                    val matched = files.filter(_.sourceUris.exists(imported.contains))
+                    val imported = uris.toNes
+                    val matched  = files.filter(_.sourceUris.exists(imported.contains))
                     if matched.isEmpty then Error.ApiFailure("import-result-sink", err).raiseError
                     else matched.traverse_(file => setFileMetadata(file.name, entries))
       yield ()
