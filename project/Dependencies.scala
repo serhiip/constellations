@@ -61,7 +61,7 @@ object Dependencies {
     "org.scalameta"   %% "munit"             % munitVersion           % Test,
     "org.scalameta"   %% "munit-scalacheck"  % munitVersion           % Test,
     "org.scalacheck"  %% "scalacheck"        % scalacheckVersion      % Test,
-    "com.google.jimfs" % "jimfs"             % "1.3.0"                % Test
+    "com.google.jimfs" % "jimfs"             % "1.3.2"                % Test
   )
 
   val googleGenai = Seq(
