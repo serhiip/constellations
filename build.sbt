@@ -72,6 +72,7 @@ lazy val root = (project in file("."))
     `constellations-common`,
     `constellations-core`,
     `constellations-openrouter`,
+    `constellations-openrouter-schema`,
     `constellations-google-genai`,
     `constellations-gcp-rag-engine`,
     `constellations-bedrock`,
@@ -105,6 +106,17 @@ lazy val `constellations-openrouter` = (project in file("openrouter"))
     scalacOptions += "-Xmax-inlines:100"
   )
   .dependsOn(`constellations-core`)
+
+lazy val `constellations-openrouter-schema` = (project in file("openrouter-schema"))
+  .enablePlugins(OpenRouterCodegenPlugin)
+  .settings(commonReleaseSettings)
+  .settings(
+    name := "constellations-openrouter-schema",
+    // The published example omits required PublicEndpoint.native_tools.
+    openRouterExampleExclusions += "ListEndpointsResponse",
+    libraryDependencies ++= Dependencies.constellationsOpenRouterSchema,
+    scalacOptions ++= Seq("-Xmax-inlines:256", "-Wconf:src=src_managed/.*:s")
+  )
 
 lazy val `constellations-google-genai` = (project in file("google-genai"))
   .settings(commonReleaseSettings)
@@ -166,6 +178,7 @@ lazy val `constellations-examples` = (project in file("examples"))
     `constellations-google-genai`,
     `constellations-gcp-rag-engine`,
     `constellations-openrouter`,
+    `constellations-openrouter-schema`,
     `constellations-bedrock`,
     `constellations-mcp`,
     `constellations-typesafe-ai`
@@ -196,6 +209,7 @@ lazy val docs = project
         `constellations-common`,
         `constellations-core`,
         `constellations-openrouter`,
+        `constellations-openrouter-schema`,
         `constellations-google-genai`,
         `constellations-gcp-rag-engine`,
         `constellations-typesafe-ai`
@@ -218,6 +232,7 @@ lazy val docs = project
     `constellations-common`,
     `constellations-core`,
     `constellations-openrouter`,
+    `constellations-openrouter-schema`,
     `constellations-google-genai`,
     `constellations-gcp-rag-engine`,
     `constellations-typesafe-ai`

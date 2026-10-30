@@ -100,6 +100,8 @@ object Dependencies {
 
   val constellationsOpenRouter = http4s ++ circe ++ testing ++ logging ++ logback
 
+  val constellationsOpenRouterSchema = circe ++ testing
+
   val constellationsGoogleGenai = googleGenai ++ testing
 
   val constellationsGcpRagEngine = googleCloudAiplatform ++ circe ++ googleCloudNio ++ testing ++ mockito
