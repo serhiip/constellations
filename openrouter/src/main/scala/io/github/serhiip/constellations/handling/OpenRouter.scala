@@ -5,13 +5,15 @@ import java.util.Base64
 import cats.MonadThrow
 import cats.syntax.all.*
 import fs2.{Chunk, Stream}
-import io.circe.Json
 import io.circe.parser.*
 
 import io.github.serhiip.constellations.*
 import io.github.serhiip.constellations.common.*
 import io.github.serhiip.constellations.common.Codecs.given
-import io.github.serhiip.constellations.openrouter.*
+import io.github.serhiip.constellations.openrouter.schema.chat.content.items.ChatContentText
+import io.github.serhiip.constellations.openrouter.schema.chat.finish.reason.enum_.ChatFinishReasonEnum
+import io.github.serhiip.constellations.openrouter.schema.chat.messages.ChatAssistantMessage
+import io.github.serhiip.constellations.openrouter.schema.chat.result.ChatResult
 
 object OpenRouter:
 
@@ -23,20 +25,20 @@ object OpenRouter:
       case MalformedImageDataUrl(url) => s"Malformed image data URL: $url"
       case DecodeError(message)       => s"Failed to decode image: $message"
 
-  def apply(): Handling[ChatCompletionResponse] = summon
+  def apply(): Handling[ChatResult] = summon
 
-  given Handling[ChatCompletionResponse] with
-    override def structuredOutput(response: ChatCompletionResponse): Either[Throwable, Struct] =
-      response.choices.headOption.flatMap(_.message.content) match
+  given Handling[ChatResult] with
+    override def structuredOutput(response: ChatResult): Either[Throwable, Struct] =
+      response.choices.headOption.map(_.message).flatMap(textFrom) match
         case Some(content) =>
-          content.as[Struct].leftMap(e => RuntimeException(s"Failed to parse structured output: ${e.getMessage}"))
+          decode[Struct](content).leftMap(e => RuntimeException(s"Failed to parse structured output: ${e.getMessage}"))
         case None          => Struct.empty.asRight
 
-    override def getTextFromResponse(response: ChatCompletionResponse): Option[String] =
-      response.choices.headOption.flatMap(choice => textFrom(choice.message))
+    override def getTextFromResponse(response: ChatResult): Option[String] =
+      response.choices.headOption.flatMap(choice => textFrom(choice.message).orElse(choice.message.reasoning.filterNot(_.isBlank)))
 
-    override def getFunctionCalls(response: ChatCompletionResponse): Either[Throwable, List[FunctionCall]] =
-      response.choices.headOption.flatMap(_.message.toolCalls) match
+    override def getFunctionCalls(response: ChatResult): Either[Throwable, List[FunctionCall]] =
+      response.choices.headOption.flatMap(_.message.tool_calls) match
         case Some(toolCalls) =>
           toolCalls.traverse { toolCall =>
             val argsJson = Option(toolCall.function.arguments).filterNot(_.isBlank).getOrElse("{}")
@@ -47,36 +49,23 @@ object OpenRouter:
           }
         case None            => List.empty[FunctionCall].asRight
 
-    override def finishReason(response: ChatCompletionResponse): FinishReason =
-      response.choices.headOption match
-        case Some(ChatCompletionChoice(_, _, Some(finishReason))) =>
-          finishReason match
-            case "tool_calls"     => FinishReason.ToolCalls
-            case "stop"           => FinishReason.Stop
-            case "length"         => FinishReason.Length
-            case "content_filter" => FinishReason.ContentFilter
-            case _                => FinishReason.Error
-        case Some(ChatCompletionChoice(_, _, None)) | None        => FinishReason.Error
+    override def finishReason(response: ChatResult): FinishReason =
+      response.choices.headOption.flatMap(_.finish_reason) match
+        case Some(ChatFinishReasonEnum.ToolCalls)     => FinishReason.ToolCalls
+        case Some(ChatFinishReasonEnum.Stop)          => FinishReason.Stop
+        case Some(ChatFinishReasonEnum.Length)        => FinishReason.Length
+        case Some(ChatFinishReasonEnum.ContentFilter) => FinishReason.ContentFilter
+        case Some(ChatFinishReasonEnum.Error | ChatFinishReasonEnum.Unknown(_)) | None => FinishReason.Error
 
-    private def textFrom(message: ChatMessage): Option[String] =
-      message.content.flatMap(textFromContent).orElse(message.reasoning.filterNot(_.isBlank))
-
-    private def textFromContent(content: Json): Option[String] =
-      content.asString.filterNot(_.isBlank).orElse(textFromParts(content))
-
-    private def textFromParts(content: Json): Option[String] =
-      content.asArray.flatMap { parts =>
-        val text = parts.flatMap(textFromPart).mkString
-        Option.when(text.nonEmpty)(text)
+    private def textFrom(message: ChatAssistantMessage): Option[String] =
+      message.content.flatMap {
+        case text: String => Option.when(!text.isBlank)(text)
+        case parts: List[?] =>
+          val text = parts.collect { case part: ChatContentText => part.text }.filterNot(_.isBlank).mkString
+          Option.when(text.nonEmpty)(text)
       }
 
-    private def textFromPart(part: Json): Option[String] =
-      val partType = part.hcursor.get[String]("type").toOption
-      Option
-        .when(!partType.exists(_.contains("image")))(part.hcursor.get[String]("text").toOption.filterNot(_.isBlank))
-        .flatten
-
-  given [F[_]: MonadThrow]: AssetsHandling[F, ChatCompletionResponse] with
+  given [F[_]: MonadThrow]: AssetsHandling[F, ChatResult] with
     private val DataUrl = raw"^data:(image/[-+.\w]+);base64,(.*)$$".r
 
     private def extFromMediaType(mediaType: String): String =
@@ -96,8 +85,8 @@ object OpenRouter:
             .leftMap(e => Error.DecodeError(e.getMessage))
         case _                   => Error.MalformedImageDataUrl(raw).asLeft
 
-    override def getImages(response: ChatCompletionResponse): F[List[GeneratedImage[F]]] =
+    override def getImages(response: ChatResult): F[List[GeneratedImage[F]]] =
       response.choices.headOption
         .flatMap(_.message.images)
         .getOrElse(List.empty)
-        .traverse(imageUrlContent => decodeImage(imageUrlContent.imageUrl.url).liftTo[F])
+        .traverse(image => decodeImage(image.image_url.url).liftTo[F])

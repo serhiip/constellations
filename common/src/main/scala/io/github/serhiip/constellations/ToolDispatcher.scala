@@ -282,6 +282,11 @@ object ToolDispatcher:
               (base, $baseDecls) :: $collectionExpr.toList.map(instance => (makeElement(instance), elemDeclList))
             ToolDispatcher.combineOwned[F](owned)
           }
+        case _    =>
+          report.errorAndAbort(
+            s"ToolDispatcher.generate can only spread a Seq of proper types; got ${elementType.show}.",
+            collectionTerm.pos
+          )
 
     def processMethodForDeclaration(using Quotes)(
         traitSym: quotes.reflect.Symbol,
@@ -307,6 +312,11 @@ object ToolDispatcher:
             val paramTpe        = paramType(param)
             val paramSchemaExpr = paramTpe.asType match
               case '[t] => '{ summonInline[ToSchema[t]].schemaWith($config) }
+              case _    =>
+                report.errorAndAbort(
+                  s"Unsupported parameter type for schema generation: ${paramTpe.show}",
+                  param.pos.getOrElse(Position.ofMacroExpansion)
+                )
             val doc             = Docstrings.sanitize(param.docstring)
             val schemaWithDesc  = doc match
               case Some(d) => '{ $paramSchemaExpr.copy(description = Some(${ Expr(d) })) }
@@ -418,6 +428,11 @@ object ToolDispatcher:
                   params.zipWithIndex.map { case (param, idx) =>
                     paramType(param).asType match
                       case '[t] => '{ args(${ Expr(idx) }).asInstanceOf[t] }.asExprOf[t].asTerm
+                      case _    =>
+                        report.errorAndAbort(
+                          s"Unsupported parameter type in match: ${paramType(param).show}",
+                          Symbol.spliceOwner.pos.get
+                        )
                   }
                 val applied    = Apply(Select(from, method), terms)
                 val resultType = applied.tpe.widen.simplified

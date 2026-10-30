@@ -4,11 +4,11 @@ import ReleaseTransformations.*
 inThisBuild(
   List(
     organization := "io.github.serhiip",
-    homepage     := Some(url("https://github.com/serhiip/constellations")),
-    licenses     := List("MIT" -> url("https://opensource.org/licenses/MIT")),
+    homepage     := Some(uri("https://github.com/serhiip/constellations")),
+    licenses     := List(License.MIT),
     scmInfo      := Some(
       ScmInfo(
-        browseUrl = url("https://github.com/serhiip/constellations"),
+        browseUrl = uri("https://github.com/serhiip/constellations"),
         connection = "scm:git:https://github.com/serhiip/constellations.git",
         devConnection = Some("scm:git:git@github.com:serhiip/constellations.git")
       )
@@ -18,7 +18,7 @@ inThisBuild(
         id = "serhiip",
         name = "Serhii P",
         email = "serhiip@github.com",
-        url = url("https://github.com/serhiip")
+        url = uri("https://github.com/serhiip")
       )
     )
   )
@@ -26,7 +26,6 @@ inThisBuild(
 
 ThisBuild / scalaVersion      := "3.7.1"
 ThisBuild / semanticdbEnabled := true
-ThisBuild / semanticdbVersion := scalafixSemanticdb.revision
 
 ThisBuild / versionScheme := Some("early-semver")
 
@@ -66,14 +65,14 @@ lazy val syncApiDocs = taskKey[Unit]("Sync generated unidoc into website/static/
 lazy val root = (project in file("."))
   .settings(commonReleaseSettings)
   .settings(
-    name              := "constellations",
-    semanticdbVersion := scalafixSemanticdb.revision,
-    publish / skip    := true
+    name           := "constellations",
+    publish / skip := true
   )
   .aggregate(
     `constellations-common`,
     `constellations-core`,
     `constellations-openrouter`,
+    `constellations-openrouter-schema`,
     `constellations-google-genai`,
     `constellations-gcp-rag-engine`,
     `constellations-bedrock`,
@@ -106,7 +105,33 @@ lazy val `constellations-openrouter` = (project in file("openrouter"))
     libraryDependencies ++= Dependencies.constellationsOpenRouter,
     scalacOptions += "-Xmax-inlines:100"
   )
-  .dependsOn(`constellations-core`)
+  .dependsOn(`constellations-core`, `constellations-openrouter-schema`)
+
+lazy val `constellations-openrouter-schema` = (project in file("openrouter-schema"))
+  .enablePlugins(OpenApiCodegenPlugin)
+  .settings(commonReleaseSettings)
+  .settings(
+    name := "constellations-openrouter-schema",
+    openApiSpecs := Seq(
+      OpenApiSpec(
+        name = "OpenRouter",
+        source = OpenApiSource.FromUrl("https://openrouter.ai/openapi.json"),
+        packageName = "io.github.serhiip.constellations.openrouter.schema",
+        // Published examples disagree with the spec: ListEndpointsResponse omits required
+        // PublicEndpoint.native_tools, Model omits required endpoints, and PublicZdrEndpoint
+        // sets required throughput_last_30m to null. The model list examples embed that Model.
+        exampleExclusions = Set(
+          "ListEndpointsResponse",
+          "Model",
+          "ModelsListResponse",
+          "ModelsListResponseData",
+          "PublicZdrEndpoint"
+        )
+      )
+    ),
+    libraryDependencies ++= Dependencies.constellationsOpenRouterSchema,
+    scalacOptions ++= Seq("-Xmax-inlines:256", "-Wconf:src=src_managed/.*:s")
+  )
 
 lazy val `constellations-google-genai` = (project in file("google-genai"))
   .settings(commonReleaseSettings)
@@ -168,6 +193,7 @@ lazy val `constellations-examples` = (project in file("examples"))
     `constellations-google-genai`,
     `constellations-gcp-rag-engine`,
     `constellations-openrouter`,
+    `constellations-openrouter-schema`,
     `constellations-bedrock`,
     `constellations-mcp`,
     `constellations-typesafe-ai`
@@ -198,13 +224,14 @@ lazy val docs = project
         `constellations-common`,
         `constellations-core`,
         `constellations-openrouter`,
+        `constellations-openrouter-schema`,
         `constellations-google-genai`,
         `constellations-gcp-rag-engine`,
         `constellations-typesafe-ai`
       ),
-    syncApiDocs                                := {
+    syncApiDocs                                := Def.uncached {
       val _           = (Compile / unidoc).value
-      val generated   = baseDirectory.value / "target" / s"scala-${scalaVersion.value}" / "unidoc"
+      val generated   = (ScalaUnidoc / unidoc / target).value
       val destination = baseDirectory.value / ".." / "website" / "static" / "api"
       IO.delete(destination)
       IO.createDirectory(destination)
@@ -220,6 +247,7 @@ lazy val docs = project
     `constellations-common`,
     `constellations-core`,
     `constellations-openrouter`,
+    `constellations-openrouter-schema`,
     `constellations-google-genai`,
     `constellations-gcp-rag-engine`,
     `constellations-typesafe-ai`

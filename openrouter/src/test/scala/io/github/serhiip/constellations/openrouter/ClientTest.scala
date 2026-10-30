@@ -4,6 +4,24 @@ import cats.effect.{IO, Resource}
 import cats.syntax.all.*
 
 import io.circe.{Encoder, Json}
+import io.github.serhiip.constellations.openrouter.schema.additional.tools.item
+import io.github.serhiip.constellations.openrouter.schema.chat.choice.ChatChoice
+import io.github.serhiip.constellations.openrouter.schema.chat.content.image.ImageUrl
+import io.github.serhiip.constellations.openrouter.schema.chat.content.items.{ChatContentImage, ChatContentItems, ChatContentText}
+import io.github.serhiip.constellations.openrouter.schema.chat.finish.reason.enum_.ChatFinishReasonEnum
+import io.github.serhiip.constellations.openrouter.schema.chat.function.tool.FunctionFunction
+import io.github.serhiip.constellations.openrouter.schema.chat.messages.{ChatAssistantMessage, ChatToolMessage, ChatUserMessage}
+import io.github.serhiip.constellations.openrouter.schema.chat.request.ChatRequest
+import io.github.serhiip.constellations.openrouter.schema.chat.result.ChatResult
+import io.github.serhiip.constellations.openrouter.schema.chat.tool.call
+import io.github.serhiip.constellations.openrouter.schema.chat.tool.call.ChatToolCall
+import io.github.serhiip.constellations.openrouter.schema.generation.response.GenerationResponse
+import io.github.serhiip.constellations.openrouter.schema.input.modality.InputModality
+import io.github.serhiip.constellations.openrouter.schema.model.group.ModelGroup
+import io.github.serhiip.constellations.openrouter.schema.models.list.response.ModelsListResponse
+import io.github.serhiip.constellations.openrouter.schema.output.modality.OutputModality
+import io.github.serhiip.constellations.openrouter.schema.parameter.Parameter
+import io.github.serhiip.constellations.openrouter.schema.public.pricing.PublicPricing
 import io.circe.parser.*
 import munit.CatsEffectSuite
 import org.http4s.*
@@ -20,9 +38,7 @@ final class ClientTest extends CatsEffectSuite:
     HTTPClient[F] { _ => Resource.pure(response) }
 
   private def createTestClient(stubClient: HTTPClient[IO]): Client[IO] =
-    Client.core[IO](stubClient, testApiKey, testConfig)
-
-  private val sampleUsage = ChatCompletionUsage(promptTokens = 50, completionTokens = 15, totalTokens = 65)
+    Client.core[IO](testApiKey, testConfig)(stubClient)
 
   test("createEmbeddings should send correct request and parse response") {
     val expectedRequest = EmbeddingsRequest(
@@ -79,37 +95,7 @@ final class ClientTest extends CatsEffectSuite:
   }
 
   test("listModels should send correct request and parse response") {
-    val expectedResponse = ModelsResponse(
-      data = List(
-        Model(
-          id = "anthropic/claude-3.7-sonnet",
-          name = "Claude 3.7 Sonnet",
-          created = 1741818122L.some,
-          description = "State-of-the-art general model".some,
-          architecture = ModelArchitecture(
-            inputModalities = Set(Modality.Text, Modality.Image),
-            outputModalities = Set(Modality.Text),
-            tokenizer = Tokenizer.GPT.some
-          ).some,
-          topProvider = ModelTopProvider(isModerated = true, contextLength = Some(128000), maxCompletionTokens = Some(16384)).some,
-          pricing = ModelPricing(
-            prompt = BigDecimal("0.0000007"),
-            completion = BigDecimal("0.0000007"),
-            image = BigDecimal("0").some,
-            request = BigDecimal("0").some,
-            webSearch = BigDecimal("0").some,
-            internalReasoning = BigDecimal("0").some,
-            inputCacheRead = BigDecimal("0").some,
-            inputCacheWrite = BigDecimal("0").some
-          ).some,
-          canonicalSlug = "anthropic/claude-3.7-sonnet".some,
-          contextLength = 128000.some,
-          huggingFaceId = none,
-          perRequestLimits = Some(PerRequestLimits()),
-          supportedParameters = Some(List(SupportedParameter.Temperature, SupportedParameter.TopP))
-        )
-      )
-    )
+    val expectedResponse = TestResponses.modelsList()
 
     val stubClient = createStubClient(Response[IO](Status.Ok).withEntity(expectedResponse))
     val client     = createTestClient(stubClient)
@@ -121,39 +107,9 @@ final class ClientTest extends CatsEffectSuite:
 
   test("getGenerationStats should send correct request and parse response") {
     val generationId     = "gen-1234567890"
-    val expectedResponse = GenerationStats(
-      id = generationId,
-      totalCost = 0.05,
-      createdAt = "2024-01-01T00:00:00Z",
-      model = "gpt-4o",
-      origin = "api",
-      usage = 0.05,
-      isByok = false,
-      upstreamId = "upstream-123".some,
-      cacheDiscount = none,
-      upstreamInferenceCost = 0.05,
-      appId = none,
-      externalUser = none,
-      streamed = false,
-      cancelled = false,
-      providerName = "OpenAI",
-      latency = 1000,
-      moderationLatency = none,
-      generationTime = 800,
-      finishReason = "stop",
-      nativeFinishReason = "stop",
-      tokensPrompt = 100,
-      tokensCompletion = 50,
-      nativeTokensPrompt = 100,
-      nativeTokensCompletion = 50,
-      nativeTokensReasoning = 0,
-      nativeTokensCached = 0,
-      numMediaPrompt = none,
-      numMediaCompletion = none,
-      numSearchResults = none
-    )
+    val expectedResponse = TestResponses.generationData(generationId)
 
-    val stubClient = createStubClient(Response[IO](Status.Ok).withEntity(GenerationStatsResponse(expectedResponse)))
+    val stubClient = createStubClient(Response[IO](Status.Ok).withEntity(GenerationResponse(data = expectedResponse)))
     val client     = createTestClient(stubClient)
 
     client.getGenerationStats(generationId).map { response =>
@@ -162,38 +118,12 @@ final class ClientTest extends CatsEffectSuite:
   }
 
   test("createChatCompletion should handle multimodal content") {
-    val multimodalRequest = ChatCompletionRequest(
-      model = "gpt-4o",
-      messages = List(
-        ChatMessage(
-          role = "user",
-          content = Json
-            .arr(
-              Json.obj("type" -> Json.fromString("text"), "text" -> Json.fromString("What's in this image?")),
-              Json.obj(
-                "type"        -> Json.fromString("image_url"),
-                "image_url"   -> Json.obj("url" -> Json.fromString("data:image/jpeg;base64,test"))
-              )
-            )
-            .some
-        )
-      )
+    val parts: List[ChatContentItems] = List(
+      ChatContentText(text = "What's in this image?"),
+      ChatContentImage(image_url = ImageUrl(url = "data:image/jpeg;base64,test"))
     )
-
-    val expectedResponse = ChatCompletionResponse(
-      id = "test-id",
-      `object` = "chat.completion",
-      created = 1234567890L,
-      model = "gpt-4o",
-      choices = List(
-        ChatCompletionChoice(
-          index = 0,
-          message = ChatMessage(role = "assistant", content = Json.fromString("I can see an image in the message.").some),
-          finishReason = "stop".some
-        )
-      ),
-      usage = sampleUsage
-    )
+    val multimodalRequest = ChatRequest(model = Some("gpt-4o"), messages = List(ChatUserMessage(content = parts)))
+    val expectedResponse  = TestResponses.chatResult("gpt-4o", "I can see an image in the message.")
 
     val stubClient = createStubClient(Response[IO](Status.Ok).withEntity(expectedResponse))
     val client     = createTestClient(stubClient)
@@ -204,9 +134,9 @@ final class ClientTest extends CatsEffectSuite:
   }
 
   test("should handle error responses gracefully") {
-    val request = ChatCompletionRequest(
-      model = "test-model",
-      messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
+    val request = ChatRequest(
+      model = Some("test-model"),
+      messages = List(ChatUserMessage(content = "test"))
     )
 
     val stubClient = createStubClient(Response[IO](Status.BadRequest).withEntity("Invalid request"))
@@ -218,9 +148,9 @@ final class ClientTest extends CatsEffectSuite:
   }
 
   test("should handle OpenRouter API error responses with proper format") {
-    val request = ChatCompletionRequest(
-      model = "test-model",
-      messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
+    val request = ChatRequest(
+      model = Some("test-model"),
+      messages = List(ChatUserMessage(content = "test"))
     )
 
     val errorDetails  = ErrorDetails(
@@ -243,9 +173,9 @@ final class ClientTest extends CatsEffectSuite:
   }
 
   test("should handle OpenRouter API error responses without metadata") {
-    val request = ChatCompletionRequest(
-      model = "test-model",
-      messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
+    val request = ChatRequest(
+      model = Some("test-model"),
+      messages = List(ChatUserMessage(content = "test"))
     )
 
     val errorDetails  = ErrorDetails(
@@ -268,9 +198,9 @@ final class ClientTest extends CatsEffectSuite:
   }
 
   test("should raise BadRequest domain error for 400 status") {
-    val request = ChatCompletionRequest(
-      model = "test-model",
-      messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
+    val request = ChatRequest(
+      model = Some("test-model"),
+      messages = List(ChatUserMessage(content = "test"))
     )
 
     val errorDetails  = ErrorDetails(
@@ -293,9 +223,9 @@ final class ClientTest extends CatsEffectSuite:
   }
 
   test("should raise Unauthorized domain error for 401 status") {
-    val request = ChatCompletionRequest(
-      model = "test-model",
-      messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
+    val request = ChatRequest(
+      model = Some("test-model"),
+      messages = List(ChatUserMessage(content = "test"))
     )
 
     val errorDetails  = ErrorDetails(
@@ -318,9 +248,9 @@ final class ClientTest extends CatsEffectSuite:
   }
 
   test("should raise TooManyRequests domain error for 429 status") {
-    val request = ChatCompletionRequest(
-      model = "test-model",
-      messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
+    val request = ChatRequest(
+      model = Some("test-model"),
+      messages = List(ChatUserMessage(content = "test"))
     )
 
     val errorDetails  = ErrorDetails(
@@ -343,9 +273,9 @@ final class ClientTest extends CatsEffectSuite:
   }
 
   test("should raise InternalServerError domain error for 500 status") {
-    val request = ChatCompletionRequest(
-      model = "test-model",
-      messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
+    val request = ChatRequest(
+      model = Some("test-model"),
+      messages = List(ChatUserMessage(content = "test"))
     )
 
     val errorDetails  = ErrorDetails(
@@ -368,9 +298,9 @@ final class ClientTest extends CatsEffectSuite:
   }
 
   test("should raise UnknownError domain error for other status codes") {
-    val request = ChatCompletionRequest(
-      model = "test-model",
-      messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
+    val request = ChatRequest(
+      model = Some("test-model"),
+      messages = List(ChatUserMessage(content = "test"))
     )
 
     val errorDetails  = ErrorDetails(
@@ -393,9 +323,9 @@ final class ClientTest extends CatsEffectSuite:
   }
 
   test("should treat success status with error payload as domain error") {
-    val request = ChatCompletionRequest(
-      model = "test-model",
-      messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
+    val request = ChatRequest(
+      model = Some("test-model"),
+      messages = List(ChatUserMessage(content = "test"))
     )
 
     val errorPayload = Json.obj(
@@ -416,9 +346,9 @@ final class ClientTest extends CatsEffectSuite:
   }
 
   test("should classify error payloads using status and code precedence") {
-    val request = ChatCompletionRequest(
-      model = "test-model",
-      messages = List(ChatMessage(role = "user", content = Json.fromString("test").some))
+    val request = ChatRequest(
+      model = Some("test-model"),
+      messages = List(ChatUserMessage(content = "test"))
     )
 
     final case class ErrCase(status: Status, code: Int, message: String, expected: ErrorDetails => Client.Error)
@@ -454,47 +384,40 @@ final class ClientTest extends CatsEffectSuite:
 
   test("createChatCompletion should handle tool calls") {
     val searchTool = createSearchTool()
-
-    val request = ChatCompletionRequest(
-      model = "google/gemini-2.0-flash-001",
-      messages = List(ChatMessage.user("What are the titles of some James Joyce books?")),
+    val request    = ChatRequest(
+      model = Some("google/gemini-2.0-flash-001"),
+      messages = List(ChatUserMessage(content = "What are the titles of some James Joyce books?")),
       tools = List(searchTool).some,
-      toolChoice = ToolChoice.auto.some
+      tool_choice = Some("auto")
     )
-
-    val expectedResponse = ChatCompletionResponse(
-      id = "test-id",
-      `object` = "chat.completion",
-      created = 1234567890L,
-      model = "google/gemini-2.0-flash-001",
-      choices = List(
-        ChatCompletionChoice(
-          index = 0,
-          message = ChatMessage.assistantWithToolCalls(
-            List(
-              ToolCall(
-                id = "call_abc123",
-                `type` = "function",
-                function = ToolCallFunction(
-                  name = "search_gutenberg_books",
-                  arguments = """{"search_terms": ["James", "Joyce"]}"""
+    val expectedResponse = TestResponses
+      .chatResult("google/gemini-2.0-flash-001")
+      .copy(choices =
+        List(
+          ChatChoice(
+            finish_reason = Some(ChatFinishReasonEnum.ToolCalls),
+            index = 0L,
+            message = ChatAssistantMessage(
+              tool_calls = Some(
+                List(
+                  ChatToolCall(
+                    id = "call_abc123",
+                    function = call.Function(name = "search_gutenberg_books", arguments = """{"search_terms": ["James", "Joyce"]}""")
+                  )
                 )
               )
             )
-          ),
-          finishReason = "tool_calls".some
+          )
         )
-      ),
-      usage = sampleUsage
-    )
+      )
 
     val stubClient = createStubClient(Response[IO](Status.Ok).withEntity(expectedResponse))
     val client     = createTestClient(stubClient)
 
     client.createChatCompletion(request).map { response =>
       assertEquals(response, expectedResponse)
-      assertEquals(response.choices.head.message.toolCalls.get.head.function.name, "search_gutenberg_books")
-      assertEquals(response.choices.head.finishReason, "tool_calls".some)
+      assertEquals(response.choices.head.message.tool_calls.get.head.function.name, "search_gutenberg_books")
+      assertEquals(response.choices.head.finish_reason, Some(ChatFinishReasonEnum.ToolCalls))
     }
   }
 
@@ -569,13 +492,13 @@ final class ClientTest extends CatsEffectSuite:
       |  }
       |}
       |""".stripMargin
-    decode[ChatCompletionResponse](jsonStr).fold(
+    decode[ChatResult](jsonStr).fold(
       err => IO.raiseError(err),
       response =>
         IO {
           assertEquals(response.choices.size, 1)
-          assertEquals(response.choices.head.finishReason, Some("tool_calls"))
-          val toolCalls = response.choices.head.message.toolCalls.getOrElse(fail("tool_calls missing"))
+          assertEquals(response.choices.head.finish_reason, Some(ChatFinishReasonEnum.ToolCalls))
+          val toolCalls = response.choices.head.message.tool_calls.getOrElse(fail("tool_calls missing"))
           assertEquals(toolCalls.size, 1)
           assertEquals(toolCalls.head.id, "tool_ExampleFunctions_getWeather_xYz9AbCdEfGhIjKlMnOpQr")
           assertEquals(toolCalls.head.function.name, "ExampleFunctions_getWeather")
@@ -587,23 +510,10 @@ final class ClientTest extends CatsEffectSuite:
     )
   }
 
-  test("ChatCompletionRequest encoder should drop null fields") {
-    val req = ChatCompletionRequest(
-      model = "m",
-      messages = List(ChatMessage.user("hi")),
-      temperature = None,
-      maxTokens = None,
-      topP = None,
-      stream = false,
-      presencePenalty = None,
-      frequencyPenalty = None,
-      logitBias = None,
-      tools = None,
-      toolChoice = None,
-      modalities = None
-    )
+  test("ChatRequest encoder should drop null fields") {
+    val req = ChatRequest(model = Some("m"), messages = List(ChatUserMessage(content = "hi")))
 
-    val json = implicitly[Encoder[ChatCompletionRequest]].apply(req)
+    val json = Encoder[ChatRequest].apply(req)
     assertEquals(json.hcursor.downField("temperature").focus, None)
     assertEquals(json.hcursor.downField("max_tokens").focus, None)
     assertEquals(json.hcursor.downField("top_p").focus, None)
@@ -618,24 +528,20 @@ final class ClientTest extends CatsEffectSuite:
   }
 
   test("createChatCompletion should handle tool results") {
-    val toolResultMessage = ChatMessage.tool(
-      toolCallId = "call_abc123",
-      name = "search_gutenberg_books",
+    val toolResultMessage = ChatToolMessage(
+      tool_call_id = "call_abc123",
       content = """[{"id": 4300, "title": "Ulysses", "authors": [{"name": "Joyce, James"}]}]"""
     )
-
-    val request = ChatCompletionRequest(
-      model = "google/gemini-2.0-flash-001",
+    val request = ChatRequest(
+      model = Some("google/gemini-2.0-flash-001"),
       messages = List(
-        ChatMessage.user("What are the titles of some James Joyce books?"),
-        ChatMessage.assistantWithToolCalls(
-          List(
-            ToolCall(
-              id = "call_abc123",
-              `type` = "function",
-              function = ToolCallFunction(
-                name = "search_gutenberg_books",
-                arguments = """{"search_terms": ["James", "Joyce"]}"""
+        ChatUserMessage(content = "What are the titles of some James Joyce books?"),
+        ChatAssistantMessage(
+          tool_calls = Some(
+            List(
+              ChatToolCall(
+                id = "call_abc123",
+                function = call.Function(name = "search_gutenberg_books", arguments = """{"search_terms": ["James", "Joyce"]}""")
               )
             )
           )
@@ -644,22 +550,9 @@ final class ClientTest extends CatsEffectSuite:
       ),
       tools = List(createSearchTool()).some
     )
-
-    val expectedResponse = ChatCompletionResponse(
-      id = "test-id",
-      `object` = "chat.completion",
-      created = 1234567890L,
-      model = "google/gemini-2.0-flash-001",
-      choices = List(
-        ChatCompletionChoice(
-          index = 0,
-          message = ChatMessage.assistant(
-            "Based on the search results, I found 'Ulysses' by James Joyce in the Project Gutenberg library."
-          ),
-          finishReason = "stop".some
-        )
-      ),
-      usage = ChatCompletionUsage(promptTokens = 100, completionTokens = 25, totalTokens = 125)
+    val expectedResponse = TestResponses.chatResult(
+      "google/gemini-2.0-flash-001",
+      "Based on the search results, I found 'Ulysses' by James Joyce in the Project Gutenberg library."
     )
 
     val stubClient = createStubClient(Response[IO](Status.Ok).withEntity(expectedResponse))
@@ -667,24 +560,28 @@ final class ClientTest extends CatsEffectSuite:
 
     client.createChatCompletion(request).map { response =>
       assertEquals(response, expectedResponse)
-      assertEquals(response.choices.head.finishReason, "stop".some)
+      assertEquals(response.choices.head.finish_reason, Some(ChatFinishReasonEnum.Stop))
     }
   }
 
-  private def createSearchTool(): Tool =
-    Tool.function(
-      name = "search_gutenberg_books",
-      description = "Search for books in the Project Gutenberg library".some,
-      parameters = Json.obj(
-        "type"       -> Json.fromString("object"),
-        "properties" -> Json.obj(
-          "search_terms" -> Json.obj(
-            "type"        -> Json.fromString("array"),
-            "items"       -> Json.obj("type" -> Json.fromString("string")),
-            "description" -> Json.fromString("List of search terms to find books")
+  private def createSearchTool(): item.Function =
+    item.Function(
+      function = FunctionFunction(
+        name = "search_gutenberg_books",
+        description = Some("Search for books in the Project Gutenberg library"),
+        parameters = Some(
+          Map(
+            "type"       -> Json.fromString("object"),
+            "properties" -> Json.obj(
+              "search_terms" -> Json.obj(
+                "type"        -> Json.fromString("array"),
+                "items"       -> Json.obj("type" -> Json.fromString("string")),
+                "description" -> Json.fromString("List of search terms to find books")
+              )
+            ),
+            "required"   -> Json.arr(Json.fromString("search_terms"))
           )
-        ),
-        "required"   -> Json.arr(Json.fromString("search_terms"))
+        )
       )
     )
 
@@ -694,27 +591,14 @@ final class ClientTest extends CatsEffectSuite:
       appTitle = "My AI Assistant".some
     )
 
-    val expectedResponse = ChatCompletionResponse(
-      id = "test-id",
-      `object` = "chat.completion",
-      created = 1234567890L,
-      model = "gpt-4o",
-      choices = List(
-        ChatCompletionChoice(
-          index = 0,
-          message = ChatMessage.assistant("Hello!"),
-          finishReason = "stop".some
-        )
-      ),
-      usage = sampleUsage
-    )
+    val expectedResponse = TestResponses.chatResult("gpt-4o", "Hello!")
 
     val stubClient = createStubClient(Response[IO](Status.Ok).withEntity(expectedResponse))
-    val client     = Client.core[IO](stubClient, testApiKey, configWithAttribution)
+    val client     = Client.core[IO](testApiKey, configWithAttribution)(stubClient)
 
-    val request = ChatCompletionRequest(
-      model = "gpt-4o",
-      messages = List(ChatMessage.user("Hello"))
+    val request = ChatRequest(
+      model = Some("gpt-4o"),
+      messages = List(ChatUserMessage(content = "Hello"))
     )
 
     client.createChatCompletion(request).map { response =>
@@ -779,12 +663,16 @@ final class ClientTest extends CatsEffectSuite:
       ],
       "temperature" : null,
       "top_p" : null,
-      "frequency_penalty" : null
+      "frequency_penalty" : null,
+      "default_parameters" : null,
+      "supported_voices" : null,
+      "links" : { "details" : "https://openrouter.ai/openai/o3-deep-research" },
+      "endpoints" : []
     }"""
 
-    val modelsResponseJson = s"""{"data": [$jsonString]}"""
+    val modelsResponseJson = s"""{"data": [$jsonString], "links": {"next": null}, "total_count": 1}"""
 
-    val decoded = parse(modelsResponseJson).flatMap(_.as[ModelsResponse])
+    val decoded = parse(modelsResponseJson).flatMap(_.as[ModelsListResponse])
 
     decoded match
       case Right(response) =>
@@ -792,90 +680,69 @@ final class ClientTest extends CatsEffectSuite:
         val model = response.data.head
         assertEquals(model.id, "openai/o3-deep-research")
         assertEquals(model.name, "OpenAI: o3 Deep Research")
-        assertEquals(model.canonicalSlug, Some("openai/o3-deep-research-2025-06-26"))
-        assertEquals(model.huggingFaceId, Some(""))
-        assertEquals(model.created, Some(1760129661L))
-        assertEquals(model.contextLength, Some(200000))
-        assertEquals(model.temperature, None)
-        assertEquals(model.topP, None)
-        assertEquals(model.frequencyPenalty, None)
+        assertEquals(model.canonical_slug, "openai/o3-deep-research-2025-06-26")
+        assertEquals(model.hugging_face_id, Some(""))
+        assertEquals(model.created, 1760129661L)
+        assertEquals(model.context_length, Some(200000L))
+        assertEquals(model.default_parameters, None)
 
-        model.architecture match
-          case Some(arch) =>
-            assertEquals(arch.modality, Some("text+image->text"))
-            assertEquals(arch.inputModalities, Set(Modality.Image, Modality.Text, Modality.File))
-            assertEquals(arch.outputModalities, Set(Modality.Text))
-            assertEquals(arch.tokenizer, Some(Tokenizer.GPT))
-            assertEquals(arch.instructType, None)
-          case None       => fail("architecture should be present")
+        val arch = model.architecture
+        assertEquals(arch.modality, Some("text+image->text"))
+        assertEquals(arch.input_modalities, List(InputModality.Image, InputModality.Text, InputModality.File))
+        assertEquals(arch.output_modalities, List(OutputModality.Text))
+        assertEquals(arch.tokenizer, Some(ModelGroup.GPT))
+        assertEquals(arch.instruct_type, None)
 
-        model.pricing match
-          case Some(pricing) =>
-            assertEquals(pricing.prompt, BigDecimal("0.00001"))
-            assertEquals(pricing.completion, BigDecimal("0.00004"))
-            assertEquals(pricing.request, Some(BigDecimal("0")))
-            assertEquals(pricing.image, Some(BigDecimal("0.00765")))
-            assertEquals(pricing.webSearch, Some(BigDecimal("0.01")))
-            assertEquals(pricing.internalReasoning, Some(BigDecimal("0")))
-            assertEquals(pricing.inputCacheRead, Some(BigDecimal("0.0000025")))
-          case None          => fail("pricing should be present")
+        val pricing = model.pricing
+        assertEquals(pricing.prompt, "0.00001")
+        assertEquals(pricing.completion, "0.00004")
+        assertEquals(pricing.request, Some("0"))
+        assertEquals(pricing.image, Some("0.00765"))
+        assertEquals(pricing.web_search, Some("0.01"))
+        assertEquals(pricing.internal_reasoning, Some("0"))
+        assertEquals(pricing.input_cache_read, Some("0.0000025"))
 
-        model.topProvider match
-          case Some(provider) =>
-            assertEquals(provider.contextLength, Some(200000))
-            assertEquals(provider.maxCompletionTokens, Some(100000))
-            assertEquals(provider.isModerated, true)
-          case None           => fail("topProvider should be present")
+        val provider = model.top_provider
+        assertEquals(provider.context_length, Some(200000L))
+        assertEquals(provider.max_completion_tokens, Some(100000L))
+        assertEquals(provider.is_moderated, true)
 
-        assertEquals(model.perRequestLimits, None)
+        assertEquals(model.per_request_limits, None)
         assertEquals(
-          model.supportedParameters,
-          Some(
-            List(
-              SupportedParameter.FrequencyPenalty,
-              SupportedParameter.IncludeReasoning,
-              SupportedParameter.LogitBias,
-              SupportedParameter.Logprobs,
-              SupportedParameter.MaxTokens,
-              SupportedParameter.PresencePenalty,
-              SupportedParameter.Reasoning,
-              SupportedParameter.ResponseFormat,
-              SupportedParameter.Seed,
-              SupportedParameter.Stop,
-              SupportedParameter.StructuredOutputs,
-              SupportedParameter.Temperature,
-              SupportedParameter.ToolChoice,
-              SupportedParameter.Tools,
-              SupportedParameter.TopLogprobs,
-              SupportedParameter.TopP
-            )
+          model.supported_parameters,
+          List(
+            Parameter.FrequencyPenalty,
+            Parameter.IncludeReasoning,
+            Parameter.LogitBias,
+            Parameter.Logprobs,
+            Parameter.MaxTokens,
+            Parameter.PresencePenalty,
+            Parameter.Reasoning,
+            Parameter.ResponseFormat,
+            Parameter.Seed,
+            Parameter.Stop,
+            Parameter.StructuredOutputs,
+            Parameter.Temperature,
+            Parameter.ToolChoice,
+            Parameter.Tools,
+            Parameter.TopLogprobs,
+            Parameter.TopP
           )
         )
       case Left(error)     => fail(s"Failed to decode JSON: ${error.getMessage}")
   }
 
-  test("ModelPricing decodes from API string values") {
+  test("PublicPricing decodes price fields as strings") {
     val json = """{"prompt":"0.00001","completion":"0.00004","request":"0","image":"0.00765","web_search":"0.01","internal_reasoning":"0","input_cache_read":"0.0000025"}"""
-    parse(json).flatMap(_.as[ModelPricing]) match
+    parse(json).flatMap(_.as[PublicPricing]) match
       case Right(pricing) =>
-        assertEquals(pricing.prompt, BigDecimal("0.00001"))
-        assertEquals(pricing.completion, BigDecimal("0.00004"))
-        assertEquals(pricing.request, Some(BigDecimal("0")))
-        assertEquals(pricing.image, Some(BigDecimal("0.00765")))
-        assertEquals(pricing.webSearch, Some(BigDecimal("0.01")))
-        assertEquals(pricing.internalReasoning, Some(BigDecimal("0")))
-        assertEquals(pricing.inputCacheRead, Some(BigDecimal("0.0000025")))
-        assertEquals(pricing.inputCacheWrite, None)
-      case Left(e)        => fail(s"Failed to decode ModelPricing from strings: $e")
-  }
-
-  test("ModelPricing decodes from JSON number values") {
-    val json = """{"prompt":0.00001,"completion":0.00004,"request":0,"image":0.00765}"""
-    parse(json).flatMap(_.as[ModelPricing]) match
-      case Right(pricing) =>
-        assertEquals(pricing.prompt, BigDecimal("0.00001"))
-        assertEquals(pricing.completion, BigDecimal("0.00004"))
-        assertEquals(pricing.request, Some(BigDecimal("0")))
-        assertEquals(pricing.image, Some(BigDecimal("0.00765")))
-      case Left(e)        => fail(s"Failed to decode ModelPricing from numbers: $e")
+        assertEquals(pricing.prompt, "0.00001")
+        assertEquals(pricing.completion, "0.00004")
+        assertEquals(pricing.request, Some("0"))
+        assertEquals(pricing.image, Some("0.00765"))
+        assertEquals(pricing.web_search, Some("0.01"))
+        assertEquals(pricing.internal_reasoning, Some("0"))
+        assertEquals(pricing.input_cache_read, Some("0.0000025"))
+        assertEquals(pricing.input_cache_write, None)
+      case Left(e)        => fail(s"Failed to decode PublicPricing from strings: $e")
   }

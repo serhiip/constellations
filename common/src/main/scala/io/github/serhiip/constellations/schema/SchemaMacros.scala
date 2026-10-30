@@ -109,6 +109,9 @@ object SchemaMacros:
       tpe.asType match
         case '[t] =>
           Expr.summon[ToSchema[t]].fold(structuralSchema(tpe, posOpt))(toSchema => '{ $toSchema.schemaWith($config) })
+        case _    =>
+          val errorPos = posOpt.getOrElse(Position.ofMacroExpansion)
+          report.errorAndAbort(s"Unsupported type for schema generation: ${tpe.show}", errorPos)
 
     def structuralSchema(tpe: TypeRepr, posOpt: Option[Position]): Expr[Schema] =
       val errorPos = posOpt.getOrElse(Position.ofMacroExpansion)

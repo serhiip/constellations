@@ -19,7 +19,8 @@ import io.github.serhiip.constellations.dispatcher.ValueEncoder
 import io.github.serhiip.constellations.executor.Stateful
 import io.github.serhiip.constellations.handling.OpenRouter.given
 import io.github.serhiip.constellations.invoker.OpenRouter
-import io.github.serhiip.constellations.openrouter.{ChatCompletionResponse, Client}
+import io.github.serhiip.constellations.openrouter.Client
+import io.github.serhiip.constellations.openrouter.schema.chat.result.ChatResult
 
 final case class WeatherReport(city: String, temperatureC: Double, condition: String) derives ValueEncoder
 final case class StoredNote(id: String) derives ValueEncoder
@@ -58,10 +59,10 @@ object DispatcherEncodingExample extends IOApp.Simple:
       for
         apiKeyOpt                  <- Env[IO].get("OPENROUTER_API_KEY")
         apiKey                     <- apiKeyOpt.liftTo[IO](new RuntimeException("OPENROUTER_API_KEY is not set"))
-        model                       = sys.env.getOrElse("OPENROUTER_MODEL", "google/gemini-3-pro-preview")
+        model                       = sys.env.getOrElse("OPENROUTER_MODEL", "openai/gpt-4o-mini")
         _                          <-                                         Client
-                                          .HTTP[IO](Client.Config())
-                                          .map(http => Client.core(http, apiKey, Client.Config()))
+                                          .HTTP[IO]()
+                                          .map(Client.core(apiKey, Client.Config()))
                                         .use { client =>
                                           for
                                             dispatcher <- ToolDispatcher.observed(
@@ -83,7 +84,7 @@ object DispatcherEncodingExample extends IOApp.Simple:
                                                           )
                                             invoker     <- Invoker.observed(rawInvoker)
                                             files      <- Files[IO](URI.create("file:///tmp/"))
-                                            rawExecutor = Stateful[IO, ChatCompletionResponse](
+                                            rawExecutor = Stateful[IO, ChatResult](
                                                             Stateful.Config(functionCallLimit = 5),
                                                             invoker,
                                                             files
