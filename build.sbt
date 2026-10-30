@@ -4,11 +4,11 @@ import ReleaseTransformations.*
 inThisBuild(
   List(
     organization := "io.github.serhiip",
-    homepage     := Some(url("https://github.com/serhiip/constellations")),
-    licenses     := List("MIT" -> url("https://opensource.org/licenses/MIT")),
+    homepage     := Some(uri("https://github.com/serhiip/constellations")),
+    licenses     := List(License.MIT),
     scmInfo      := Some(
       ScmInfo(
-        browseUrl = url("https://github.com/serhiip/constellations"),
+        browseUrl = uri("https://github.com/serhiip/constellations"),
         connection = "scm:git:https://github.com/serhiip/constellations.git",
         devConnection = Some("scm:git:git@github.com:serhiip/constellations.git")
       )
@@ -18,7 +18,7 @@ inThisBuild(
         id = "serhiip",
         name = "Serhii P",
         email = "serhiip@github.com",
-        url = url("https://github.com/serhiip")
+        url = uri("https://github.com/serhiip")
       )
     )
   )
@@ -26,7 +26,6 @@ inThisBuild(
 
 ThisBuild / scalaVersion      := "3.7.1"
 ThisBuild / semanticdbEnabled := true
-ThisBuild / semanticdbVersion := scalafixSemanticdb.revision
 
 ThisBuild / versionScheme := Some("early-semver")
 
@@ -66,9 +65,8 @@ lazy val syncApiDocs = taskKey[Unit]("Sync generated unidoc into website/static/
 lazy val root = (project in file("."))
   .settings(commonReleaseSettings)
   .settings(
-    name              := "constellations",
-    semanticdbVersion := scalafixSemanticdb.revision,
-    publish / skip    := true
+    name           := "constellations",
+    publish / skip := true
   )
   .aggregate(
     `constellations-common`,
@@ -202,9 +200,9 @@ lazy val docs = project
         `constellations-gcp-rag-engine`,
         `constellations-typesafe-ai`
       ),
-    syncApiDocs                                := {
+    syncApiDocs                                := Def.uncached {
       val _           = (Compile / unidoc).value
-      val generated   = baseDirectory.value / "target" / s"scala-${scalaVersion.value}" / "unidoc"
+      val generated   = (ScalaUnidoc / unidoc / target).value
       val destination = baseDirectory.value / ".." / "website" / "static" / "api"
       IO.delete(destination)
       IO.createDirectory(destination)

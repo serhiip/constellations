@@ -227,6 +227,7 @@ final class ClientTest extends CatsEffectSuite:
       assertEquals(
         selected match
           case "billing" | "technical" | "sales" => selected
+          case other                             => fail(s"unexpected choice $other")
         ,
         "technical"
       )
@@ -238,6 +239,7 @@ final class ClientTest extends CatsEffectSuite:
       assertEquals(
         level match
           case 0 | 1 | 2 => level
+          case other     => fail(s"unexpected level $other")
         ,
         2
       )

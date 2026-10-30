@@ -66,7 +66,7 @@ object OpenRouter:
         modelName <- modelNameOverride.getOrElse(config.model.pure[F])
 
         request = ChatCompletionRequest(
-                    model = config.model,
+                    model = modelName,
                     messages = config.systemPrompt.map(ChatMessage.system).toList ::: messages,
                     temperature = config.temperature,
                     maxTokens = config.maxTokens,
