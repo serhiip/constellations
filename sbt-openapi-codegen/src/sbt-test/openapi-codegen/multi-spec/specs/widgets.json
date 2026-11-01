@@ -1,0 +1,14 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Widgets", "version": "1" },
+  "components": {
+    "schemas": {
+      "Widget": {
+        "type": "object",
+        "required": ["name"],
+        "properties": { "name": { "type": "string" } },
+        "example": { "name": "bolt" }
+      }
+    }
+  }
+}

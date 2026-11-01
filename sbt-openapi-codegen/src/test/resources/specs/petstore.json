@@ -1,0 +1,56 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Swagger Petstore", "version": "1.0.0" },
+  "components": {
+    "schemas": {
+      "Category": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "name": { "type": "string" }
+        }
+      },
+      "Tag": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "name": { "type": "string" }
+        }
+      },
+      "Pet": {
+        "type": "object",
+        "required": ["name", "photoUrls"],
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "name": { "type": "string" },
+          "category": { "$ref": "#/components/schemas/Category" },
+          "photoUrls": { "type": "array", "items": { "type": "string" } },
+          "tags": { "type": "array", "items": { "$ref": "#/components/schemas/Tag" } },
+          "status": { "type": "string", "enum": ["available", "pending", "sold"] }
+        },
+        "example": {
+          "name": "doggie",
+          "photoUrls": ["https://example.com/dog.png"],
+          "status": "available"
+        }
+      },
+      "Order": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "petId": { "type": "integer", "format": "int64" },
+          "quantity": { "type": "integer", "format": "int32" },
+          "complete": { "type": "boolean" }
+        }
+      },
+      "ApiResponse": {
+        "type": "object",
+        "properties": {
+          "code": { "type": "integer", "format": "int32" },
+          "type": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  }
+}

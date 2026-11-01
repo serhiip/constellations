@@ -1,0 +1,59 @@
+openapi: 3.0.3
+info:
+  title: Shop
+  version: "1.0.0"
+components:
+  schemas:
+    PetStatus:
+      type: string
+      enum: [available, pending, sold]
+    Category:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+    Pet:
+      allOf:
+        - $ref: "#/components/schemas/Category"
+        - type: object
+          properties:
+            status:
+              $ref: "#/components/schemas/PetStatus"
+            nickname:
+              type: string
+              nullable: true
+      example:
+        id: 1
+        name: doggo
+        status: available
+    Animal:
+      oneOf:
+        - $ref: "#/components/schemas/Cat"
+        - $ref: "#/components/schemas/Dog"
+      discriminator:
+        propertyName: kind
+        mapping:
+          cat: "#/components/schemas/Cat"
+          dog: "#/components/schemas/Dog"
+    Cat:
+      type: object
+      required: [kind, name]
+      properties:
+        kind:
+          type: string
+          enum: [cat]
+        name:
+          type: string
+    Dog:
+      type: object
+      required: [kind, name]
+      properties:
+        kind:
+          type: string
+          enum: [dog]
+        name:
+          type: string

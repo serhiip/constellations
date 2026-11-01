@@ -1,0 +1,17 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Counts", "version": "1" },
+  "components": {
+    "schemas": {
+      "Count": {
+        "type": "object",
+        "properties": {
+          "value": { "type": ["integer", "null"] },
+          "tag": { "const": "count" }
+        },
+        "required": ["tag"],
+        "example": { "tag": "count", "value": null }
+      }
+    }
+  }
+}

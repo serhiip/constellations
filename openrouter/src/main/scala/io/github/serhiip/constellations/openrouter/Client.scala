@@ -21,6 +21,15 @@ import fs2.io.net.Network
 import io.circe.derivation.{Configuration, ConfiguredCodec}
 import io.circe.syntax.*
 import io.circe.{Codec, Decoder, Encoder, Json}
+import io.github.serhiip.constellations.openrouter.schema.{
+  ChatRequest,
+  ChatResult,
+  GenerationResponse,
+  GenerationResponseData,
+  Model,
+  ModelsListResponse,
+  Parameter
+}
 import org.http4s.*
 import org.http4s.Method.*
 import org.http4s.circe.*
@@ -37,276 +46,15 @@ import org.typelevel.otel4s.metrics.BucketBoundaries
 
 private given Configuration = Configuration.default.withSnakeCaseMemberNames
 
-enum Modality:
-  case Text, Image, Audio, Video, File
-  case Unknown(value: String)
+extension (model: Model) def supportsTools: Boolean = model.supported_parameters.contains(Parameter.Tools)
 
-object Modality:
-  private val knownByString: Map[String, Modality] =
-    Map("text" -> Text, "image" -> Image, "audio" -> Audio, "video" -> Video, "file" -> File)
-
-  private val stringByKnown: Map[Modality, String] =
-    knownByString.map(_.swap)
-
-  given Codec[Modality] = Codec.from(
-    Decoder[String].map(s => knownByString.getOrElse(s, Unknown(s))),
-    Encoder[String].contramap {
-      case Unknown(v) => v
-      case other      => stringByKnown(other)
-    }
-  )
-
-enum SupportedParameter:
-  case FrequencyPenalty, IncludeReasoning, LogitBias, Logprobs, MaxTokens, MinP, PresencePenalty, Reasoning,
-    RepetitionPenalty, ResponseFormat, Seed, Stop, StructuredOutputs, Temperature, ToolChoice, Tools, TopA, TopK,
-    TopLogprobs, TopP, Verbosity, WebSearchOptions
-  case Unknown(value: String)
-
-object SupportedParameter:
-  private val knownByString: Map[String, SupportedParameter] = Map(
-    "frequency_penalty"  -> FrequencyPenalty,
-    "include_reasoning"  -> IncludeReasoning,
-    "logit_bias"         -> LogitBias,
-    "logprobs"           -> Logprobs,
-    "max_tokens"         -> MaxTokens,
-    "min_p"              -> MinP,
-    "presence_penalty"   -> PresencePenalty,
-    "reasoning"          -> Reasoning,
-    "repetition_penalty" -> RepetitionPenalty,
-    "response_format"    -> ResponseFormat,
-    "seed"               -> Seed,
-    "stop"               -> Stop,
-    "structured_outputs" -> StructuredOutputs,
-    "temperature"        -> Temperature,
-    "tool_choice"        -> ToolChoice,
-    "tools"              -> Tools,
-    "top_a"              -> TopA,
-    "top_k"              -> TopK,
-    "top_logprobs"       -> TopLogprobs,
-    "top_p"              -> TopP,
-    "verbosity"          -> Verbosity,
-    "web_search_options" -> WebSearchOptions
-  )
-
-  private val stringByKnown: Map[SupportedParameter, String] =
-    knownByString.map(_.swap)
-
-  given Codec[SupportedParameter] = Codec.from(
-    Decoder[String].map(s => knownByString.getOrElse(s, Unknown(s))),
-    Encoder[String].contramap {
-      case Unknown(v) => v
-      case other      => stringByKnown(other)
-    }
-  )
-
-enum Tokenizer:
-  case Claude, Cohere, DeepSeek, GPT, Gemini, Grok, Llama2, Llama3, Llama4, Mistral, Nova, Qwen, Qwen3, Router, Other
-  case Unknown(value: String)
-
-object Tokenizer:
-  private val knownByString: Map[String, Tokenizer] = Map(
-    "Claude"   -> Claude,
-    "Cohere"   -> Cohere,
-    "DeepSeek" -> DeepSeek,
-    "GPT"      -> GPT,
-    "Gemini"   -> Gemini,
-    "Grok"     -> Grok,
-    "Llama2"   -> Llama2,
-    "Llama3"   -> Llama3,
-    "Llama4"   -> Llama4,
-    "Mistral"  -> Mistral,
-    "Nova"     -> Nova,
-    "Qwen"     -> Qwen,
-    "Qwen3"    -> Qwen3,
-    "Router"   -> Router,
-    "Other"    -> Other
-  )
-
-  private val stringByKnown: Map[Tokenizer, String] =
-    knownByString.map(_.swap)
-
-  given Codec[Tokenizer] = Codec.from(
-    Decoder[String].map(s => knownByString.getOrElse(s, Unknown(s))),
-    Encoder[String].contramap {
-      case Unknown(v) => v
-      case other      => stringByKnown(other)
-    }
-  )
 
 case class ErrorResponse(error: ErrorDetails) derives ConfiguredCodec
 case class ErrorDetails(code: Int, message: String, metadata: Option[Map[String, Json]] = None) derives ConfiguredCodec
 
-case class TextContent(`type`: String = "text", text: String) derives ConfiguredCodec
-case class ImageUrlContent(`type`: String = "image_url", imageUrl: ImageUrl) derives ConfiguredCodec
-case class FileContent(`type`: String = "file", file: FileData) derives ConfiguredCodec
-case class ImageUrl(url: String) derives ConfiguredCodec
-case class FileData(filename: String, fileData: String) derives ConfiguredCodec
-
-case class ToolFunction(
-    name: String,
-    description: Option[String] = None,
-    parameters: Json
-) derives ConfiguredCodec
-
-case class Tool(
-    `type`: String = "function",
-    function: ToolFunction
-) derives ConfiguredCodec
-
-case class ToolCall(
-    id: String,
-    `type`: String = "function",
-    function: ToolCallFunction
-) derives ConfiguredCodec
-
-case class ToolCallFunction(
-    name: String,
-    arguments: String
-) derives ConfiguredCodec
-
-case class ChatMessage(
-    role: String,
-    content: Option[Json] = None,
-    toolCalls: Option[List[ToolCall]] = None,
-    toolCallId: Option[String] = None,
-    name: Option[String] = None,
-    images: Option[List[ImageUrlContent]] = None,
-    reasoning: Option[String] = None
-) derives ConfiguredCodec:
-
-  override def toString: String =
-    val imagesInfo = images.fold("None")(imgs => s"Some(count=${imgs.size})")
-    s"ChatMessage($role,$content,$toolCalls,$toolCallId,$name,$imagesInfo,$reasoning)"
-
-given Codec[ChatMessage] =
-  val c = ConfiguredCodec.derived[ChatMessage]
-  Codec.from(c, c.mapJson(_.deepDropNullValues))
-
-object ChatMessage:
-  def system(content: String): ChatMessage =
-    ChatMessage("system", content = Some(Json.fromString(content)))
-
-  def user(content: String): ChatMessage =
-    ChatMessage("user", content = Some(Json.fromString(content)))
-
-  def user(content: Json): ChatMessage =
-    ChatMessage("user", content = Some(content))
-
-  def assistant(content: String): ChatMessage =
-    ChatMessage("assistant", content = Some(Json.fromString(content)))
-
-  def assistant(content: Json): ChatMessage =
-    ChatMessage("assistant", content = Some(content))
-
-  def assistantWithToolCalls(toolCalls: List[ToolCall]): ChatMessage =
-    ChatMessage("assistant", toolCalls = Some(toolCalls))
-
-  def tool(toolCallId: String, name: String, content: String): ChatMessage =
-    ChatMessage("tool", content = Some(Json.fromString(content)), toolCallId = Some(toolCallId), name = Some(name))
-
-  def tool(toolCallId: String, name: String, content: Json): ChatMessage =
-    ChatMessage("tool", content = Some(content), toolCallId = Some(toolCallId), name = Some(name))
-
-case class ChatCompletionRequest(
-    model: String,
-    messages: List[ChatMessage],
-    temperature: Option[Double] = None,
-    maxTokens: Option[Int] = None,
-    topP: Option[Double] = None,
-    stream: Boolean = false,
-    presencePenalty: Option[Double] = None,
-    frequencyPenalty: Option[Double] = None,
-    logitBias: Option[Map[String, Double]] = None,
-    tools: Option[List[Tool]] = None,
-    toolChoice: Option[Json] = None,
-    modalities: Option[List[String]] = None
-) derives ConfiguredCodec
-
-given Codec[ChatCompletionRequest] =
-  val c = ConfiguredCodec.derived[ChatCompletionRequest]
-  Codec.from(c, c.mapJson(_.deepDropNullValues))
-
-case class ChatCompletionChoice(index: Int, message: ChatMessage, finishReason: Option[String]) derives ConfiguredCodec
 
 case class ChatCompletionUsage(promptTokens: Int, completionTokens: Int, totalTokens: Int) derives ConfiguredCodec
 
-case class ChatCompletionResponse(
-    id: String,
-    `object`: String,
-    created: Long,
-    model: String,
-    choices: List[ChatCompletionChoice],
-    usage: ChatCompletionUsage
-) derives ConfiguredCodec
-
-case class ModelDefaultParameters(
-    temperature: Option[Double] = None,
-    topP: Option[Double] = None,
-    frequencyPenalty: Option[Double] = None,
-    presencePenalty: Option[Double] = None
-) derives ConfiguredCodec
-
-case class ModelPricing(
-    prompt: BigDecimal,
-    completion: BigDecimal,
-    image: Option[BigDecimal] = None,
-    audio: Option[BigDecimal] = None,
-    request: Option[BigDecimal] = None,
-    webSearch: Option[BigDecimal] = None,
-    internalReasoning: Option[BigDecimal] = None,
-    inputCacheRead: Option[BigDecimal] = None,
-    inputCacheWrite: Option[BigDecimal] = None
-)
-
-object ModelPricing:
-  private given Decoder[BigDecimal] =
-    Decoder.decodeBigDecimal.or(
-      Decoder.decodeString.emap(s => Either.catchOnly[NumberFormatException](BigDecimal(s)).leftMap(_.getMessage))
-    )
-
-  given Codec[ModelPricing] = ConfiguredCodec.derived
-
-case class ModelArchitecture(
-    modality: Option[String] = None,
-    inputModalities: Set[Modality],
-    outputModalities: Set[Modality],
-    tokenizer: Option[Tokenizer] = None,
-    instructType: Option[String] = None
-) derives ConfiguredCodec
-
-case class ModelTopProvider(
-    isModerated: Boolean,
-    contextLength: Option[Int] = None,
-    maxCompletionTokens: Option[Int] = None
-) derives ConfiguredCodec
-
-case class PerRequestLimits(
-    promptTokens: Option[String] = None,
-    completionTokens: Option[String] = None,
-    requestTokens: Option[String] = None
-) derives ConfiguredCodec
-
-case class Model(
-    id: String,
-    name: String,
-    created: Option[Long] = None,
-    description: Option[String] = None,
-    architecture: Option[ModelArchitecture] = None,
-    topProvider: Option[ModelTopProvider] = None,
-    pricing: Option[ModelPricing] = None,
-    canonicalSlug: Option[String] = None,
-    contextLength: Option[Int] = None,
-    huggingFaceId: Option[String] = None,
-    perRequestLimits: Option[PerRequestLimits] = None,
-    supportedParameters: Option[List[SupportedParameter]] = None,
-    temperature: Option[Double] = None,
-    topP: Option[Double] = None,
-    frequencyPenalty: Option[Double] = None,
-    defaultParameters: Option[ModelDefaultParameters] = None
-) derives ConfiguredCodec:
-  def supportsTools: Boolean = supportedParameters.exists(_.contains(SupportedParameter.Tools))
-
-case class ModelsResponse(data: List[Model]) derives ConfiguredCodec
 
 case class CompletionRequest(
     model: String,
@@ -375,71 +123,17 @@ case class EmbeddingsResponse(
     usage: EmbeddingsUsage
 ) derives ConfiguredCodec
 
-case class GenerationStats(
-    id: String,
-    totalCost: Double,
-    createdAt: String,
-    model: String,
-    origin: String,
-    usage: Double,
-    isByok: Boolean,
-    upstreamId: Option[String] = None,
-    cacheDiscount: Option[Double] = None,
-    upstreamInferenceCost: Double,
-    appId: Option[Int] = None,
-    externalUser: Option[String] = None,
-    streamed: Boolean,
-    cancelled: Boolean,
-    providerName: String,
-    latency: Int,
-    moderationLatency: Option[Int] = None,
-    generationTime: Int,
-    finishReason: String,
-    nativeFinishReason: String,
-    tokensPrompt: Int,
-    tokensCompletion: Int,
-    nativeTokensPrompt: Int,
-    nativeTokensCompletion: Int,
-    nativeTokensReasoning: Int,
-    nativeTokensCached: Int,
-    numMediaPrompt: Option[Int] = None,
-    numMediaCompletion: Option[Int] = None,
-    numSearchResults: Option[Int] = None,
-    apiType: Option[String] = None
-) derives ConfiguredCodec
-
-case class GenerationStatsResponse(
-    data: GenerationStats
-) derives ConfiguredCodec
-
-object ToolChoice:
-  def auto: Json                   = Json.fromString("auto")
-  def none: Json                   = Json.fromString("none")
-  def function(name: String): Json = Json.obj(
-    "type"     -> Json.fromString("function"),
-    "function" -> Json.obj("name" -> Json.fromString(name))
-  )
-
-object Tool:
-  def function(name: String, description: Option[String] = None, parameters: Json): Tool =
-    Tool("function", ToolFunction(name, description, parameters))
 
 trait Client[F[_]]:
-  def createChatCompletion(request: ChatCompletionRequest): F[ChatCompletionResponse]
+  def createChatCompletion(request: ChatRequest): F[ChatResult]
   def createCompletion(request: CompletionRequest): F[CompletionResponse]
   def createEmbeddings(request: EmbeddingsRequest): F[EmbeddingsResponse]
-  def listModels(): F[ModelsResponse]
-  def getGenerationStats(generationId: String): F[GenerationStats]
+  def listModels(): F[ModelsListResponse]
+  def getGenerationStats(generationId: String): F[GenerationResponseData]
 
 object Client:
   case class Config(
       baseUri: Uri = Uri.unsafeFromString("https://openrouter.ai/api"),
-      timeout: FiniteDuration = 30.seconds,
-      idleConnectionTime: FiniteDuration = 60.seconds,
-      retryMaxWait: FiniteDuration = 30.seconds,
-      retryMaxAttempts: Int = 5,
-      logHeaders: Boolean = false,
-      logBody: Boolean = false,
       appUrl: Option[String] = None,
       appTitle: Option[String] = None
   )
@@ -520,9 +214,9 @@ object Client:
 
       authHeaders ++ refererHeaders ++ titleHeaders
 
-    def createChatCompletion(request: ChatCompletionRequest): F[ChatCompletionResponse] =
+    def createChatCompletion(request: ChatRequest): F[ChatResult] =
       val uri = config.baseUri / "v1" / "chat" / "completions"
-      transformBody(request.asJson).flatMap(post[ChatCompletionResponse](uri, _, "chat completion"))
+      transformBody(request.asJson).flatMap(post[ChatResult](uri, _, "chat completion"))
 
     def createCompletion(request: CompletionRequest): F[CompletionResponse] =
       val uri = config.baseUri / "v1" / "completions"
@@ -534,16 +228,16 @@ object Client:
         .run(Request[F](POST, uri).withHeaders(baseHeaders).withEntity(request))
         .use(decodeResponse[EmbeddingsResponse]("embeddings"))
 
-    def listModels(): F[ModelsResponse] =
+    def listModels(): F[ModelsListResponse] =
       client
         .run(Request[F](GET, config.baseUri / "v1" / "models").withHeaders(baseHeaders))
-        .use(decodeResponse[ModelsResponse]("list models"))
+        .use(decodeResponse[ModelsListResponse]("list models"))
 
-    def getGenerationStats(generationId: String): F[GenerationStats] =
+    def getGenerationStats(generationId: String): F[GenerationResponseData] =
       val uri = config.baseUri / "v1" / "generation" +? ("id" -> generationId)
       client
         .run(Request[F](GET, uri).withHeaders(baseHeaders))
-        .use(decodeResponse[GenerationStatsResponse]("get generation stats"))
+        .use(decodeResponse[GenerationResponse]("get generation stats"))
         .map(_.data)
 
     protected def transformBody(body: Json): F[Json] =
@@ -589,15 +283,16 @@ object Client:
     private val generationStatsHandler =
       GenerationStatsHandler.combine(GenerationStatsHandler.metrics(meters), onGenerationStats)
 
-    override def createChatCompletion(request: ChatCompletionRequest): F[ChatCompletionResponse] =
-      val modelAttr     = Attribute("model", request.model)
+    override def createChatCompletion(request: ChatRequest): F[ChatResult] =
+      val modelName     = request.model.getOrElse("default")
+      val modelAttr     = Attribute("model", modelName)
       val operationAttr = Attribute("operation", "chat-completion")
       val attrs         = List(modelAttr, operationAttr)
       Tracer[F]
         .span("openrouter-client", "create-chat-completion")(attrs*)
         .logged: logger =>
           for
-            _      <- logger.trace(s"Creating chat completion for model ${request.model}")
+            _      <- logger.trace(s"Creating chat completion for model $modelName")
             _      <- meters.requestCounter.inc(attrs*)
             result <- super.createChatCompletion(request).onError {
                         case e: Client.Error => addResponseStatus(e).flatTap(_ => recordClientError(attrs, e))
@@ -605,11 +300,13 @@ object Client:
                       }
             _      <- addResponseStatus(200)
             _      <- statsSupervisor.supervise(getGenerationStats(result.id))
-            _      <- meters.requestTokenCounter.add(result.usage.promptTokens.toLong, attrs*)
-            _      <- meters.responseTokenCounter.add(result.usage.completionTokens.toLong, attrs*)
+            _      <- result.usage.traverse_ { usage =>
+                        meters.requestTokenCounter.add(usage.prompt_tokens, attrs*) *>
+                          meters.responseTokenCounter.add(usage.completion_tokens, attrs*)
+                      }
             _      <-
               logger.trace(
-                s"Chat completion created with ${result.choices.size} choices, used ${result.usage.totalTokens} tokens"
+                s"Chat completion created with ${result.choices.size} choices, used ${result.usage.fold(0L)(_.total_tokens)} tokens"
               )
           yield result
 
@@ -656,7 +353,7 @@ object Client:
             _      <- logger.trace(s"Embeddings created, used ${result.usage.totalTokens} tokens")
           yield result
 
-    override def listModels(): F[ModelsResponse] =
+    override def listModels(): F[ModelsListResponse] =
       val operationAttr = Attribute("operation", "list-models")
       Tracer[F]
         .span("openrouter-client", "list-models")(operationAttr)
@@ -672,7 +369,7 @@ object Client:
             _      <- logger.trace(s"Found ${result.data.size} models")
           yield result
 
-    override def getGenerationStats(generationId: String): F[GenerationStats] =
+    override def getGenerationStats(generationId: String): F[GenerationResponseData] =
       for
         current <- Tracer[F].currentSpanOrNoop
         result  <- Tracer[F].rootScope(getGenerationStatsLinked(generationId, current.context))
@@ -692,7 +389,7 @@ object Client:
         Logger[F].error(domainError)(s"OpenRouter API error during $operation: metadata=$metadata")
       }
 
-    private def getGenerationStatsLinked(generationId: String, linkTo: SpanContext): F[GenerationStats] =
+    private def getGenerationStatsLinked(generationId: String, linkTo: SpanContext): F[GenerationResponseData] =
       val operationAttr = Attribute("operation", "get-generation-stats")
       Tracer[F]
         .span("openrouter-client", "get-generation-stats")(operationAttr)
@@ -756,14 +453,14 @@ object Client:
         case Client.Error.InternalServerError(_, details) => details.code
         case Client.Error.UnknownError(status, _, _)      => status
 
-  private def createHttpClient[F[_]: Async: Network](config: Config): Resource[F, HTTPClient[F]] =
+  private def createHttpClient[F[_]: Async: Network](config: HTTP.Config): Resource[F, HTTPClient[F]] =
     EmberClientBuilder
       .default[F]
       .withTimeout(config.timeout)
       .withIdleConnectionTime(config.idleConnectionTime)
       .build
 
-  private def defaultRetryPolicy[F[_]](config: Config): RetryPolicy[F] =
+  private def defaultRetryPolicy[F[_]](config: HTTP.Config): RetryPolicy[F] =
     RetryPolicy[F](
       backoff = RetryPolicy.exponentialBackoff(maxWait = config.retryMaxWait, maxRetry = config.retryMaxAttempts),
       retriable = {
@@ -772,12 +469,12 @@ object Client:
       }
     )
 
-  private def configureClient[F[_]: Async](client: HTTPClient[F], config: Config, retryPolicy: RetryPolicy[F]): HTTPClient[F] =
+  private def configureClient[F[_]: Async](client: HTTPClient[F], config: HTTP.Config, retryPolicy: RetryPolicy[F]): HTTPClient[F] =
     val retryClient = Retry[F](retryPolicy)(client)
     Http4sLogger.colored[F](logHeaders = config.logHeaders, logBody = config.logBody)(retryClient)
 
   private def buildHttpClient[F[_]: Async: Network: Meter](
-      config: Config,
+      config: HTTP.Config,
       name: String,
       retryPolicy: RetryPolicy[F]
   ): Resource[F, HTTPClient[F]] =
@@ -787,14 +484,23 @@ object Client:
     yield configureClient(instrumented, config, retryPolicy)
 
   object HTTP:
+    case class Config(
+        timeout: FiniteDuration = 30.seconds,
+        idleConnectionTime: FiniteDuration = 60.seconds,
+        retryMaxWait: FiniteDuration = 30.seconds,
+        retryMaxAttempts: Int = 5,
+        logHeaders: Boolean = false,
+        logBody: Boolean = false
+    )
+
     def apply[F[_]: Async: Network: Meter](
-        config: Config,
+        config: Config = Config(),
         name: String = "openrouter",
         retryPolicy: Option[RetryPolicy[F]] = None
     ): Resource[F, HTTPClient[F]] =
       buildHttpClient(config, name, retryPolicy.getOrElse(defaultRetryPolicy[F](config)))
 
-  def core[F[_]: Concurrent](http: HTTPClient[F], apiKey: String, config: Config): Client[F] =
+  def core[F[_]: Concurrent](apiKey: String, config: Config)(http: HTTPClient[F]): Client[F] =
     new Core[F](http, apiKey, config)
 
   def observed[F[_]: Concurrent: StructuredLogger: Tracer](
@@ -818,21 +524,23 @@ object Client:
 
   def observed[F[_]: Async: Network: LoggerFactory: Tracer: Meter](
       apiKey: String,
-      config: Config = Client.Config()
+      config: Config = Config(),
+      http: HTTP.Config = HTTP.Config()
   ): Resource[F, Client[F]] =
-    observed(apiKey, config, GenerationStatsHandler.noop[F])
+    observed(apiKey, config, http, GenerationStatsHandler.noop[F])
 
   def observed[F[_]: Async: Network: LoggerFactory: Tracer: Meter](
       apiKey: String,
       config: Config,
+      http: HTTP.Config,
       onGenerationStats: GenerationStatsHandler[F]
   ): Resource[F, Client[F]] =
     for
-      http                      <- buildHttpClient(config, "openrouter", defaultRetryPolicy[F](config))
+      httpClient                <- HTTP[F](http)
       given StructuredLogger[F] <- LoggerFactory[F].create.toResource
       statsSupervisor           <- Supervisor[F]
       meters                    <- Meters[F].toResource
-    yield observed(http, apiKey, config, statsSupervisor, meters, onGenerationStats)
+    yield observed(httpClient, apiKey, config, statsSupervisor, meters, onGenerationStats)
 
   def instrumentHttp4sClient[F[_]: Functor: Semigroupal: Concurrent: Clock: Meter](
       name: String,
@@ -906,8 +614,8 @@ object Client:
       Http4sMetrics(metricsOps, MetricsOps.classifierFMethodWithOptionallyExcludedPath(exclude = excludeValues))(delegate)
 
   def mapK[F[_], G[_]](client: Client[F])(f: F ~> G): Client[G] = new Client[G]:
-    def createChatCompletion(request: ChatCompletionRequest): G[ChatCompletionResponse] = f(client.createChatCompletion(request))
-    def createCompletion(request: CompletionRequest): G[CompletionResponse]             = f(client.createCompletion(request))
-    def createEmbeddings(request: EmbeddingsRequest): G[EmbeddingsResponse]             = f(client.createEmbeddings(request))
-    def listModels(): G[ModelsResponse]                                                 = f(client.listModels())
-    def getGenerationStats(generationId: String): G[GenerationStats]                    = f(client.getGenerationStats(generationId))
+    def createChatCompletion(request: ChatRequest): G[ChatResult]           = f(client.createChatCompletion(request))
+    def createCompletion(request: CompletionRequest): G[CompletionResponse] = f(client.createCompletion(request))
+    def createEmbeddings(request: EmbeddingsRequest): G[EmbeddingsResponse] = f(client.createEmbeddings(request))
+    def listModels(): G[ModelsListResponse]                                 = f(client.listModels())
+    def getGenerationStats(generationId: String): G[GenerationResponseData] = f(client.getGenerationStats(generationId))

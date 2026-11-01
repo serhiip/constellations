@@ -7,12 +7,13 @@ import munit.CatsEffectSuite
 
 import io.github.serhiip.constellations.embeddings.OpenRouter
 import io.github.serhiip.constellations.openrouter.*
+import io.github.serhiip.constellations.openrouter.schema.{ChatRequest, ChatResult, GenerationResponseData, ModelsListResponse}
 
 class OpenRouterEmbeddingsTest extends CatsEffectSuite:
 
   private class StubClient(requestRef: Ref[IO, Option[EmbeddingsRequest]], responseData: List[EmbeddingData]) extends Client[IO]:
 
-    def createChatCompletion(request: ChatCompletionRequest): IO[ChatCompletionResponse] =
+    def createChatCompletion(request: ChatRequest): IO[ChatResult] =
       IO.raiseError(RuntimeException("Not implemented"))
 
     def createCompletion(request: CompletionRequest): IO[CompletionResponse] =
@@ -29,10 +30,10 @@ class OpenRouterEmbeddingsTest extends CatsEffectSuite:
           )
         )
 
-    def listModels(): IO[ModelsResponse] =
+    def listModels(): IO[ModelsListResponse] =
       IO.raiseError(RuntimeException("Not implemented"))
 
-    def getGenerationStats(generationId: String): IO[GenerationStats] =
+    def getGenerationStats(generationId: String): IO[GenerationResponseData] =
       IO.raiseError(RuntimeException("Not implemented"))
 
   test("embed sends correct request and returns embedding") {

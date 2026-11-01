@@ -1,0 +1,14 @@
+openapi: 3.0.3
+info:
+  title: Gadgets
+  version: "1"
+components:
+  schemas:
+    Gadget:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+      example:
+        name: cog

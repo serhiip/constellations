@@ -28,7 +28,7 @@ class OpenRouterSchemaTest extends munit.FunSuite {
   }
 
   test("list union encoding dispatches on the element type") {
-    val nonempty = UnionCodecs.encodeErasedList(
+    val nonempty = OpenRouterUnionCodecs.encodeErasedList(
       List("a", "b"),
       Json.arr(),
       ((head: Any) => head.isInstanceOf[String], (xs: List[?]) => xs.asInstanceOf[List[String]].asJson),
@@ -36,7 +36,7 @@ class OpenRouterSchemaTest extends munit.FunSuite {
     )
     assertEquals(nonempty, Json.arr(Json.fromString("a"), Json.fromString("b")))
 
-    val empty = UnionCodecs.encodeErasedList(
+    val empty = OpenRouterUnionCodecs.encodeErasedList(
       List.empty[String],
       Json.arr(),
       ((head: Any) => head.isInstanceOf[String], (xs: List[?]) => xs.asInstanceOf[List[String]].asJson),

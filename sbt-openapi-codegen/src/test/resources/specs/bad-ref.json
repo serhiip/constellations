@@ -1,0 +1,9 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "bad", "version": "1" },
+  "components": {
+    "schemas": {
+      "Thing": { "$ref": "#/components/parameters/Nope" }
+    }
+  }
+}

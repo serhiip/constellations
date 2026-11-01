@@ -7,21 +7,29 @@ import cats.syntax.all.*
 import io.github.serhiip.constellations.*
 import io.github.serhiip.constellations.common.*
 import io.github.serhiip.constellations.common.Codecs.given
-import io.github.serhiip.constellations.openrouter.{
-  ChatCompletionRequest,
-  ChatCompletionResponse,
-  ChatMessage,
-  Client,
-  CompletionRequest,
-  CompletionResponse,
-  ImageUrl,
-  ImageUrlContent,
-  Tool,
-  ToolCall,
-  ToolCallFunction,
-  ToolFunction
+import io.github.serhiip.constellations.openrouter.{Client, CompletionRequest, CompletionResponse}
+import io.github.serhiip.constellations.openrouter.schema.{
+  ChatAssistantImagesItem,
+  ChatAssistantImagesItemImageUrl,
+  ChatAssistantMessage,
+  ChatContentImage,
+  ChatContentImageImageUrl,
+  ChatContentItems,
+  ChatContentText,
+  ChatFunctionToolFunction,
+  ChatFunctionToolFunctionFunction,
+  ChatMessages,
+  ChatNamedToolChoice,
+  ChatRequest,
+  ChatRequestModalitiesItem,
+  ChatResult,
+  ChatServerToolChoice,
+  ChatSystemMessage,
+  ChatToolCall,
+  ChatToolCallFunction,
+  ChatToolMessage,
+  ChatUserMessage
 }
-import io.circe.Json
 import io.circe.syntax.*
 import java.util.UUID
 
@@ -43,44 +51,30 @@ object OpenRouter:
       config: Config,
       functionDeclarations: List[FunctionDeclaration] = List.empty,
       modelNameOverride: Option[F[String]] = None
-  ): Invoker[F, ChatCompletionResponse] = new:
+  ): Invoker[F, ChatResult] = new:
 
-    override def generate(history: NEC[Message]): F[ChatCompletionResponse] =
+    override def generate(history: NEC[Message]): F[ChatResult] =
       val messages = history.toChain.toList.map(messageToChatMessage)
-
-      val tools =
-        Option.when(functionDeclarations.nonEmpty)(
-          functionDeclarations.map { funcDecl =>
-            Tool(
-              `type` = "function",
-              function = ToolFunction(
-                name = funcDecl.name,
-                description = funcDecl.description,
-                parameters = funcDecl.parameters.map(_.asJson).getOrElse(Json.obj())
-              )
-            )
-          }
-        )
+      val tools    = Option.when(functionDeclarations.nonEmpty)(functionDeclarations.map(toTool))
 
       for
         modelName <- modelNameOverride.getOrElse(config.model.pure[F])
-
-        request = ChatCompletionRequest(
-                    model = modelName,
-                    messages = config.systemPrompt.map(ChatMessage.system).toList ::: messages,
-                    temperature = config.temperature,
-                    maxTokens = config.maxTokens,
-                    topP = config.topP,
-                    presencePenalty = config.presencePenalty,
-                    frequencyPenalty = config.frequencyPenalty,
-                    tools = tools,
-                    toolChoice = tools.map(_ => Json.fromString("auto")),
-                    modalities = config.modalities
-                  )
-        result <- client.createChatCompletion(request)
+        request    = ChatRequest(
+                       model = modelName.some,
+                       messages = config.systemPrompt.map(prompt => ChatSystemMessage(content = prompt): ChatMessages).toList ::: messages,
+                       temperature = config.temperature,
+                       max_tokens = config.maxTokens.map(_.toLong),
+                       top_p = config.topP,
+                       presence_penalty = config.presencePenalty,
+                       frequency_penalty = config.frequencyPenalty,
+                       tools = tools,
+                       tool_choice = tools.map(_ => ("auto": ChatNamedToolChoice | ChatServerToolChoice | String)),
+                       modalities = config.modalities.map(_.map(modality))
+                     )
+        result    <- client.createChatCompletion(request)
       yield result
 
-    private def messageToChatMessage(message: Message): ChatMessage =
+    private def messageToChatMessage(message: Message): ChatMessages =
       val gemini         = "google/gemini-.*".r
       val openai         = "openai/.*".r
       val anthropic      = "anthropic/.*".r
@@ -91,26 +85,24 @@ object OpenRouter:
         case _           => MessageHandler.default
 
       message match
-        case Message.User(content)              => ChatMessage(role = "user", content = Some(messageHandler.convertUserMessage(content)))
+        case Message.User(content)              => messageHandler.convertUserMessage(content)
         case Message.Assistant(content, images) =>
-          ChatMessage(
-            role = "assistant",
-            content = content.map(Json.fromString),
+          ChatAssistantMessage(
+            content = content.map(text => (text: List[ChatContentItems] | String)),
             images = Option.when(images.nonEmpty)(
-              images.map(img => ImageUrlContent(imageUrl = ImageUrl(s"data:image/jpeg;base64,${img.base64Encoded}")))
+              images.map(img => ChatAssistantImagesItem(image_url = ChatAssistantImagesItemImageUrl(s"data:image/jpeg;base64,${img.base64Encoded}")))
             )
           )
-        case Message.System(content)            => ChatMessage(role = "system", content = Some(Json.fromString(content)))
+        case Message.System(content)            => ChatSystemMessage(content = content)
         case Message.Tool(content)              =>
-          val toolCall = ToolCall(
+          val toolCall = ChatToolCall(
             id = content.callId.getOrElse(UUID.randomUUID().toString),
-            `type` = "function",
-            function = ToolCallFunction(
+            function = ChatToolCallFunction(
               name = content.name,
               arguments = content.args.asJson.noSpaces
             )
           )
-          ChatMessage(role = "assistant", toolCalls = Some(List(toolCall)))
+          ChatAssistantMessage(tool_calls = List(toolCall).some)
         case Message.ToolResult(content)        => messageHandler.convertToolResultMessage(content)
 
   def completion[F[_]](client: Client[F], config: Config): Invoker[F, CompletionResponse] = new:
@@ -135,56 +127,53 @@ object OpenRouter:
       case Message.Tool(content)              => content.toString.some
       case Message.ToolResult(content)        => content.toString.some
 
+  private def toTool(funcDecl: FunctionDeclaration): ChatFunctionToolFunction =
+    ChatFunctionToolFunction(
+      function = ChatFunctionToolFunctionFunction(
+        name = funcDecl.name,
+        description = funcDecl.description,
+        parameters = funcDecl.parameters.flatMap(_.asJson.asObject).map(_.toMap)
+      )
+    )
+
+  private def modality(value: String): ChatRequestModalitiesItem =
+    ChatRequestModalitiesItem.known.find(_.value == value).getOrElse(ChatRequestModalitiesItem.Unknown(value))
+
 protected trait MessageHandler:
-  def convertUserMessage(content: List[ContentPart]): Json
-  def convertToolResultMessage(content: FunctionResponse): ChatMessage
+  def convertUserMessage(content: List[ContentPart]): ChatUserMessage
+  def convertToolResultMessage(content: FunctionResponse): ChatToolMessage
 
 protected object MessageHandler:
-  private def convertContentPartToJson(contentPart: ContentPart): Json = contentPart match
-    case ContentPart.Text(text)           => Json.obj("type" -> Json.fromString("text"), "text" -> Json.fromString(text))
+  private def contentParts(content: List[ContentPart]): List[ChatContentItems] = content.map {
+    case ContentPart.Text(text)           => ChatContentText(text = text)
     case ContentPart.Image(base64Encoded) =>
-      val dataUrl = s"data:image/jpeg;base64,$base64Encoded"
-      Json.obj(
-        "type"      -> Json.fromString("image_url"),
-        "image_url" -> Json.obj("url" -> Json.fromString(dataUrl))
-      )
+      ChatContentImage(image_url = ChatContentImageImageUrl(url = s"data:image/jpeg;base64,$base64Encoded"))
+  }
 
-  private def toolResultContent(content: FunctionResponse): Json =
-    Json.fromString(content.response.asJson.noSpaces)
+  private def toolResultContent(content: FunctionResponse): String =
+    content.response.asJson.noSpaces
 
   def gemini: MessageHandler = new:
-    def convertUserMessage(content: List[ContentPart]): Json =
-      content match
-        case List(ContentPart.Text(text)) => Json.fromString(text)
-        case _                            => Json.arr(content.map(convertContentPartToJson)*)
+    def convertUserMessage(content: List[ContentPart]): ChatUserMessage =
+      val body: List[ChatContentItems] | String = content match
+        case List(ContentPart.Text(text)) => text
+        case other                         => contentParts(other)
+      ChatUserMessage(content = body)
 
-    def convertToolResultMessage(content: FunctionResponse): ChatMessage =
-      ChatMessage(
-        role = "tool",
-        content = Some(toolResultContent(content)),
-        toolCallId = content.call.callId
+    def convertToolResultMessage(content: FunctionResponse): ChatToolMessage =
+      ChatToolMessage(
+        content = toolResultContent(content),
+        tool_call_id = content.call.callId.getOrElse(content.call.name)
       )
 
   def openai: MessageHandler = new:
-    def convertUserMessage(content: List[ContentPart]): Json =
-      Json.arr(content.map(convertContentPartToJson)*)
+    def convertUserMessage(content: List[ContentPart]): ChatUserMessage =
+      ChatUserMessage(content = contentParts(content))
 
-    def convertToolResultMessage(content: FunctionResponse): ChatMessage =
-      ChatMessage(
-        role = "tool",
-        content = Some(toolResultContent(content)),
-        toolCallId = content.call.callId,
-        name = Some(content.call.name)
+    def convertToolResultMessage(content: FunctionResponse): ChatToolMessage =
+      ChatToolMessage(
+        content = toolResultContent(content),
+        tool_call_id = content.call.callId.getOrElse(content.call.name)
       )
 
-  def default: MessageHandler = new:
-    def convertUserMessage(content: List[ContentPart]): Json =
-      Json.arr(content.map(convertContentPartToJson)*)
-
-    def convertToolResultMessage(content: FunctionResponse): ChatMessage =
-      ChatMessage(
-        role = "tool",
-        content = Some(toolResultContent(content)),
-        toolCallId = content.call.callId,
-        name = Some(content.call.name)
-      )
+  def default: MessageHandler = openai

@@ -1,13 +1,11 @@
-import OpenRouterSchemaModel.*
-import OpenRouterSchemaModel.TypeRef.*
+package io.github.serhiip.sbt.openapi
+
+import SchemaModel.*
+import SchemaModel.TypeRef.*
 
 import scala.collection.mutable
 
-object OpenRouterSchemaEmitter {
-
-  val ExplicitCodecFieldThreshold = 64
-  private val DefinitionsPerFile = 40
-  private val ChunkSize = 20
+object ScalaEmitter {
 
   private val Keywords = Set(
     "abstract", "case", "catch", "class", "def", "do", "else", "enum", "export", "extends", "false", "final",
@@ -16,22 +14,38 @@ object OpenRouterSchemaEmitter {
     "try", "type", "val", "var", "while", "with", "yield", "derives", "end", "extension", "using"
   )
 
-  final case class GeneratedFiles(main: Map[String, String], testSource: String, examplesJson: String)
+  final case class EmitRequest(
+      model: Model,
+      packageName: String,
+      sourceLabel: String,
+      scalaName: String,
+      unionObject: String,
+      examplesResource: String,
+      pluginVersion: String,
+      options: GeneratorOptions
+  )
 
-  def emit(model: SchemaModel, pkg: String, specUrl: String): GeneratedFiles = {
+  final case class GeneratedFiles(main: Map[String, String], testSource: Option[String], examplesJson: Option[String])
+
+  def emit(request: EmitRequest): GeneratedFiles = {
+    val model = request.model
     val records = model.definitions.collect { case record: RecordDef => record.name -> record }.toMap
     val enums = model.definitions.collect { case enumDef: EnumDef => enumDef.name -> enumDef }.toMap
     val sums = model.definitions.collect { case sum: SumDef => sum.name -> sum }.toMap
-    val context = Context(pkg, specUrl, records, enums, sums)
-    val files = pack(model.definitions).zipWithIndex.map { (definitions, index) =>
-      val fileName = f"OpenRouterSchema${index + 1}%02d.scala"
+    val context = Context(request, records, enums, sums)
+    val files = pack(model.definitions, request.options.definitionsPerFile).zipWithIndex.map { (definitions, index) =>
+      val fileName = f"${request.scalaName}Schema${index + 1}%02d.scala"
       fileName -> context.file(definitions)
     }.toMap
     val unions = collectUnions(model.definitions)
+    val examples =
+      if request.options.generateExampleTests then
+        Some(context.examplesSuite(model.examples) -> examplesJson(model.examples))
+      else None
     GeneratedFiles(
-      main = files + ("UnionCodecs.scala" -> context.unionCodecs(unions)),
-      testSource = context.examplesSuite(model.examples),
-      examplesJson = examplesJson(model.examples)
+      main = files + (s"${request.scalaName}UnionCodecs.scala" -> context.unionCodecs(unions)),
+      testSource = examples.map(_._1),
+      examplesJson = examples.map(_._2)
     )
   }
 
@@ -59,7 +73,7 @@ object OpenRouterSchemaEmitter {
     found.values.toList
   }
 
-  private def pack(definitions: List[Definition]): List[List[Definition]] = {
+  private def pack(definitions: List[Definition], definitionsPerFile: Int): List[List[Definition]] = {
     val names = definitions.map(_.name)
     val index = names.zipWithIndex.toMap
     val parent = Array.tabulate(names.size)(identity)
@@ -87,7 +101,7 @@ object OpenRouterSchemaEmitter {
     val packed = mutable.ListBuffer.empty[List[Definition]]
     val current = mutable.ListBuffer.empty[Definition]
     groups.foreach { group =>
-      if current.nonEmpty && current.size + group.size > DefinitionsPerFile then {
+      if current.nonEmpty && current.size + group.size > definitionsPerFile then {
         packed += current.toList
         current.clear()
       }
@@ -128,21 +142,24 @@ object OpenRouterSchemaEmitter {
   }
 
   private final class Context(
-      pkg: String,
-      specUrl: String,
+      request: EmitRequest,
       records: Map[String, RecordDef],
       enums: Map[String, EnumDef],
       sums: Map[String, SumDef]
   ) {
+    private val pkg = request.packageName
+    private val unionObject = request.unionObject
+    private val header = s"// AUTO-GENERATED FROM ${request.sourceLabel} by sbt-openapi-codegen ${request.pluginVersion}. Do not edit."
+
     def file(definitions: List[Definition]): String = {
       val body = definitions.map(emit).mkString("\n\n")
       s"""package $pkg
          |
-         |// AUTO-GENERATED FROM $specUrl by OpenRouterCodegen. Do not edit.
+         |$header
          |import io.circe.*
          |import io.circe.syntax.*
          |
-         |import UnionCodecs.given
+         |import $unionObject.given
          |
          |$body
          |""".stripMargin
@@ -152,12 +169,12 @@ object OpenRouterSchemaEmitter {
       val givens = unions.zipWithIndex.map(emitUnion).mkString("\n\n")
       s"""package $pkg
          |
-         |// AUTO-GENERATED FROM $specUrl by OpenRouterCodegen. Do not edit.
+         |$header
          |import io.circe.*
          |import io.circe.syntax.*
          |
-         |/** Codecs for Scala 3 unions produced from OpenRouter anyOf and oneOf. */
-         |object UnionCodecs:
+         |/** Codecs for Scala 3 unions produced from OpenAPI anyOf and oneOf. */
+         |object $unionObject:
          |  def encodeErasedList(
          |      values: List[?],
          |      ifEmpty: Json,
@@ -167,7 +184,7 @@ object OpenRouterSchemaEmitter {
          |      case None => ifEmpty
          |      case Some(head) =>
          |        arms.collectFirst { case (matches, encode) if matches(head) => encode(values) }.getOrElse(
-         |          throw IllegalArgumentException("No OpenRouter union arm matched list element " + head.getClass.getName)
+         |          throw IllegalArgumentException("No union arm matched list element " + head.getClass.getName)
          |        )
          |
          |  def encodeErasedMap(
@@ -179,12 +196,12 @@ object OpenRouterSchemaEmitter {
          |      case None => ifEmpty
          |      case Some(head) =>
          |        arms.collectFirst { case (matches, encode) if matches(head) => encode(values) }.getOrElse(
-         |          throw IllegalArgumentException("No OpenRouter union arm matched map value " + head.getClass.getName)
+         |          throw IllegalArgumentException("No union arm matched map value " + head.getClass.getName)
          |        )
          |
          |$givens
          |
-         |export UnionCodecs.given
+         |export $unionObject.given
          |""".stripMargin
     }
 
@@ -193,17 +210,19 @@ object OpenRouterSchemaEmitter {
         s"""  test(${stringLit(example.name)}):
            |    check[${example.scalaType}](${stringLit(example.name)})""".stripMargin
       }.mkString("\n\n")
+      val resource = request.examplesResource
       s"""package $pkg
          |
+         |$header
          |import io.circe.*
          |import io.circe.parser.{decode, parse}
          |import io.circe.syntax.*
          |import scala.io.Source
          |import scala.util.Using
          |
-         |class SchemaExamplesSuite extends munit.FunSuite:
+         |class ${request.scalaName}SchemaExamplesSuite extends munit.FunSuite:
          |  private val examples: Map[String, Json] =
-         |    val text = Using.resource(Source.fromResource("openrouter-schema-examples.json"))(_.mkString)
+         |    val text = Using.resource(Source.fromResource("$resource"))(_.mkString)
          |    parse(text).fold(err => throw err, _.asObject.get.toMap)
          |
          |$tests
@@ -226,7 +245,7 @@ object OpenRouterSchemaEmitter {
     private def emitRecord(record: RecordDef): String = {
       val fields = record.fields.map(emitField).mkString(",\n")
       val params = if record.fields.isEmpty then "" else s"(\n$fields\n)"
-      val explicit = record.fields.size > ExplicitCodecFieldThreshold || record.fields.exists(_.syntheticMap)
+      val explicit = record.fields.size > request.options.explicitCodecFieldThreshold || record.fields.exists(_.syntheticMap)
       val body =
         if explicit then explicitCodec(record)
         else
@@ -235,7 +254,7 @@ object OpenRouterSchemaEmitter {
              |    Codec.AsObject.from(derivedCodec, derivedCodec.mapJsonObject(_.filter(${nullFilter(record)})))""".stripMargin
       s"""final case class ${record.name}$params${extendsClause(record.parents)}
          |object ${record.name}:
-         |  import UnionCodecs.given
+         |  import $unionObject.given
          |$body""".stripMargin
     }
 
@@ -256,7 +275,7 @@ object OpenRouterSchemaEmitter {
     private def explicitCodec(record: RecordDef): String = {
       val plain = record.fields.filterNot(_.syntheticMap)
       val synthetic = record.fields.find(_.syntheticMap)
-      val chunks = plain.grouped(ChunkSize).toList.zipWithIndex
+      val chunks = plain.grouped(request.options.codecChunkSize).toList.zipWithIndex
       val readers = chunks.map { (fields, index) =>
         val reads = fields.zipWithIndex.map { (field, fieldIndex) =>
           val expr =
@@ -366,7 +385,7 @@ object OpenRouterSchemaEmitter {
       }
       s"""sealed trait ${sum.name}${extendsClause(sum.parents)}
          |object ${sum.name}:
-         |  import UnionCodecs.given
+         |  import $unionObject.given
          |  given Encoder.AsObject[${sum.name}] = Encoder.AsObject.instance {
          |$encoderCases
          |  }
@@ -463,7 +482,7 @@ object OpenRouterSchemaEmitter {
           s"""      ((head: Any) => ${elementPredicate(list.element, "head")}, (xs: List[?]) => Encoder[$rendered].apply(xs.asInstanceOf[$rendered]))"""
         }
         s"""    case value: List[?] =>
-           |      UnionCodecs.encodeErasedList(
+           |      $unionObject.encodeErasedList(
            |        value,
            |        $empty,
            |${arms.mkString(",\n")}
@@ -481,7 +500,7 @@ object OpenRouterSchemaEmitter {
           s"""      ((head: Any) => ${elementPredicate(map.value, "head")}, (xs: Map[String, ?]) => Encoder[$rendered].apply(xs.asInstanceOf[$rendered]))"""
         }
         s"""    case value: Map[?, ?] =>
-           |      UnionCodecs.encodeErasedMap(
+           |      $unionObject.encodeErasedMap(
            |        value.asInstanceOf[Map[String, ?]],
            |        $empty,
            |${arms.mkString(",\n")}

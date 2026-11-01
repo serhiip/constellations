@@ -35,7 +35,7 @@ val config = Client.Config(
 
 given Meter[IO] = Meter.noop[IO]
 
-Client.HTTP[IO](config).map(http => Client.core(http, "your-api-key", config)).use { client =>
+Client.HTTP[IO]().map(Client.core("your-api-key", config)).use { client =>
   // Use client here
 }
 ```
@@ -45,10 +45,12 @@ Client.HTTP[IO](config).map(http => Client.core(http, "your-api-key", config)).u
 Send a chat request:
 
 ```scala
-val request = ChatCompletionRequest(
-  model = "anthropic/claude-3-haiku",
+import io.github.serhiip.constellations.openrouter.schema.*
+
+val request = ChatRequest(
+  model = Some("anthropic/claude-3-haiku"),
   messages = List(
-    ChatMessage.user("What's 2 + 2?")
+    ChatUserMessage(content = "What's 2 + 2?")
   ),
   temperature = Some(0.7)
 )
@@ -63,13 +65,13 @@ client.createChatCompletion(request).flatMap { response =>
 Pass your dispatcher for function calling:
 
 ```scala
-val request = ChatCompletionRequest(
-  model = "anthropic/claude-3-haiku",
+val request = ChatRequest(
+  model = Some("anthropic/claude-3-haiku"),
   messages = List(
-    ChatMessage.user("Calculate 2 + 2")
+    ChatUserMessage(content = "Calculate 2 + 2")
   ),
-  functions = Some(functionDeclarations),
-  functionCall = Some("auto")
+  tools = Some(functionDeclarations),
+  tool_choice = Some("auto")
 )
 ```
 

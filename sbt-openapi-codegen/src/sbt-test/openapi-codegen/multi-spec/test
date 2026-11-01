@@ -1,0 +1,6 @@
+> compile
+> test
+> openApiGenerate
+> rememberStamps
+> openApiGenerate
+> checkStamps

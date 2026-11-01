@@ -1,12 +1,11 @@
+package io.github.serhiip.sbt.openapi
+
 import io.circe.{Json, JsonNumber, JsonObject}
 import io.circe.parser.parse
 
-import java.net.URI
-import java.net.http.{HttpClient, HttpRequest, HttpResponse}
-import java.time.Duration
 import scala.collection.mutable
 
-object OpenRouterSchemaModel {
+object SchemaModel {
 
   val GeneratorVersion = "1"
 
@@ -50,7 +49,7 @@ object OpenRouterSchemaModel {
   final case class SchemaFailure(path: String, reason: String) {
     override def toString: String = s"$path: $reason"
   }
-  final case class SchemaModel(definitions: List[Definition], examples: List[ExampleSpec])
+  final case class Model(definitions: List[Definition], examples: List[ExampleSpec])
 
   final case class Resolved(tpe: TypeRef, defaultLiteral: Option[String])
 
@@ -98,38 +97,19 @@ object OpenRouterSchemaModel {
     "unevaluatedItems"
   )
 
-  private val PreferredTags = List("type", "role", "kind", "status")
-
-  def fetchSpec(url: String): String = {
-    val client = HttpClient
-      .newBuilder()
-      .followRedirects(HttpClient.Redirect.NORMAL)
-      .connectTimeout(Duration.ofSeconds(15))
-      .build()
-    val request = HttpRequest
-      .newBuilder()
-      .uri(URI.create(url))
-      .timeout(Duration.ofSeconds(60))
-      .header("User-Agent", "constellations-openrouter-codegen/1.0")
-      .GET()
-      .build()
-    val response = client.send(request, HttpResponse.BodyHandlers.ofString())
-    if response.statusCode() != 200 then sys.error(s"Failed to fetch OpenRouter spec (HTTP ${response.statusCode()})")
-    else response.body()
-  }
-
   def analyze(
       rawJson: String,
       overrides: Map[String, String],
-      exclusions: Set[String]
-  ): Either[List[SchemaFailure], SchemaModel] = {
+      exclusions: Set[String],
+      tagHints: List[String]
+  ): Either[List[SchemaFailure], Model] = {
     val root = parse(rawJson).fold(err => sys.error(s"Invalid OpenAPI JSON: ${err.getMessage}"), identity)
     val schemas = root.hcursor
       .downField("components")
       .downField("schemas")
       .as[JsonObject]
       .fold(err => sys.error(s"Missing components.schemas: ${err.getMessage}"), identity)
-    val analyzer = Analyzer(schemas, overrides, exclusions)
+    val analyzer = Analyzer(schemas, overrides, exclusions, tagHints)
     analyzer.run()
   }
 
@@ -159,7 +139,12 @@ object OpenRouterSchemaModel {
     else pascal
   }
 
-  private final class Analyzer(schemas: JsonObject, overrides: Map[String, String], exclusions: Set[String]) {
+  private final class Analyzer(
+      schemas: JsonObject,
+      overrides: Map[String, String],
+      exclusions: Set[String],
+      tagHints: List[String]
+  ) {
     private val schemaList = schemas.toList
     private val schemaMap = schemaList.toMap
     private val failures = mutable.ListBuffer.empty[SchemaFailure]
@@ -173,7 +158,7 @@ object OpenRouterSchemaModel {
     private val visiting = mutable.LinkedHashSet.empty[String]
     private val stringEnumNames = mutable.LinkedHashSet.empty[String]
 
-    def run(): Either[List[SchemaFailure], SchemaModel] = {
+    def run(): Either[List[SchemaFailure], Model] = {
       schemaList.foreach { (raw, _) => reserved += toPascal(raw) }
       schemaList.foreach { (raw, _) => ensure(raw) }
       checkParents()
@@ -183,7 +168,7 @@ object OpenRouterSchemaModel {
       else {
         val definitions = freeze(expanded)
         val examples = exampleSpecs()
-        Right(SchemaModel(definitions, examples))
+        Right(Model(definitions, examples))
       }
     }
 
@@ -248,16 +233,21 @@ object OpenRouterSchemaModel {
     }
 
     private def resolveRef(obj: JsonObject, path: String): Resolved =
-      refRaw(obj) match {
-        case None => failResolved(path, "missing $$ref")
-        case Some(raw) =>
-          if !schemaMap.contains(raw) then failResolved(path, s"unresolvable $$ref #/components/schemas/$raw")
-          else {
-            ensure(raw)
-            val name = toPascal(raw)
-            val named = TypeRef.Named(name)
-            Resolved(if nullableNominal.contains(name) then optional(named) else named, None)
-          }
+      obj("$ref").flatMap(_.asString) match {
+        case None => failResolved(path, "missing $ref")
+        case Some(ref) =>
+          val prefix = "#/components/schemas/"
+          if !ref.startsWith(prefix) || ref.stripPrefix(prefix).contains("/") then
+            failResolved(path, s"$$ref must point at #/components/schemas/<Name>, got $ref")
+          else
+            val raw = ref.stripPrefix(prefix)
+            if !schemaMap.contains(raw) then failResolved(path, s"unresolvable $$ref #/components/schemas/$raw")
+            else {
+              ensure(raw)
+              val name = toPascal(raw)
+              val named = TypeRef.Named(name)
+              Resolved(if nullableNominal.contains(name) then optional(named) else named, None)
+            }
       }
 
     private def resolveCombinator(obj: JsonObject, path: String, hint: String, bind: Option[String]): Resolved = {
@@ -632,7 +622,7 @@ object OpenRouterSchemaModel {
         val tags = variants.map(variant => requiredTag(variant, prop))
         tags.forall(_.isDefined) && tags.flatten.distinct.size == tags.size
       }
-      PreferredTags.find(good.contains).orElse(good.sorted.headOption)
+      tagHints.find(good.contains).orElse(good.sorted.headOption)
     }
 
     private def requiredTag(schema: Json, property: String): Option[String] =
@@ -785,7 +775,7 @@ object OpenRouterSchemaModel {
     private def tagHint(schema: Json): Option[String] = {
       val props = schema.asObject.flatMap(_("properties")).flatMap(_.asObject).getOrElse(JsonObject.empty)
       def tag(key: String): Option[String] = props(key).flatMap(singleStringConst)
-      PreferredTags.iterator.map(tag).collectFirst { case Some(value) => value }
+      tagHints.iterator.map(tag).collectFirst { case Some(value) => value }
     }
 
     private def singleStringConst(schema: Json): Option[String] = {

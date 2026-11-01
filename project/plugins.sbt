@@ -5,7 +5,5 @@ addSbtPlugin("com.github.sbt" % "sbt-release" % "1.5.0")
 addSbtPlugin("com.github.sbt" % "sbt-unidoc" % "0.6.1")
 addSbtPlugin("org.scalameta" % "sbt-mdoc" % "2.9.2")
 
-libraryDependencies ++= Seq(
-  "io.circe" %% "circe-core"   % "0.14.10",
-  "io.circe" %% "circe-parser" % "0.14.10"
-)
+lazy val openApiCodegen = RootProject(file("../sbt-openapi-codegen"))
+lazy val root = (project in file(".")).dependsOn(openApiCodegen)

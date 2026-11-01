@@ -105,15 +105,22 @@ lazy val `constellations-openrouter` = (project in file("openrouter"))
     libraryDependencies ++= Dependencies.constellationsOpenRouter,
     scalacOptions += "-Xmax-inlines:100"
   )
-  .dependsOn(`constellations-core`)
+  .dependsOn(`constellations-core`, `constellations-openrouter-schema`)
 
 lazy val `constellations-openrouter-schema` = (project in file("openrouter-schema"))
-  .enablePlugins(OpenRouterCodegenPlugin)
+  .enablePlugins(OpenApiCodegenPlugin)
   .settings(commonReleaseSettings)
   .settings(
     name := "constellations-openrouter-schema",
-    // The published example omits required PublicEndpoint.native_tools.
-    openRouterExampleExclusions += "ListEndpointsResponse",
+    openApiSpecs := Seq(
+      OpenApiSpec(
+        name = "OpenRouter",
+        source = OpenApiSource.FromUrl("https://openrouter.ai/openapi.json"),
+        packageName = "io.github.serhiip.constellations.openrouter.schema",
+        // The published example omits required PublicEndpoint.native_tools.
+        exampleExclusions = Set("ListEndpointsResponse")
+      )
+    ),
     libraryDependencies ++= Dependencies.constellationsOpenRouterSchema,
     scalacOptions ++= Seq("-Xmax-inlines:256", "-Wconf:src=src_managed/.*:s")
   )
