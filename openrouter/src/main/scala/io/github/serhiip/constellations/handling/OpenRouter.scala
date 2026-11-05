@@ -10,12 +10,10 @@ import io.circe.parser.*
 import io.github.serhiip.constellations.*
 import io.github.serhiip.constellations.common.*
 import io.github.serhiip.constellations.common.Codecs.given
-import io.github.serhiip.constellations.openrouter.schema.{
-  ChatAssistantMessage,
-  ChatContentText,
-  ChatFinishReasonEnum,
-  ChatResult
-}
+import io.github.serhiip.constellations.openrouter.schema.chat.content.items.ChatContentText
+import io.github.serhiip.constellations.openrouter.schema.chat.finish.reason.enum_.ChatFinishReasonEnum
+import io.github.serhiip.constellations.openrouter.schema.chat.messages.ChatAssistantMessage
+import io.github.serhiip.constellations.openrouter.schema.chat.result.ChatResult
 
 object OpenRouter:
 

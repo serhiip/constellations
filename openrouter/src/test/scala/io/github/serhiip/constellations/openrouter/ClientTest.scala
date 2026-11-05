@@ -4,7 +4,24 @@ import cats.effect.{IO, Resource}
 import cats.syntax.all.*
 
 import io.circe.{Encoder, Json}
-import io.github.serhiip.constellations.openrouter.schema.*
+import io.github.serhiip.constellations.openrouter.schema.additional.tools.item
+import io.github.serhiip.constellations.openrouter.schema.chat.choice.ChatChoice
+import io.github.serhiip.constellations.openrouter.schema.chat.content.image.ImageUrl
+import io.github.serhiip.constellations.openrouter.schema.chat.content.items.{ChatContentImage, ChatContentItems, ChatContentText}
+import io.github.serhiip.constellations.openrouter.schema.chat.finish.reason.enum_.ChatFinishReasonEnum
+import io.github.serhiip.constellations.openrouter.schema.chat.function.tool.FunctionFunction
+import io.github.serhiip.constellations.openrouter.schema.chat.messages.{ChatAssistantMessage, ChatToolMessage, ChatUserMessage}
+import io.github.serhiip.constellations.openrouter.schema.chat.request.ChatRequest
+import io.github.serhiip.constellations.openrouter.schema.chat.result.ChatResult
+import io.github.serhiip.constellations.openrouter.schema.chat.tool.call
+import io.github.serhiip.constellations.openrouter.schema.chat.tool.call.ChatToolCall
+import io.github.serhiip.constellations.openrouter.schema.generation.response.GenerationResponse
+import io.github.serhiip.constellations.openrouter.schema.input.modality.InputModality
+import io.github.serhiip.constellations.openrouter.schema.model.group.ModelGroup
+import io.github.serhiip.constellations.openrouter.schema.models.list.response.ModelsListResponse
+import io.github.serhiip.constellations.openrouter.schema.output.modality.OutputModality
+import io.github.serhiip.constellations.openrouter.schema.parameter.Parameter
+import io.github.serhiip.constellations.openrouter.schema.public.pricing.PublicPricing
 import io.circe.parser.*
 import munit.CatsEffectSuite
 import org.http4s.*
@@ -103,7 +120,7 @@ final class ClientTest extends CatsEffectSuite:
   test("createChatCompletion should handle multimodal content") {
     val parts: List[ChatContentItems] = List(
       ChatContentText(text = "What's in this image?"),
-      ChatContentImage(image_url = ChatContentImageImageUrl(url = "data:image/jpeg;base64,test"))
+      ChatContentImage(image_url = ImageUrl(url = "data:image/jpeg;base64,test"))
     )
     val multimodalRequest = ChatRequest(model = Some("gpt-4o"), messages = List(ChatUserMessage(content = parts)))
     val expectedResponse  = TestResponses.chatResult("gpt-4o", "I can see an image in the message.")
@@ -385,7 +402,7 @@ final class ClientTest extends CatsEffectSuite:
                 List(
                   ChatToolCall(
                     id = "call_abc123",
-                    function = ChatToolCallFunction(name = "search_gutenberg_books", arguments = """{"search_terms": ["James", "Joyce"]}""")
+                    function = call.Function(name = "search_gutenberg_books", arguments = """{"search_terms": ["James", "Joyce"]}""")
                   )
                 )
               )
@@ -524,7 +541,7 @@ final class ClientTest extends CatsEffectSuite:
             List(
               ChatToolCall(
                 id = "call_abc123",
-                function = ChatToolCallFunction(name = "search_gutenberg_books", arguments = """{"search_terms": ["James", "Joyce"]}""")
+                function = call.Function(name = "search_gutenberg_books", arguments = """{"search_terms": ["James", "Joyce"]}""")
               )
             )
           )
@@ -547,9 +564,9 @@ final class ClientTest extends CatsEffectSuite:
     }
   }
 
-  private def createSearchTool(): ChatFunctionToolFunction =
-    ChatFunctionToolFunction(
-      function = ChatFunctionToolFunctionFunction(
+  private def createSearchTool(): item.Function =
+    item.Function(
+      function = FunctionFunction(
         name = "search_gutenberg_books",
         description = Some("Search for books in the Project Gutenberg library"),
         parameters = Some(
@@ -649,7 +666,8 @@ final class ClientTest extends CatsEffectSuite:
       "frequency_penalty" : null,
       "default_parameters" : null,
       "supported_voices" : null,
-      "links" : { "details" : "https://openrouter.ai/openai/o3-deep-research" }
+      "links" : { "details" : "https://openrouter.ai/openai/o3-deep-research" },
+      "endpoints" : []
     }"""
 
     val modelsResponseJson = s"""{"data": [$jsonString], "links": {"next": null}, "total_count": 1}"""

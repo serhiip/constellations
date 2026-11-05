@@ -9,7 +9,22 @@ import io.github.serhiip.constellations.dispatcher.Decoder
 import io.github.serhiip.constellations.handling.OpenRouter.given
 import io.github.serhiip.constellations.invoker.StructuredInvoker
 import io.github.serhiip.constellations.openrouter.*
-import io.github.serhiip.constellations.openrouter.schema.*
+import io.github.serhiip.constellations.openrouter.schema.additional.tools.item.Function
+import io.github.serhiip.constellations.openrouter.schema.chat.content.image.ImageUrl
+import io.github.serhiip.constellations.openrouter.schema.chat.content.items.{ChatContentImage, ChatContentItems, ChatContentText}
+import io.github.serhiip.constellations.openrouter.schema.chat.messages.{
+  ChatAssistantMessage,
+  ChatSystemMessage,
+  ChatToolMessage,
+  ChatUserMessage
+}
+import io.github.serhiip.constellations.openrouter.schema.chat.named.tool.choice.ChatNamedToolChoice
+import io.github.serhiip.constellations.openrouter.schema.chat.request.ChatRequest
+import io.github.serhiip.constellations.openrouter.schema.chat.result.ChatResult
+import io.github.serhiip.constellations.openrouter.schema.chat.server.tool.choice.ChatServerToolChoice
+import io.github.serhiip.constellations.openrouter.schema.generation.response.Data
+import io.github.serhiip.constellations.openrouter.schema.input.modality.InputModality
+import io.github.serhiip.constellations.openrouter.schema.models.list.response.ModelsListResponse
 import io.circe.Json
 import munit.CatsEffectSuite
 
@@ -54,7 +69,7 @@ class OpenRouterTest extends CatsEffectSuite:
     def listModels(): IO[ModelsListResponse] =
       IO.pure(TestResponses.modelsList(List(TestResponses.sampleModel(id = "gpt-4o", name = "GPT-4o", input = List(InputModality.Text)))))
 
-    def getGenerationStats(generationId: String): IO[GenerationResponseData] =
+    def getGenerationStats(generationId: String): IO[Data] =
       IO.pure(TestResponses.generationData(generationId))
 
   test("StructuredInvoker with chatCompletion decodes structured JSON into domain type") {
@@ -87,7 +102,7 @@ class OpenRouterTest extends CatsEffectSuite:
                                     )
                                   )
                                 def listModels(): IO[ModelsListResponse] = IO.pure(TestResponses.modelsList(Nil))
-                                def getGenerationStats(generationId: String): IO[GenerationResponseData] =
+                                def getGenerationStats(generationId: String): IO[Data] =
                                   IO.pure(TestResponses.generationData(generationId, totalCost = 0.0, usage = 0.0))
       invoker               = StructuredInvoker[IO, ChatResult, StructuredPerson](
                                 OpenRouter.chatCompletion[IO](client, OpenRouter.Config(model = "gpt-4o"))
@@ -150,7 +165,7 @@ class OpenRouterTest extends CatsEffectSuite:
       val message = request.messages.head
       val parts: List[ChatContentItems] = List(
         ChatContentText(text = "What's in this image?"),
-        ChatContentImage(image_url = ChatContentImageImageUrl(url = "data:image/jpeg;base64,base64encodedimage"))
+        ChatContentImage(image_url = ImageUrl(url = "data:image/jpeg;base64,base64encodedimage"))
       )
       assertEquals(message, ChatUserMessage(content = parts))
   }
@@ -392,7 +407,7 @@ class OpenRouterTest extends CatsEffectSuite:
       // Verify tool choice is set to auto
       assertEquals(request.tool_choice, Some("auto": ChatNamedToolChoice | ChatServerToolChoice | String))
 
-      val searchTool = tools.head.asInstanceOf[ChatFunctionToolFunction]
+      val searchTool = tools.head.asInstanceOf[Function]
       assertEquals(searchTool.`type`, "function")
       assertEquals(searchTool.function.name, "search_books")
       assertEquals(searchTool.function.description, Some("Search for books by title or author"))
@@ -409,7 +424,7 @@ class OpenRouterTest extends CatsEffectSuite:
       assertEquals(searchRequired(0).asString.get, "query")
 
       // Verify second tool (calculate)
-      val calcTool = tools(1).asInstanceOf[ChatFunctionToolFunction]
+      val calcTool = tools(1).asInstanceOf[Function]
       assertEquals(calcTool.`type`, "function")
       assertEquals(calcTool.function.name, "calculate")
       assertEquals(calcTool.function.description, Some("Perform mathematical calculations"))
@@ -497,7 +512,7 @@ class OpenRouterTest extends CatsEffectSuite:
       assertEquals(request.messages.length, 1)
       val parts: List[ChatContentItems] = List(
         ChatContentText(text = "What's in this image?"),
-        ChatContentImage(image_url = ChatContentImageImageUrl(url = "data:image/jpeg;base64,base64encodedimage"))
+        ChatContentImage(image_url = ImageUrl(url = "data:image/jpeg;base64,base64encodedimage"))
       )
       assertEquals(request.messages.head, ChatUserMessage(content = parts))
   }

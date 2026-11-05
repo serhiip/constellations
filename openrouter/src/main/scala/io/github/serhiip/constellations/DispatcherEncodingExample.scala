@@ -20,7 +20,7 @@ import io.github.serhiip.constellations.executor.Stateful
 import io.github.serhiip.constellations.handling.OpenRouter.given
 import io.github.serhiip.constellations.invoker.OpenRouter
 import io.github.serhiip.constellations.openrouter.Client
-import io.github.serhiip.constellations.openrouter.schema.ChatResult
+import io.github.serhiip.constellations.openrouter.schema.chat.result.ChatResult
 
 final case class WeatherReport(city: String, temperatureC: Double, condition: String) derives ValueEncoder
 final case class StoredNote(id: String) derives ValueEncoder

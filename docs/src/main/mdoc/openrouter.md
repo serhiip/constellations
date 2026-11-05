@@ -45,7 +45,8 @@ Client.HTTP[IO]().map(Client.core("your-api-key", config)).use { client =>
 Send a chat request:
 
 ```scala
-import io.github.serhiip.constellations.openrouter.schema.*
+import io.github.serhiip.constellations.openrouter.schema.chat.messages.ChatUserMessage
+import io.github.serhiip.constellations.openrouter.schema.chat.request.ChatRequest
 
 val request = ChatRequest(
   model = Some("anthropic/claude-3-haiku"),

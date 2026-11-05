@@ -66,7 +66,7 @@ Provider objects export both `Handling` and `AssetsHandling` givens. Importing `
 
 ```scala
 import io.github.serhiip.constellations.handling.OpenRouter.given
-import io.github.serhiip.constellations.openrouter.schema.ChatResult
+import io.github.serhiip.constellations.openrouter.schema.chat.result.ChatResult
 import io.github.serhiip.constellations.executor.Stateful
 
 Stateful.Config(functionCallLimit = 5, agentErrorRetryLimit = 3)

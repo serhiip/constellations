@@ -4,18 +4,13 @@ import cats.syntax.all.*
 import munit.FunSuite
 
 import io.github.serhiip.constellations.common.{FinishReason, FunctionCall, Value}
-import io.github.serhiip.constellations.openrouter.schema.{
-  ChatAssistantMessage,
-  ChatChoice,
-  ChatContentImage,
-  ChatContentImageImageUrl,
-  ChatContentItems,
-  ChatContentText,
-  ChatFinishReasonEnum,
-  ChatResult,
-  ChatToolCall,
-  ChatToolCallFunction
-}
+import io.github.serhiip.constellations.openrouter.schema.chat.choice.ChatChoice
+import io.github.serhiip.constellations.openrouter.schema.chat.content.image.ImageUrl
+import io.github.serhiip.constellations.openrouter.schema.chat.content.items.{ChatContentImage, ChatContentItems, ChatContentText}
+import io.github.serhiip.constellations.openrouter.schema.chat.finish.reason.enum_.ChatFinishReasonEnum
+import io.github.serhiip.constellations.openrouter.schema.chat.messages.ChatAssistantMessage
+import io.github.serhiip.constellations.openrouter.schema.chat.result.ChatResult
+import io.github.serhiip.constellations.openrouter.schema.chat.tool.call.{ChatToolCall, Function}
 
 class OpenRouterTest extends FunSuite:
 
@@ -50,7 +45,7 @@ class OpenRouterTest extends FunSuite:
   test("OpenRouter handling should join text parts and skip image parts") {
     val content: List[ChatContentItems] | String = List(
       ChatContentText(text = "Hello "),
-      ChatContentImage(image_url = ChatContentImageImageUrl(url = "data:image/png;base64,abc")),
+      ChatContentImage(image_url = ImageUrl(url = "data:image/png;base64,abc")),
       ChatContentText(text = "world"),
       ChatContentText(text = "   ")
     )
@@ -100,7 +95,7 @@ class OpenRouterTest extends FunSuite:
   test("OpenRouter handling should parse tool calls with empty or blank arguments as empty Struct") {
     val response = responseWith(
       ChatAssistantMessage(
-        tool_calls = Some(List(ChatToolCall(id = "call_abc", function = ChatToolCallFunction(name = "get_current_time", arguments = ""))))
+        tool_calls = Some(List(ChatToolCall(id = "call_abc", function = Function(name = "get_current_time", arguments = ""))))
       ),
       finishReason = Some(ChatFinishReasonEnum.ToolCalls)
     )
@@ -119,7 +114,7 @@ class OpenRouterTest extends FunSuite:
           List(
             ChatToolCall(
               id = "call-schedule",
-              function = ChatToolCallFunction(
+              function = Function(
                 name = "schedule_api_at",
                 arguments = """{"when":"2025-07-21T15:00:00+01:00","count":2,"enabled":true}"""
               )

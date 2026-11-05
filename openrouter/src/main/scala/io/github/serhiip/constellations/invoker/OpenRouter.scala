@@ -8,28 +8,24 @@ import io.github.serhiip.constellations.*
 import io.github.serhiip.constellations.common.*
 import io.github.serhiip.constellations.common.Codecs.given
 import io.github.serhiip.constellations.openrouter.{Client, CompletionRequest, CompletionResponse}
-import io.github.serhiip.constellations.openrouter.schema.{
-  ChatAssistantImagesItem,
-  ChatAssistantImagesItemImageUrl,
+import io.github.serhiip.constellations.openrouter.schema.additional.tools.item
+import io.github.serhiip.constellations.openrouter.schema.chat.assistant.images.{Item, ItemImageUrl}
+import io.github.serhiip.constellations.openrouter.schema.chat.content.image.ImageUrl
+import io.github.serhiip.constellations.openrouter.schema.chat.content.items.{ChatContentImage, ChatContentItems, ChatContentText}
+import io.github.serhiip.constellations.openrouter.schema.chat.function.tool.FunctionFunction
+import io.github.serhiip.constellations.openrouter.schema.chat.messages.{
   ChatAssistantMessage,
-  ChatContentImage,
-  ChatContentImageImageUrl,
-  ChatContentItems,
-  ChatContentText,
-  ChatFunctionToolFunction,
-  ChatFunctionToolFunctionFunction,
   ChatMessages,
-  ChatNamedToolChoice,
-  ChatRequest,
-  ChatRequestModalitiesItem,
-  ChatResult,
-  ChatServerToolChoice,
   ChatSystemMessage,
-  ChatToolCall,
-  ChatToolCallFunction,
   ChatToolMessage,
   ChatUserMessage
 }
+import io.github.serhiip.constellations.openrouter.schema.chat.named.tool.choice.ChatNamedToolChoice
+import io.github.serhiip.constellations.openrouter.schema.chat.request.{ChatRequest, ModalitiesItem}
+import io.github.serhiip.constellations.openrouter.schema.chat.result.ChatResult
+import io.github.serhiip.constellations.openrouter.schema.chat.server.tool.choice.ChatServerToolChoice
+import io.github.serhiip.constellations.openrouter.schema.chat.tool.call
+import io.github.serhiip.constellations.openrouter.schema.chat.tool.call.ChatToolCall
 import io.circe.syntax.*
 import java.util.UUID
 
@@ -90,14 +86,14 @@ object OpenRouter:
           ChatAssistantMessage(
             content = content.map(text => (text: List[ChatContentItems] | String)),
             images = Option.when(images.nonEmpty)(
-              images.map(img => ChatAssistantImagesItem(image_url = ChatAssistantImagesItemImageUrl(s"data:image/jpeg;base64,${img.base64Encoded}")))
+              images.map(img => Item(image_url = ItemImageUrl(s"data:image/jpeg;base64,${img.base64Encoded}")))
             )
           )
         case Message.System(content)            => ChatSystemMessage(content = content)
         case Message.Tool(content)              =>
           val toolCall = ChatToolCall(
             id = content.callId.getOrElse(UUID.randomUUID().toString),
-            function = ChatToolCallFunction(
+            function = call.Function(
               name = content.name,
               arguments = content.args.asJson.noSpaces
             )
@@ -127,17 +123,17 @@ object OpenRouter:
       case Message.Tool(content)              => content.toString.some
       case Message.ToolResult(content)        => content.toString.some
 
-  private def toTool(funcDecl: FunctionDeclaration): ChatFunctionToolFunction =
-    ChatFunctionToolFunction(
-      function = ChatFunctionToolFunctionFunction(
+  private def toTool(funcDecl: FunctionDeclaration): item.Function =
+    item.Function(
+      function = FunctionFunction(
         name = funcDecl.name,
         description = funcDecl.description,
         parameters = funcDecl.parameters.flatMap(_.asJson.asObject).map(_.toMap)
       )
     )
 
-  private def modality(value: String): ChatRequestModalitiesItem =
-    ChatRequestModalitiesItem.known.find(_.value == value).getOrElse(ChatRequestModalitiesItem.Unknown(value))
+  private def modality(value: String): ModalitiesItem =
+    ModalitiesItem.known.find(_.value == value).getOrElse(ModalitiesItem.Unknown(value))
 
 protected trait MessageHandler:
   def convertUserMessage(content: List[ContentPart]): ChatUserMessage
@@ -147,7 +143,7 @@ protected object MessageHandler:
   private def contentParts(content: List[ContentPart]): List[ChatContentItems] = content.map {
     case ContentPart.Text(text)           => ChatContentText(text = text)
     case ContentPart.Image(base64Encoded) =>
-      ChatContentImage(image_url = ChatContentImageImageUrl(url = s"data:image/jpeg;base64,$base64Encoded"))
+      ChatContentImage(image_url = ImageUrl(url = s"data:image/jpeg;base64,$base64Encoded"))
   }
 
   private def toolResultContent(content: FunctionResponse): String =

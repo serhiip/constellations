@@ -117,8 +117,16 @@ lazy val `constellations-openrouter-schema` = (project in file("openrouter-schem
         name = "OpenRouter",
         source = OpenApiSource.FromUrl("https://openrouter.ai/openapi.json"),
         packageName = "io.github.serhiip.constellations.openrouter.schema",
-        // The published example omits required PublicEndpoint.native_tools.
-        exampleExclusions = Set("ListEndpointsResponse")
+        // Published examples disagree with the spec: ListEndpointsResponse omits required
+        // PublicEndpoint.native_tools, Model omits required endpoints, and PublicZdrEndpoint
+        // sets required throughput_last_30m to null. The model list examples embed that Model.
+        exampleExclusions = Set(
+          "ListEndpointsResponse",
+          "Model",
+          "ModelsListResponse",
+          "ModelsListResponseData",
+          "PublicZdrEndpoint"
+        )
       )
     ),
     libraryDependencies ++= Dependencies.constellationsOpenRouterSchema,

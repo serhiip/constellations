@@ -21,15 +21,12 @@ import fs2.io.net.Network
 import io.circe.derivation.{Configuration, ConfiguredCodec}
 import io.circe.syntax.*
 import io.circe.{Codec, Decoder, Encoder, Json}
-import io.github.serhiip.constellations.openrouter.schema.{
-  ChatRequest,
-  ChatResult,
-  GenerationResponse,
-  GenerationResponseData,
-  Model,
-  ModelsListResponse,
-  Parameter
-}
+import io.github.serhiip.constellations.openrouter.schema.chat.request.ChatRequest
+import io.github.serhiip.constellations.openrouter.schema.chat.result.ChatResult
+import io.github.serhiip.constellations.openrouter.schema.generation.response.{Data, GenerationResponse}
+import io.github.serhiip.constellations.openrouter.schema.model.Model
+import io.github.serhiip.constellations.openrouter.schema.models.list.response.ModelsListResponse
+import io.github.serhiip.constellations.openrouter.schema.parameter.Parameter
 import org.http4s.*
 import org.http4s.Method.*
 import org.http4s.circe.*
@@ -129,7 +126,7 @@ trait Client[F[_]]:
   def createCompletion(request: CompletionRequest): F[CompletionResponse]
   def createEmbeddings(request: EmbeddingsRequest): F[EmbeddingsResponse]
   def listModels(): F[ModelsListResponse]
-  def getGenerationStats(generationId: String): F[GenerationResponseData]
+  def getGenerationStats(generationId: String): F[Data]
 
 object Client:
   case class Config(
@@ -233,7 +230,7 @@ object Client:
         .run(Request[F](GET, config.baseUri / "v1" / "models").withHeaders(baseHeaders))
         .use(decodeResponse[ModelsListResponse]("list models"))
 
-    def getGenerationStats(generationId: String): F[GenerationResponseData] =
+    def getGenerationStats(generationId: String): F[Data] =
       val uri = config.baseUri / "v1" / "generation" +? ("id" -> generationId)
       client
         .run(Request[F](GET, uri).withHeaders(baseHeaders))
@@ -369,7 +366,7 @@ object Client:
             _      <- logger.trace(s"Found ${result.data.size} models")
           yield result
 
-    override def getGenerationStats(generationId: String): F[GenerationResponseData] =
+    override def getGenerationStats(generationId: String): F[Data] =
       for
         current <- Tracer[F].currentSpanOrNoop
         result  <- Tracer[F].rootScope(getGenerationStatsLinked(generationId, current.context))
@@ -389,7 +386,7 @@ object Client:
         Logger[F].error(domainError)(s"OpenRouter API error during $operation: metadata=$metadata")
       }
 
-    private def getGenerationStatsLinked(generationId: String, linkTo: SpanContext): F[GenerationResponseData] =
+    private def getGenerationStatsLinked(generationId: String, linkTo: SpanContext): F[Data] =
       val operationAttr = Attribute("operation", "get-generation-stats")
       Tracer[F]
         .span("openrouter-client", "get-generation-stats")(operationAttr)
@@ -618,4 +615,4 @@ object Client:
     def createCompletion(request: CompletionRequest): G[CompletionResponse] = f(client.createCompletion(request))
     def createEmbeddings(request: EmbeddingsRequest): G[EmbeddingsResponse] = f(client.createEmbeddings(request))
     def listModels(): G[ModelsListResponse]                                 = f(client.listModels())
-    def getGenerationStats(generationId: String): G[GenerationResponseData] = f(client.getGenerationStats(generationId))
+    def getGenerationStats(generationId: String): G[Data] = f(client.getGenerationStats(generationId))

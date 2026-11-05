@@ -8,14 +8,14 @@ import cats.syntax.functor.*
 
 import org.typelevel.otel4s.Attribute
 
-import io.github.serhiip.constellations.openrouter.schema.GenerationResponseData
+import io.github.serhiip.constellations.openrouter.schema.generation.response.Data
 
 trait GenerationStatsHandler[F[_]]:
-  def onGenerationStats(stats: GenerationResponseData): F[Unit]
+  def onGenerationStats(stats: Data): F[Unit]
 
 object GenerationStatsHandler:
-  def apply[F[_]](f: GenerationResponseData => F[Unit]): GenerationStatsHandler[F] = new:
-    def onGenerationStats(stats: GenerationResponseData): F[Unit] = f(stats)
+  def apply[F[_]](f: Data => F[Unit]): GenerationStatsHandler[F] = new:
+    def onGenerationStats(stats: Data): F[Unit] = f(stats)
 
   def noop[F[_]: Applicative]: GenerationStatsHandler[F] =
     GenerationStatsHandler(_ => ().pure[F])
@@ -46,7 +46,7 @@ object GenerationStatsHandler:
       yield ()
     }
 
-  private[openrouter] def generationStatsAttributes(stats: GenerationResponseData): List[Attribute[?]] =
+  private[openrouter] def generationStatsAttributes(stats: Data): List[Attribute[?]] =
     List(
       Attribute("operation", "get-generation-stats"),
       Attribute("model", stats.model),
