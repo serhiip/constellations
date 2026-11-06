@@ -122,8 +122,8 @@ final class ClientTest extends CatsEffectSuite:
       ChatContentText(text = "What's in this image?"),
       ChatContentImage(image_url = ImageUrl(url = "data:image/jpeg;base64,test"))
     )
-    val multimodalRequest = ChatRequest(model = Some("gpt-4o"), messages = List(ChatUserMessage(content = parts)))
-    val expectedResponse  = TestResponses.chatResult("gpt-4o", "I can see an image in the message.")
+    val multimodalRequest             = ChatRequest(model = Some("gpt-4o"), messages = List(ChatUserMessage(content = parts)))
+    val expectedResponse              = TestResponses.chatResult("gpt-4o", "I can see an image in the message.")
 
     val stubClient = createStubClient(Response[IO](Status.Ok).withEntity(expectedResponse))
     val client     = createTestClient(stubClient)
@@ -383,8 +383,8 @@ final class ClientTest extends CatsEffectSuite:
   }
 
   test("createChatCompletion should handle tool calls") {
-    val searchTool = createSearchTool()
-    val request    = ChatRequest(
+    val searchTool       = createSearchTool()
+    val request          = ChatRequest(
       model = Some("google/gemini-2.0-flash-001"),
       messages = List(ChatUserMessage(content = "What are the titles of some James Joyce books?")),
       tools = List(searchTool).some,
@@ -532,7 +532,7 @@ final class ClientTest extends CatsEffectSuite:
       tool_call_id = "call_abc123",
       content = """[{"id": 4300, "title": "Ulysses", "authors": [{"name": "Joyce, James"}]}]"""
     )
-    val request = ChatRequest(
+    val request           = ChatRequest(
       model = Some("google/gemini-2.0-flash-001"),
       messages = List(
         ChatUserMessage(content = "What are the titles of some James Joyce books?"),
@@ -550,7 +550,7 @@ final class ClientTest extends CatsEffectSuite:
       ),
       tools = List(createSearchTool()).some
     )
-    val expectedResponse = TestResponses.chatResult(
+    val expectedResponse  = TestResponses.chatResult(
       "google/gemini-2.0-flash-001",
       "Based on the search results, I found 'Ulysses' by James Joyce in the Project Gutenberg library."
     )
@@ -733,7 +733,8 @@ final class ClientTest extends CatsEffectSuite:
   }
 
   test("PublicPricing decodes price fields as strings") {
-    val json = """{"prompt":"0.00001","completion":"0.00004","request":"0","image":"0.00765","web_search":"0.01","internal_reasoning":"0","input_cache_read":"0.0000025"}"""
+    val json =
+      """{"prompt":"0.00001","completion":"0.00004","request":"0","image":"0.00765","web_search":"0.01","internal_reasoning":"0","input_cache_read":"0.0000025"}"""
     parse(json).flatMap(_.as[PublicPricing]) match
       case Right(pricing) =>
         assertEquals(pricing.prompt, "0.00001")

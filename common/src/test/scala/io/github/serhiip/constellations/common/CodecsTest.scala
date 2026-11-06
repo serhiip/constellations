@@ -301,8 +301,8 @@ class CodecsSuite extends FunSuite:
         )
       )
     )
-    val json    = userStruct.asJson
-    val decoded = decode[Struct](json.noSpaces)
+    val json       = userStruct.asJson
+    val decoded    = decode[Struct](json.noSpaces)
 
     assertEquals(decoded, Right(userStruct))
   }

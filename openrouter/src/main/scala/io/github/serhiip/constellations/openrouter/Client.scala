@@ -45,13 +45,10 @@ private given Configuration = Configuration.default.withSnakeCaseMemberNames
 
 extension (model: Model) def supportsTools: Boolean = model.supported_parameters.contains(Parameter.Tools)
 
-
 case class ErrorResponse(error: ErrorDetails) derives ConfiguredCodec
 case class ErrorDetails(code: Int, message: String, metadata: Option[Map[String, Json]] = None) derives ConfiguredCodec
 
-
 case class ChatCompletionUsage(promptTokens: Int, completionTokens: Int, totalTokens: Int) derives ConfiguredCodec
-
 
 case class CompletionRequest(
     model: String,
@@ -119,7 +116,6 @@ case class EmbeddingsResponse(
     model: String,
     usage: EmbeddingsUsage
 ) derives ConfiguredCodec
-
 
 trait Client[F[_]]:
   def createChatCompletion(request: ChatRequest): F[ChatResult]
@@ -402,13 +398,13 @@ object Client:
                                   .setStatus(StatusCode.Error, t.getMessage) >> logger
                                   .warn(t)("Error while fetching generation stats") >> span.recordException(t)
                               )
-            _             <- addResponseStatus(200)
-            _             <- span.setStatus(StatusCode.Ok)
-            _             <- logger.trace(s"Generation stats retrieved for model ${result.model}")
-            enrichedAttrs  = GenerationStatsHandler.generationStatsAttributes(result)
-            _              = span.addLink(linkTo, enrichedAttrs*)
-            _             <- span.addAttributes(enrichedAttrs*)
-            _             <- generationStatsHandler.onGenerationStats(result)
+            _            <- addResponseStatus(200)
+            _            <- span.setStatus(StatusCode.Ok)
+            _            <- logger.trace(s"Generation stats retrieved for model ${result.model}")
+            enrichedAttrs = GenerationStatsHandler.generationStatsAttributes(result)
+            _             = span.addLink(linkTo, enrichedAttrs*)
+            _            <- span.addAttributes(enrichedAttrs*)
+            _            <- generationStatsHandler.onGenerationStats(result)
           yield result
 
     private def recordClientError(attrs: Seq[Attribute[?]], error: Client.Error): F[Unit] =
@@ -615,4 +611,4 @@ object Client:
     def createCompletion(request: CompletionRequest): G[CompletionResponse] = f(client.createCompletion(request))
     def createEmbeddings(request: EmbeddingsRequest): G[EmbeddingsResponse] = f(client.createEmbeddings(request))
     def listModels(): G[ModelsListResponse]                                 = f(client.listModels())
-    def getGenerationStats(generationId: String): G[Data] = f(client.getGenerationStats(generationId))
+    def getGenerationStats(generationId: String): G[Data]                   = f(client.getGenerationStats(generationId))

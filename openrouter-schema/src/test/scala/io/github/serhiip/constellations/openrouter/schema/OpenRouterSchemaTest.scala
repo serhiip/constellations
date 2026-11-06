@@ -14,17 +14,17 @@ class OpenRouterSchemaTest extends munit.FunSuite {
 
   test("ChatRequest stop accepts a string or a list of strings") {
     val asString = ChatRequest(messages = List(user("hi")), stop = Some("END"))
-    val asList = ChatRequest(messages = List(user("hi")), stop = Some(List("a", "b")))
+    val asList   = ChatRequest(messages = List(user("hi")), stop = Some(List("a", "b")))
 
     val decodedString = decode[ChatRequest](asString.asJson.noSpaces)
-    val decodedList = decode[ChatRequest](asList.asJson.noSpaces)
+    val decodedList   = decode[ChatRequest](asList.asJson.noSpaces)
     assertEquals(decodedString, Right(asString))
     assertEquals(decodedList, Right(asList))
   }
 
   test("ChatMessages decodes by the role discriminator") {
     val message = ChatUserMessage(content = "hello")
-    val json = (message: ChatMessages).asJson
+    val json    = (message: ChatMessages).asJson
     assertEquals(json.hcursor.get[String]("role"), Right("user"))
     assert(!json.asObject.get.contains("name"))
     assertEquals(decode[ChatMessages](json.noSpaces), Right(message: ChatMessages))

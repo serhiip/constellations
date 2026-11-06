@@ -77,10 +77,10 @@ class OpenRouterTest extends CatsEffectSuite:
       chatRequestRef       <- Ref.of[IO, Option[ChatRequest]](none)
       completionRequestRef <- Ref.of[IO, Option[CompletionRequest]](none)
       client                = new Client[IO]:
-                                def createChatCompletion(request: ChatRequest): IO[ChatResult] =
+                                def createChatCompletion(request: ChatRequest): IO[ChatResult]           =
                                   chatRequestRef.set(request.some) *>
                                     IO.pure(TestResponses.chatResult(request.model.getOrElse("gpt-4o"), """{"name":"Alice","age":33}""", "structured-id"))
-                                def createCompletion(request: CompletionRequest): IO[CompletionResponse]             =
+                                def createCompletion(request: CompletionRequest): IO[CompletionResponse] =
                                   completionRequestRef.set(request.some) *>
                                     IO.pure(
                                       CompletionResponse(
@@ -92,7 +92,7 @@ class OpenRouterTest extends CatsEffectSuite:
                                         usage = ChatCompletionUsage(promptTokens = 1, completionTokens = 1, totalTokens = 2)
                                       )
                                     )
-                                def createEmbeddings(request: EmbeddingsRequest): IO[EmbeddingsResponse]             =
+                                def createEmbeddings(request: EmbeddingsRequest): IO[EmbeddingsResponse] =
                                   IO.pure(
                                     EmbeddingsResponse(
                                       `object` = "list",
@@ -101,8 +101,8 @@ class OpenRouterTest extends CatsEffectSuite:
                                       usage = EmbeddingsUsage(promptTokens = 1, totalTokens = 1)
                                     )
                                   )
-                                def listModels(): IO[ModelsListResponse] = IO.pure(TestResponses.modelsList(Nil))
-                                def getGenerationStats(generationId: String): IO[Data] =
+                                def listModels(): IO[ModelsListResponse]                                 = IO.pure(TestResponses.modelsList(Nil))
+                                def getGenerationStats(generationId: String): IO[Data]                   =
                                   IO.pure(TestResponses.generationData(generationId, totalCost = 0.0, usage = 0.0))
       invoker               = StructuredInvoker[IO, ChatResult, StructuredPerson](
                                 OpenRouter.chatCompletion[IO](client, OpenRouter.Config(model = "gpt-4o"))
@@ -129,7 +129,7 @@ class OpenRouterTest extends CatsEffectSuite:
       capturedRequest      <- chatRequestRef.get
     yield
       assert(capturedRequest.isDefined)
-      val request      = capturedRequest.get
+      val request = capturedRequest.get
       assertEquals(request.model, Some("gpt-4o"))
       assertEquals(request.temperature, 0.7.some)
       assertEquals(request.max_tokens, Some(100L))
@@ -160,9 +160,9 @@ class OpenRouterTest extends CatsEffectSuite:
       capturedRequest      <- chatRequestRef.get
     yield
       assert(capturedRequest.isDefined)
-      val request      = capturedRequest.get
+      val request                       = capturedRequest.get
       assertEquals(request.messages.length, 1)
-      val message = request.messages.head
+      val message                       = request.messages.head
       val parts: List[ChatContentItems] = List(
         ChatContentText(text = "What's in this image?"),
         ChatContentImage(image_url = ImageUrl(url = "data:image/jpeg;base64,base64encodedimage"))
@@ -193,7 +193,7 @@ class OpenRouterTest extends CatsEffectSuite:
       capturedRequest      <- chatRequestRef.get
     yield
       assert(capturedRequest.isDefined)
-      val request           = capturedRequest.get
+      val request = capturedRequest.get
       assertEquals(request.messages.length, 4)
       assertEquals(request.messages(0), ChatSystemMessage(content = "You are a helpful assistant"))
       assertEquals(request.messages(1), ChatUserMessage(content = List(ChatContentText(text = "Hello"))))
@@ -237,14 +237,14 @@ class OpenRouterTest extends CatsEffectSuite:
 
       // Check the tool call message (assistant)
       val toolMessage = request.messages(1).asInstanceOf[ChatAssistantMessage]
-      val toolCalls  = toolMessage.tool_calls.get
+      val toolCalls   = toolMessage.tool_calls.get
       assertEquals(toolCalls.length, 1)
-      val toolCall = toolCalls.head
+      val toolCall    = toolCalls.head
       assertEquals(toolCall.`type`, "function")
       assertEquals(toolCall.function.name, "calculator")
       assertEquals(toolCall.function.arguments, """{"a":2.0,"b":3.0}""")
 
-      val toolResult = request.messages(2).asInstanceOf[ChatToolMessage]
+      val toolResult  = request.messages(2).asInstanceOf[ChatToolMessage]
       assertEquals(toolResult.tool_call_id, "call-123")
       val toolContent = io.circe.parser.parse(toolResult.content.asInstanceOf[String]).toOption.get
       assertEquals(
@@ -349,7 +349,7 @@ class OpenRouterTest extends CatsEffectSuite:
       capturedRequest      <- chatRequestRef.get
     yield
       assert(capturedRequest.isDefined)
-      val request      = capturedRequest.get
+      val request = capturedRequest.get
       assertEquals(request.messages.length, 1)
       assertEquals(request.messages.head, ChatUserMessage(content = List.empty[ChatContentItems]))
   }
@@ -412,7 +412,7 @@ class OpenRouterTest extends CatsEffectSuite:
       assertEquals(searchTool.function.name, "search_books")
       assertEquals(searchTool.function.description, Some("Search for books by title or author"))
 
-      val searchParams = io.circe.JsonObject.fromIterable(searchTool.function.parameters.get)
+      val searchParams     = io.circe.JsonObject.fromIterable(searchTool.function.parameters.get)
       assertEquals(searchParams("type").get.asString.get, "object")
       val searchProperties = searchParams("properties").get.asObject.get
       assertEquals(searchProperties("query").get.asObject.get("type").get.asString.get, "string")
@@ -429,7 +429,7 @@ class OpenRouterTest extends CatsEffectSuite:
       assertEquals(calcTool.function.name, "calculate")
       assertEquals(calcTool.function.description, Some("Perform mathematical calculations"))
 
-      val calcParams = io.circe.JsonObject.fromIterable(calcTool.function.parameters.get)
+      val calcParams     = io.circe.JsonObject.fromIterable(calcTool.function.parameters.get)
       assertEquals(calcParams("type").get.asString.get, "object")
       val calcProperties = calcParams("properties").get.asObject.get
       assertEquals(calcProperties("operation").get.asObject.get("type").get.asString.get, "string")
@@ -508,7 +508,7 @@ class OpenRouterTest extends CatsEffectSuite:
       capturedRequest      <- chatRequestRef.get
     yield
       assert(capturedRequest.isDefined)
-      val request      = capturedRequest.get
+      val request                       = capturedRequest.get
       assertEquals(request.messages.length, 1)
       val parts: List[ChatContentItems] = List(
         ChatContentText(text = "What's in this image?"),
@@ -560,7 +560,7 @@ class OpenRouterTest extends CatsEffectSuite:
       // Check tool result message (index 2)
       val toolResultMessage = request.messages(2).asInstanceOf[ChatToolMessage]
       assertEquals(toolResultMessage.tool_call_id, "call-123")
-      val contentString = toolResultMessage.content.asInstanceOf[String]
+      val contentString     = toolResultMessage.content.asInstanceOf[String]
       assert(contentString.contains("result"))
       assert(contentString.contains("5.0"))
   }
@@ -580,7 +580,7 @@ class OpenRouterTest extends CatsEffectSuite:
       capturedRequest      <- chatRequestRef.get
     yield
       assert(capturedRequest.isDefined)
-      val request      = capturedRequest.get
+      val request = capturedRequest.get
       assertEquals(request.model, Some("gpt-4o"))
       assertEquals(request.messages.length, 1)
       assertEquals(request.messages.head, ChatUserMessage(content = List(ChatContentText(text = "Hello, GPT!"))))
@@ -629,7 +629,7 @@ class OpenRouterTest extends CatsEffectSuite:
       // Check tool result message (index 2)
       val toolResultMessage = request.messages(2).asInstanceOf[ChatToolMessage]
       assertEquals(toolResultMessage.tool_call_id, "call-123")
-      val contentObject = io.circe.parser.parse(toolResultMessage.content.asInstanceOf[String]).toOption.get.asObject.get
+      val contentObject     = io.circe.parser.parse(toolResultMessage.content.asInstanceOf[String]).toOption.get.asObject.get
       assertEquals(contentObject("result").get.asNumber.get.toDouble, 5.0)
   }
 
@@ -654,7 +654,7 @@ class OpenRouterTest extends CatsEffectSuite:
       capturedRequest      <- chatRequestRef.get
     yield
       assert(capturedRequest.isDefined)
-      val request      = capturedRequest.get
+      val request                       = capturedRequest.get
       assertEquals(request.messages.length, 1)
       val parts: List[ChatContentItems] = List(ChatContentText(text = "First part"), ChatContentText(text = "Second part"))
       assertEquals(request.messages.head, ChatUserMessage(content = parts))
@@ -663,7 +663,7 @@ class OpenRouterTest extends CatsEffectSuite:
   // Unit tests for message handlers in isolation
   test("MessageHandler.gemini.convertUserMessage should handle single text content") {
     val content = List(ContentPart.Text("Hello, Gemini!"))
-    val result = MessageHandler.gemini.convertUserMessage(content)
+    val result  = MessageHandler.gemini.convertUserMessage(content)
     assertEquals(result.content, "Hello, Gemini!")
   }
 
@@ -672,8 +672,8 @@ class OpenRouterTest extends CatsEffectSuite:
       ContentPart.Text("What's in this image?"),
       ContentPart.Image("base64encodedimage")
     )
-    val result = MessageHandler.gemini.convertUserMessage(content)
-    val parts  = result.content.asInstanceOf[List[ChatContentItems]]
+    val result  = MessageHandler.gemini.convertUserMessage(content)
+    val parts   = result.content.asInstanceOf[List[ChatContentItems]]
     assertEquals(parts.length, 2)
     assert(parts(0).isInstanceOf[ChatContentText])
     assert(parts(1).isInstanceOf[ChatContentImage])
@@ -681,7 +681,7 @@ class OpenRouterTest extends CatsEffectSuite:
 
   test("MessageHandler.default.convertUserMessage should always return array") {
     val content = List(ContentPart.Text("Hello, GPT!"))
-    val result = MessageHandler.default.convertUserMessage(content)
+    val result  = MessageHandler.default.convertUserMessage(content)
     assertEquals(result.content, List(ChatContentText(text = "Hello, GPT!")))
   }
 
@@ -707,11 +707,11 @@ class OpenRouterTest extends CatsEffectSuite:
   }
 
   test("MessageHandler.default.convertToolResultMessage should keep the call id") {
-    val content = FunctionResponse(
+    val content       = FunctionResponse(
       FunctionCall("calculator", Struct.empty, "call-123".some),
       Struct(Map("result" -> Value.number(5.0)))
     )
-    val result = MessageHandler.default.convertToolResultMessage(content)
+    val result        = MessageHandler.default.convertToolResultMessage(content)
     assertEquals(result.tool_call_id, "call-123")
     val contentObject = io.circe.parser.parse(result.content.asInstanceOf[String]).toOption.get.asObject.get
     assertEquals(contentObject("result").get.asNumber.get.toDouble, 5.0)
