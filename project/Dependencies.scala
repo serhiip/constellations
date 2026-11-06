@@ -40,7 +40,7 @@ object Dependencies {
   )
 
   val logback = Seq(
-    "ch.qos.logback" % "logback-classic" % "1.5.16"
+    "ch.qos.logback" % "logback-classic" % "1.5.38"
   )
 
   val circe = Seq(
