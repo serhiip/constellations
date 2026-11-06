@@ -85,7 +85,7 @@ object Dependencies {
   )
 
   val awsSignin = Seq(
-    "software.amazon.awssdk" % "signin" % "2.46.15"
+    "software.amazon.awssdk" % "signin" % "2.46.21"
   )
 
   val mockito = Seq(
