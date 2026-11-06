@@ -86,7 +86,7 @@ lazy val `constellations-common` = (project in file("common"))
   .settings(commonReleaseSettings)
   .settings(
     name         := "constellations-common",
-    scalaVersion := "3.3.8",
+    scalaVersion := "3.3.9",
     libraryDependencies ++= Dependencies.constellationsCommon
   )
 
@@ -111,7 +111,7 @@ lazy val `constellations-openrouter-schema` = (project in file("openrouter-schem
   .enablePlugins(OpenApiCodegenPlugin)
   .settings(commonReleaseSettings)
   .settings(
-    name := "constellations-openrouter-schema",
+    name         := "constellations-openrouter-schema",
     openApiSpecs := Seq(
       OpenApiSpec(
         name = "OpenRouter",
@@ -161,7 +161,7 @@ lazy val `constellations-mcp` = (project in file("mcp"))
   .settings(commonReleaseSettings)
   .settings(
     name         := "constellations-mcp",
-    scalaVersion := "3.3.8",
+    scalaVersion := "3.3.9",
     libraryDependencies ++= Dependencies.constellationsMcp
   )
   .dependsOn(`constellations-common`)
