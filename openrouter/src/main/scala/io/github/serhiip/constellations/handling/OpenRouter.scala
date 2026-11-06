@@ -51,15 +51,15 @@ object OpenRouter:
 
     override def finishReason(response: ChatResult): FinishReason =
       response.choices.headOption.flatMap(_.finish_reason) match
-        case Some(ChatFinishReasonEnum.ToolCalls)     => FinishReason.ToolCalls
-        case Some(ChatFinishReasonEnum.Stop)          => FinishReason.Stop
-        case Some(ChatFinishReasonEnum.Length)        => FinishReason.Length
-        case Some(ChatFinishReasonEnum.ContentFilter) => FinishReason.ContentFilter
+        case Some(ChatFinishReasonEnum.ToolCalls)                                      => FinishReason.ToolCalls
+        case Some(ChatFinishReasonEnum.Stop)                                           => FinishReason.Stop
+        case Some(ChatFinishReasonEnum.Length)                                         => FinishReason.Length
+        case Some(ChatFinishReasonEnum.ContentFilter)                                  => FinishReason.ContentFilter
         case Some(ChatFinishReasonEnum.Error | ChatFinishReasonEnum.Unknown(_)) | None => FinishReason.Error
 
     private def textFrom(message: ChatAssistantMessage): Option[String] =
       message.content.flatMap {
-        case text: String => Option.when(!text.isBlank)(text)
+        case text: String   => Option.when(!text.isBlank)(text)
         case parts: List[?] =>
           val text = parts.collect { case part: ChatContentText => part.text }.filterNot(_.isBlank).mkString
           Option.when(text.nonEmpty)(text)

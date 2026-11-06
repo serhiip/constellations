@@ -153,7 +153,7 @@ protected object MessageHandler:
     def convertUserMessage(content: List[ContentPart]): ChatUserMessage =
       val body: List[ChatContentItems] | String = content match
         case List(ContentPart.Text(text)) => text
-        case other                         => contentParts(other)
+        case other                        => contentParts(other)
       ChatUserMessage(content = body)
 
     def convertToolResultMessage(content: FunctionResponse): ChatToolMessage =

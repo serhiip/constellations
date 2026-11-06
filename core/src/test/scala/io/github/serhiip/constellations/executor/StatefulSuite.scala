@@ -138,12 +138,12 @@ class StatefulSuite extends CatsEffectSuite:
         errors.head match
           case err: AgentError.ArgumentDecodingFailed => assertEquals(err.call.name, "schedule_api_at")
           case other                                  => fail(s"Unexpected error: $other")
-      case other => fail(s"Expected AgentRetriesExhausted, got $other")
+      case other                                                => fail(s"Expected AgentRetriesExhausted, got $other")
   }
 
   test("resets agent error retry counter after a successful function call") {
-    val badCall  = FunctionCall("schedule_api_at", Struct("when" -> Value.string("bad")), "call-bad".some)
-    val goodCall = FunctionCall("schedule_api_at", Struct("when" -> Value.string("ok")), "call-ok".some)
+    val badCall    = FunctionCall("schedule_api_at", Struct("when" -> Value.string("bad")), "call-bad".some)
+    val goodCall   = FunctionCall("schedule_api_at", Struct("when" -> Value.string("ok")), "call-ok".some)
     val dispatcher = dispatcherFromPrepare {
       case call if call.args.fields.get("when").contains(Value.string("bad")) =>
         AgentError
@@ -187,8 +187,8 @@ class StatefulSuite extends CatsEffectSuite:
   }
 
   test("dispatchAll executes effects when every call is Valid") {
-    val call     = FunctionCall("greeting_api_greet", Struct("name" -> Value.string("Ada")))
-    val executed = AtomicInteger(0)
+    val call       = FunctionCall("greeting_api_greet", Struct("name" -> Value.string("Ada")))
+    val executed   = AtomicInteger(0)
     val dispatcher = dispatcherFromPrepare { c =>
       (IO.delay(executed.incrementAndGet()) *>
         ToolDispatcher.Result
@@ -318,7 +318,7 @@ class StatefulSuite extends CatsEffectSuite:
         errors.head match
           case err: AgentError.UnknownFunction => assertEquals(err.call.name, "Missing_tool")
           case other                           => fail(s"Unexpected error: $other")
-      case other => fail(s"Expected AgentRetriesExhausted(UnknownFunction), got $other")
+      case other                                                => fail(s"Expected AgentRetriesExhausted(UnknownFunction), got $other")
   }
 
   test("matches batch AgentErrors by callId when the same function appears twice") {

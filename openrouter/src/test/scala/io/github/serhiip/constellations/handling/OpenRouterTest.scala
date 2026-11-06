@@ -49,7 +49,7 @@ class OpenRouterTest extends FunSuite:
       ChatContentText(text = "world"),
       ChatContentText(text = "   ")
     )
-    val response = responseWith(ChatAssistantMessage(content = Some(content), reasoning = Some("ignored")))
+    val response                                 = responseWith(ChatAssistantMessage(content = Some(content), reasoning = Some("ignored")))
 
     assertEquals(handling.getTextFromResponse(response), Some("Hello world"))
   }
