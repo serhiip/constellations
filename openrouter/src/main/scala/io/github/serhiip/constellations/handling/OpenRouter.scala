@@ -38,7 +38,7 @@ object OpenRouter:
       response.choices.headOption.flatMap(choice => textFrom(choice.message).orElse(choice.message.reasoning.filterNot(_.isBlank)))
 
     override def getFunctionCalls(response: ChatResult): Either[Throwable, List[FunctionCall]] =
-      response.choices.headOption.flatMap(_.message.tool_calls) match
+      response.choices.headOption.flatMap(_.message.toolCalls) match
         case Some(toolCalls) =>
           toolCalls.traverse { toolCall =>
             val argsJson = Option(toolCall.function.arguments).filterNot(_.isBlank).getOrElse("{}")
@@ -50,7 +50,7 @@ object OpenRouter:
         case None            => List.empty[FunctionCall].asRight
 
     override def finishReason(response: ChatResult): FinishReason =
-      response.choices.headOption.flatMap(_.finish_reason) match
+      response.choices.headOption.flatMap(_.finishReason) match
         case Some(ChatFinishReasonEnum.ToolCalls)     => FinishReason.ToolCalls
         case Some(ChatFinishReasonEnum.Stop)          => FinishReason.Stop
         case Some(ChatFinishReasonEnum.Length)        => FinishReason.Length
@@ -89,4 +89,4 @@ object OpenRouter:
       response.choices.headOption
         .flatMap(_.message.images)
         .getOrElse(List.empty)
-        .traverse(image => decodeImage(image.image_url.url).liftTo[F])
+        .traverse(image => decodeImage(image.imageUrl.url).liftTo[F])

@@ -43,7 +43,7 @@ import org.typelevel.otel4s.metrics.BucketBoundaries
 
 private given Configuration = Configuration.default.withSnakeCaseMemberNames
 
-extension (model: Model) def supportsTools: Boolean = model.supported_parameters.contains(Parameter.Tools)
+extension (model: Model) def supportsTools: Boolean = model.supportedParameters.contains(Parameter.Tools)
 
 
 case class ErrorResponse(error: ErrorDetails) derives ConfiguredCodec
@@ -298,12 +298,12 @@ object Client:
             _      <- addResponseStatus(200)
             _      <- statsSupervisor.supervise(getGenerationStats(result.id))
             _      <- result.usage.traverse_ { usage =>
-                        meters.requestTokenCounter.add(usage.prompt_tokens, attrs*) *>
-                          meters.responseTokenCounter.add(usage.completion_tokens, attrs*)
+                        meters.requestTokenCounter.add(usage.promptTokens, attrs*) *>
+                          meters.responseTokenCounter.add(usage.completionTokens, attrs*)
                       }
             _      <-
               logger.trace(
-                s"Chat completion created with ${result.choices.size} choices, used ${result.usage.fold(0L)(_.total_tokens)} tokens"
+                s"Chat completion created with ${result.choices.size} choices, used ${result.usage.fold(0L)(_.totalTokens)} tokens"
               )
           yield result
 

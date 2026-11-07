@@ -120,7 +120,7 @@ final class ClientTest extends CatsEffectSuite:
   test("createChatCompletion should handle multimodal content") {
     val parts: List[ChatContentItems] = List(
       ChatContentText(text = "What's in this image?"),
-      ChatContentImage(image_url = ImageUrl(url = "data:image/jpeg;base64,test"))
+      ChatContentImage(imageUrl = ImageUrl(url = "data:image/jpeg;base64,test"))
     )
     val multimodalRequest = ChatRequest(model = Some("gpt-4o"), messages = List(ChatUserMessage(content = parts)))
     val expectedResponse  = TestResponses.chatResult("gpt-4o", "I can see an image in the message.")
@@ -388,17 +388,17 @@ final class ClientTest extends CatsEffectSuite:
       model = Some("google/gemini-2.0-flash-001"),
       messages = List(ChatUserMessage(content = "What are the titles of some James Joyce books?")),
       tools = List(searchTool).some,
-      tool_choice = Some("auto")
+      toolChoice = Some("auto")
     )
     val expectedResponse = TestResponses
       .chatResult("google/gemini-2.0-flash-001")
       .copy(choices =
         List(
           ChatChoice(
-            finish_reason = Some(ChatFinishReasonEnum.ToolCalls),
+            finishReason = Some(ChatFinishReasonEnum.ToolCalls),
             index = 0L,
             message = ChatAssistantMessage(
-              tool_calls = Some(
+              toolCalls = Some(
                 List(
                   ChatToolCall(
                     id = "call_abc123",
@@ -416,8 +416,8 @@ final class ClientTest extends CatsEffectSuite:
 
     client.createChatCompletion(request).map { response =>
       assertEquals(response, expectedResponse)
-      assertEquals(response.choices.head.message.tool_calls.get.head.function.name, "search_gutenberg_books")
-      assertEquals(response.choices.head.finish_reason, Some(ChatFinishReasonEnum.ToolCalls))
+      assertEquals(response.choices.head.message.toolCalls.get.head.function.name, "search_gutenberg_books")
+      assertEquals(response.choices.head.finishReason, Some(ChatFinishReasonEnum.ToolCalls))
     }
   }
 
@@ -497,8 +497,8 @@ final class ClientTest extends CatsEffectSuite:
       response =>
         IO {
           assertEquals(response.choices.size, 1)
-          assertEquals(response.choices.head.finish_reason, Some(ChatFinishReasonEnum.ToolCalls))
-          val toolCalls = response.choices.head.message.tool_calls.getOrElse(fail("tool_calls missing"))
+          assertEquals(response.choices.head.finishReason, Some(ChatFinishReasonEnum.ToolCalls))
+          val toolCalls = response.choices.head.message.toolCalls.getOrElse(fail("tool_calls missing"))
           assertEquals(toolCalls.size, 1)
           assertEquals(toolCalls.head.id, "tool_ExampleFunctions_getWeather_xYz9AbCdEfGhIjKlMnOpQr")
           assertEquals(toolCalls.head.function.name, "ExampleFunctions_getWeather")
@@ -529,7 +529,7 @@ final class ClientTest extends CatsEffectSuite:
 
   test("createChatCompletion should handle tool results") {
     val toolResultMessage = ChatToolMessage(
-      tool_call_id = "call_abc123",
+      toolCallId = "call_abc123",
       content = """[{"id": 4300, "title": "Ulysses", "authors": [{"name": "Joyce, James"}]}]"""
     )
     val request = ChatRequest(
@@ -537,7 +537,7 @@ final class ClientTest extends CatsEffectSuite:
       messages = List(
         ChatUserMessage(content = "What are the titles of some James Joyce books?"),
         ChatAssistantMessage(
-          tool_calls = Some(
+          toolCalls = Some(
             List(
               ChatToolCall(
                 id = "call_abc123",
@@ -560,7 +560,7 @@ final class ClientTest extends CatsEffectSuite:
 
     client.createChatCompletion(request).map { response =>
       assertEquals(response, expectedResponse)
-      assertEquals(response.choices.head.finish_reason, Some(ChatFinishReasonEnum.Stop))
+      assertEquals(response.choices.head.finishReason, Some(ChatFinishReasonEnum.Stop))
     }
   }
 
@@ -680,36 +680,36 @@ final class ClientTest extends CatsEffectSuite:
         val model = response.data.head
         assertEquals(model.id, "openai/o3-deep-research")
         assertEquals(model.name, "OpenAI: o3 Deep Research")
-        assertEquals(model.canonical_slug, "openai/o3-deep-research-2025-06-26")
-        assertEquals(model.hugging_face_id, Some(""))
+        assertEquals(model.canonicalSlug, "openai/o3-deep-research-2025-06-26")
+        assertEquals(model.huggingFaceId, Some(""))
         assertEquals(model.created, 1760129661L)
-        assertEquals(model.context_length, Some(200000L))
-        assertEquals(model.default_parameters, None)
+        assertEquals(model.contextLength, Some(200000L))
+        assertEquals(model.defaultParameters, None)
 
         val arch = model.architecture
         assertEquals(arch.modality, Some("text+image->text"))
-        assertEquals(arch.input_modalities, List(InputModality.Image, InputModality.Text, InputModality.File))
-        assertEquals(arch.output_modalities, List(OutputModality.Text))
+        assertEquals(arch.inputModalities, List(InputModality.Image, InputModality.Text, InputModality.File))
+        assertEquals(arch.outputModalities, List(OutputModality.Text))
         assertEquals(arch.tokenizer, Some(ModelGroup.GPT))
-        assertEquals(arch.instruct_type, None)
+        assertEquals(arch.instructType, None)
 
         val pricing = model.pricing
         assertEquals(pricing.prompt, "0.00001")
         assertEquals(pricing.completion, "0.00004")
         assertEquals(pricing.request, Some("0"))
         assertEquals(pricing.image, Some("0.00765"))
-        assertEquals(pricing.web_search, Some("0.01"))
-        assertEquals(pricing.internal_reasoning, Some("0"))
-        assertEquals(pricing.input_cache_read, Some("0.0000025"))
+        assertEquals(pricing.webSearch, Some("0.01"))
+        assertEquals(pricing.internalReasoning, Some("0"))
+        assertEquals(pricing.inputCacheRead, Some("0.0000025"))
 
-        val provider = model.top_provider
-        assertEquals(provider.context_length, Some(200000L))
-        assertEquals(provider.max_completion_tokens, Some(100000L))
-        assertEquals(provider.is_moderated, true)
+        val provider = model.topProvider
+        assertEquals(provider.contextLength, Some(200000L))
+        assertEquals(provider.maxCompletionTokens, Some(100000L))
+        assertEquals(provider.isModerated, true)
 
-        assertEquals(model.per_request_limits, None)
+        assertEquals(model.perRequestLimits, None)
         assertEquals(
-          model.supported_parameters,
+          model.supportedParameters,
           List(
             Parameter.FrequencyPenalty,
             Parameter.IncludeReasoning,
@@ -740,9 +740,9 @@ final class ClientTest extends CatsEffectSuite:
         assertEquals(pricing.completion, "0.00004")
         assertEquals(pricing.request, Some("0"))
         assertEquals(pricing.image, Some("0.00765"))
-        assertEquals(pricing.web_search, Some("0.01"))
-        assertEquals(pricing.internal_reasoning, Some("0"))
-        assertEquals(pricing.input_cache_read, Some("0.0000025"))
-        assertEquals(pricing.input_cache_write, None)
+        assertEquals(pricing.webSearch, Some("0.01"))
+        assertEquals(pricing.internalReasoning, Some("0"))
+        assertEquals(pricing.inputCacheRead, Some("0.0000025"))
+        assertEquals(pricing.inputCacheWrite, None)
       case Left(e)        => fail(s"Failed to decode PublicPricing from strings: $e")
   }

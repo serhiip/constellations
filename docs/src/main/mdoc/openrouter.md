@@ -72,7 +72,7 @@ val request = ChatRequest(
     ChatUserMessage(content = "Calculate 2 + 2")
   ),
   tools = Some(functionDeclarations),
-  tool_choice = Some("auto")
+  toolChoice = Some("auto")
 )
 ```
 

@@ -23,61 +23,61 @@ object TestResponses:
       id = id,
       created = 1234567890L,
       model = model,
-      system_fingerprint = None,
+      systemFingerprint = None,
       choices = List(
         ChatChoice(
-          finish_reason = Some(ChatFinishReasonEnum.Stop),
+          finishReason = Some(ChatFinishReasonEnum.Stop),
           index = 0L,
           message = ChatAssistantMessage(content = Some(content))
         )
       ),
-      usage = Some(ChatUsage(prompt_tokens = 10L, completion_tokens = 5L, total_tokens = 15L))
+      usage = Some(ChatUsage(promptTokens = 10L, completionTokens = 5L, totalTokens = 15L))
     )
 
   def generationData(id: String, totalCost: Double = 0.05, usage: Double = 0.05): Data =
     Data(
-      api_type = None,
-      app_id = None,
-      cache_discount = None,
+      apiType = None,
+      appId = None,
+      cacheDiscount = None,
       cancelled = Some(false),
-      created_at = "2024-01-01T00:00:00Z",
-      data_region = DataDataRegion.Global,
-      external_user = None,
-      finish_reason = Some("stop"),
-      generation_time = Some(800),
-      http_referer = None,
+      createdAt = "2024-01-01T00:00:00Z",
+      dataRegion = DataDataRegion.Global,
+      externalUser = None,
+      finishReason = Some("stop"),
+      generationTime = Some(800),
+      httpReferer = None,
       id = id,
-      is_byok = false,
+      isByok = false,
       latency = Some(1000),
       model = "gpt-4o",
-      moderation_latency = None,
-      native_finish_reason = Some("stop"),
-      native_tokens_cached = Some(0L),
-      native_tokens_completion = Some(50L),
-      native_tokens_completion_images = None,
-      native_tokens_prompt = Some(100L),
-      native_tokens_reasoning = Some(0L),
-      num_fetches = None,
-      num_input_audio_prompt = None,
-      num_media_completion = None,
-      num_media_prompt = None,
-      num_search_results = None,
+      moderationLatency = None,
+      nativeFinishReason = Some("stop"),
+      nativeTokensCached = Some(0L),
+      nativeTokensCompletion = Some(50L),
+      nativeTokensCompletionImages = None,
+      nativeTokensPrompt = Some(100L),
+      nativeTokensReasoning = Some(0L),
+      numFetches = None,
+      numInputAudioPrompt = None,
+      numMediaCompletion = None,
+      numMediaPrompt = None,
+      numSearchResults = None,
       origin = "api",
-      preset_id = None,
-      provider_name = Some("OpenAI"),
-      provider_responses = None,
+      presetId = None,
+      providerName = Some("OpenAI"),
+      providerResponses = None,
       router = None,
-      service_tier = None,
+      serviceTier = None,
       streamed = Some(false),
-      tokens_completion = Some(50L),
-      tokens_prompt = Some(100L),
-      total_cost = totalCost,
-      upstream_id = Some("upstream-123"),
-      upstream_inference_cost = Some(totalCost),
+      tokensCompletion = Some(50L),
+      tokensPrompt = Some(100L),
+      totalCost = totalCost,
+      upstreamId = Some("upstream-123"),
+      upstreamInferenceCost = Some(totalCost),
       usage = usage,
-      user_agent = None,
-      web_search_engine = None,
-      workspace_id = None
+      userAgent = None,
+      webSearchEngine = None,
+      workspaceId = None
     )
 
   def sampleModel(
@@ -87,35 +87,35 @@ object TestResponses:
   ): Model =
     Model(
       architecture = ModelArchitecture(
-        input_modalities = input,
+        inputModalities = input,
         modality = Some("text"),
-        output_modalities = List(OutputModality.Text),
+        outputModalities = List(OutputModality.Text),
         tokenizer = Some(ModelGroup.GPT)
       ),
-      canonical_slug = id,
-      context_length = Some(128000L),
+      canonicalSlug = id,
+      contextLength = Some(128000L),
       created = 1741818122L,
-      default_parameters = None,
+      defaultParameters = None,
       description = Some("State-of-the-art general model"),
       endpoints = Nil,
       id = id,
       links = ModelLinks(details = s"https://openrouter.ai/$id"),
       name = name,
-      per_request_limits = None,
+      perRequestLimits = None,
       pricing = PublicPricing(
         prompt = "0.0000007",
         completion = "0.0000007",
         image = Some("0"),
         request = Some("0"),
-        web_search = Some("0"),
-        internal_reasoning = Some("0"),
-        input_cache_read = Some("0"),
-        input_cache_write = Some("0")
+        webSearch = Some("0"),
+        internalReasoning = Some("0"),
+        inputCacheRead = Some("0"),
+        inputCacheWrite = Some("0")
       ),
-      supported_parameters = List(Parameter.Temperature, Parameter.TopP),
-      supported_voices = None,
-      top_provider = TopProviderInfo(is_moderated = true, context_length = Some(128000L), max_completion_tokens = Some(16384L))
+      supportedParameters = List(Parameter.Temperature, Parameter.TopP),
+      supportedVoices = None,
+      topProvider = TopProviderInfo(isModerated = true, contextLength = Some(128000L), maxCompletionTokens = Some(16384L))
     )
 
   def modelsList(models: List[Model] = List(sampleModel())): ModelsListResponse =
-    ModelsListResponse(data = models, links = Links(next = None), total_count = models.size.toLong)
+    ModelsListResponse(data = models, links = Links(next = None), totalCount = models.size.toLong)

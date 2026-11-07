@@ -59,12 +59,12 @@ object OpenRouter:
                        model = modelName.some,
                        messages = config.systemPrompt.map(prompt => ChatSystemMessage(content = prompt): ChatMessages).toList ::: messages,
                        temperature = config.temperature,
-                       max_tokens = config.maxTokens.map(_.toLong),
-                       top_p = config.topP,
-                       presence_penalty = config.presencePenalty,
-                       frequency_penalty = config.frequencyPenalty,
+                       maxTokens = config.maxTokens.map(_.toLong),
+                       topP = config.topP,
+                       presencePenalty = config.presencePenalty,
+                       frequencyPenalty = config.frequencyPenalty,
                        tools = tools,
-                       tool_choice = tools.map(_ => ("auto": ChatNamedToolChoice | ChatServerToolChoice | String)),
+                       toolChoice = tools.map(_ => ("auto": ChatNamedToolChoice | ChatServerToolChoice | String)),
                        modalities = config.modalities.map(_.map(modality))
                      )
         result    <- client.createChatCompletion(request)
@@ -86,7 +86,7 @@ object OpenRouter:
           ChatAssistantMessage(
             content = content.map(text => (text: List[ChatContentItems] | String)),
             images = Option.when(images.nonEmpty)(
-              images.map(img => Item(image_url = ItemImageUrl(s"data:image/jpeg;base64,${img.base64Encoded}")))
+              images.map(img => Item(imageUrl = ItemImageUrl(s"data:image/jpeg;base64,${img.base64Encoded}")))
             )
           )
         case Message.System(content)            => ChatSystemMessage(content = content)
@@ -98,7 +98,7 @@ object OpenRouter:
               arguments = content.args.asJson.noSpaces
             )
           )
-          ChatAssistantMessage(tool_calls = List(toolCall).some)
+          ChatAssistantMessage(toolCalls = List(toolCall).some)
         case Message.ToolResult(content)        => messageHandler.convertToolResultMessage(content)
 
   def completion[F[_]](client: Client[F], config: Config): Invoker[F, CompletionResponse] = new:
@@ -143,7 +143,7 @@ protected object MessageHandler:
   private def contentParts(content: List[ContentPart]): List[ChatContentItems] = content.map {
     case ContentPart.Text(text)           => ChatContentText(text = text)
     case ContentPart.Image(base64Encoded) =>
-      ChatContentImage(image_url = ImageUrl(url = s"data:image/jpeg;base64,$base64Encoded"))
+      ChatContentImage(imageUrl = ImageUrl(url = s"data:image/jpeg;base64,$base64Encoded"))
   }
 
   private def toolResultContent(content: FunctionResponse): String =
@@ -159,7 +159,7 @@ protected object MessageHandler:
     def convertToolResultMessage(content: FunctionResponse): ChatToolMessage =
       ChatToolMessage(
         content = toolResultContent(content),
-        tool_call_id = content.call.callId.getOrElse(content.call.name)
+        toolCallId = content.call.callId.getOrElse(content.call.name)
       )
 
   def openai: MessageHandler = new:
@@ -169,7 +169,7 @@ protected object MessageHandler:
     def convertToolResultMessage(content: FunctionResponse): ChatToolMessage =
       ChatToolMessage(
         content = toolResultContent(content),
-        tool_call_id = content.call.callId.getOrElse(content.call.name)
+        toolCallId = content.call.callId.getOrElse(content.call.name)
       )
 
   def default: MessageHandler = openai

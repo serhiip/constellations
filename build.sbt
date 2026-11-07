@@ -126,7 +126,8 @@ lazy val `constellations-openrouter-schema` = (project in file("openrouter-schem
           "ModelsListResponse",
           "ModelsListResponseData",
           "PublicZdrEndpoint"
-        )
+        ),
+        options = GeneratorOptions(fieldNaming = FieldNaming.CamelCase)
       )
     ),
     libraryDependencies ++= Dependencies.constellationsOpenRouterSchema,

@@ -24,8 +24,8 @@ class OpenRouterTest extends FunSuite:
       id = "test-id",
       created = 1234567890L,
       model = "test-model",
-      system_fingerprint = None,
-      choices = List(ChatChoice(finish_reason = finishReason, index = 0L, message = message))
+      systemFingerprint = None,
+      choices = List(ChatChoice(finishReason = finishReason, index = 0L, message = message))
     )
 
   test("OpenRouter handling should work with IO effect type") {
@@ -45,7 +45,7 @@ class OpenRouterTest extends FunSuite:
   test("OpenRouter handling should join text parts and skip image parts") {
     val content: List[ChatContentItems] | String = List(
       ChatContentText(text = "Hello "),
-      ChatContentImage(image_url = ImageUrl(url = "data:image/png;base64,abc")),
+      ChatContentImage(imageUrl = ImageUrl(url = "data:image/png;base64,abc")),
       ChatContentText(text = "world"),
       ChatContentText(text = "   ")
     )
@@ -83,7 +83,7 @@ class OpenRouterTest extends FunSuite:
       id = "test-id",
       created = 1234567890L,
       model = "test-model",
-      system_fingerprint = None,
+      systemFingerprint = None,
       choices = List.empty
     )
 
@@ -95,7 +95,7 @@ class OpenRouterTest extends FunSuite:
   test("OpenRouter handling should parse tool calls with empty or blank arguments as empty Struct") {
     val response = responseWith(
       ChatAssistantMessage(
-        tool_calls = Some(List(ChatToolCall(id = "call_abc", function = Function(name = "get_current_time", arguments = ""))))
+        toolCalls = Some(List(ChatToolCall(id = "call_abc", function = Function(name = "get_current_time", arguments = ""))))
       ),
       finishReason = Some(ChatFinishReasonEnum.ToolCalls)
     )
@@ -110,7 +110,7 @@ class OpenRouterTest extends FunSuite:
   test("OpenRouter handling should decode typed tool-call arguments without quoting strings") {
     val response = responseWith(
       ChatAssistantMessage(
-        tool_calls = Some(
+        toolCalls = Some(
           List(
             ChatToolCall(
               id = "call-schedule",
