@@ -62,6 +62,8 @@ class StatefulSuite extends CatsEffectSuite:
 
       def getFunctionDeclarations: IO[List[FunctionDeclaration]] = List.empty.pure[IO]
 
+      def declarationOf(component: String, method: String): Option[FunctionDeclaration] = None
+
   private def failingThenSucceedingDispatcher(attempts: AtomicInteger, failuresBeforeSuccess: Int): ToolDispatcher[IO] =
     dispatcherFromPrepare { call =>
       val n = attempts.getAndIncrement()

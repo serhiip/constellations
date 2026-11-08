@@ -1,16 +1,18 @@
 package io.github.serhiip.constellations
 
 import scala.compiletime.summonInline
+import scala.concurrent.duration.SECONDS
 import scala.quoted.*
 
 import cats.data.Validated.{Invalid, Valid}
 import cats.data.{NonEmptyChain, Validated, ValidatedNec}
+import cats.effect.kernel.MonadCancelThrow
 import cats.syntax.all.*
 import cats.{Applicative, Functor, MonadThrow, ~>}
 
 import org.typelevel.log4cats.{LoggerFactory, StructuredLogger}
 import org.typelevel.otel4s.Attribute
-import org.typelevel.otel4s.metrics.{Counter, Meter}
+import org.typelevel.otel4s.metrics.{BucketBoundaries, Counter, Histogram, Meter}
 import org.typelevel.otel4s.trace.Tracer
 
 import io.github.serhiip.constellations.common.*
@@ -24,7 +26,7 @@ trait ToolDispatcher[F[_]]:
   def dispatchAll(calls: List[FunctionCall]): F[ValidatedNec[AgentError, List[ToolDispatcher.Result]]]
   def getFunctionDeclarations: F[List[FunctionDeclaration]]
   def prepare(call: FunctionCall): ValidatedNec[AgentError, F[ToolDispatcher.Result]]
-  def declarationOf(component: String, method: String): Option[FunctionDeclaration] = None
+  def declarationOf(component: String, method: String): Option[FunctionDeclaration]
 
 object ToolDispatcher:
   type Probe[A] = Any
@@ -69,48 +71,57 @@ object ToolDispatcher:
           select.asTerm.pos
         )
 
-  def observed[F[_]: Tracer: LoggerFactory: MonadThrow: Meter](delegate: ToolDispatcher[F]): F[ToolDispatcher[F]] =
+  def observed[F[_]: Tracer: LoggerFactory: MonadCancelThrow: Meter](delegate: ToolDispatcher[F]): F[ToolDispatcher[F]] =
     Meters.create[F].flatMap(observed(delegate, _))
 
   final case class Meters[F[_]](
-      dispatchSuccess: Counter[F, Long],
-      dispatchError: Counter[F, Long],
-      dispatchAllSuccess: Counter[F, Long],
-      dispatchAllError: Counter[F, Long]
+      invocationCount: Counter[F, Long],
+      callDuration: Histogram[F, Double]
   )
 
   object Meters:
     def create[F[_]: Meter: Applicative]: F[Meters[F]] =
-      val dispatch    = Metrics.component("tool_dispatcher")("dispatch")
-      val dispatchAll = Metrics.component("tool_dispatcher")("dispatch_all")
+      val call = Metrics.component("tool_dispatcher")("call")
       (
-        Meter[F].counter[Long](dispatch("success_count")).create,
-        Meter[F].counter[Long](dispatch("error_count")).create,
-        Meter[F].counter[Long](dispatchAll("success_count")).create,
-        Meter[F].counter[Long](dispatchAll("error_count")).create
+        Meter[F].counter[Long](call("invocation_count")).withDescription("Number of tool invocations").create,
+        Meter[F]
+          .histogram[Double](call("duration"))
+          .withUnit("s")
+          .withDescription("Duration of tool calls")
+          .withExplicitBucketBoundaries(BucketBoundaries(0.05, 0.1, 0.15, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0))
+          .create
       ).mapN(Meters.apply)
 
-  private def observed[F[_]: MonadThrow: Tracer: LoggerFactory](
+  private def observed[F[_]: MonadCancelThrow: Tracer: LoggerFactory](
       delegate: ToolDispatcher[F],
       meters: Meters[F]
   ): F[ToolDispatcher[F]] =
     LoggerFactory[F].create.map { logger =>
       given StructuredLogger[F] = logger
-      new ToolDispatcher[F]:
+      new:
         def prepare(call: FunctionCall): ValidatedNec[AgentError, F[ToolDispatcher.Result]] = delegate.prepare(call)
 
         def dispatch(call: FunctionCall): F[ToolDispatcher.Result] =
-          val traced = Tracer[F].span("tool-dispatcher", "dispatch")(dispatchSpanAttributes(call)*).logged { logger =>
+          val toolName = Attribute("tool_name", call.name)
+          val traced   = Tracer[F].span("tool-dispatcher", "dispatch")(dispatchSpanAttributes(call)*).logged { logger =>
             for
               _      <- logger.debug(s"Dispatching call: ${call.name} with args ${call.args}")
               result <- delegate.dispatch(call)
               _      <- logger.trace(s"Dispatch result: $result")
             yield result
           }
-          traced.withOperationCounters(meters.dispatchSuccess, meters.dispatchError)
+          meters.callDuration
+            .recordDuration(SECONDS, toolName)
+            .surround(traced)
+            .attempt
+            .flatMap:
+              case Right(result)           => record(List(toolName), isError = false, isAgentError = false) as result
+              case Left(error: AgentError) => record(List(toolName), isError = true, isAgentError = true) >> error.raiseError
+              case Left(error)             => record(List(toolName), isError = true, isAgentError = false) >> error.raiseError
 
         def dispatchAll(calls: List[FunctionCall]): F[ValidatedNec[AgentError, List[ToolDispatcher.Result]]] =
-          val traced =
+          val toolNames = calls.map(call => Attribute("tool_name", call.name))
+          val traced    =
             Tracer[F].span("tool-dispatcher", "dispatch-all")(Attribute("function_call_count", calls.size.toLong)).logged { logger =>
               for
                 _      <- logger.debug(s"Dispatching ${calls.size} call(s): ${calls.map(_.name).mkString(",")}")
@@ -118,11 +129,21 @@ object ToolDispatcher:
                 _      <- logger.trace(s"DispatchAll result: $result")
               yield result
             }
-          traced.attempt.flatMap {
-            case Right(Valid(results)) => meters.dispatchAllSuccess.add(1).as(results.validNec)
-            case Right(Invalid(errs))  => meters.dispatchAllError.add(1).as(errs.invalid)
-            case Left(error)           => meters.dispatchAllError.add(1) >> error.raiseError
-          }
+          toolNames
+            .foldLeft(traced): (acc, toolName) =>
+              meters.callDuration.recordDuration(SECONDS, toolName).surround(acc)
+            .attempt
+            .flatMap {
+              case Right(Valid(results)) => record(toolNames, isError = false, isAgentError = false) as results.validNec
+              case Right(Invalid(errs))  => record(toolNames, isError = true, isAgentError = true) as errs.invalid
+              case Left(error)           => record(toolNames, isError = true, isAgentError = false) >> error.raiseError
+            }
+
+        private def record(toolNames: List[Attribute[String]], isError: Boolean, isAgentError: Boolean): F[Unit] =
+          val isErrorAttr      = Attribute("is_error", isError)
+          val isAgentErrorAttr = Attribute("is_agent_error", isAgentError)
+          if toolNames.isEmpty then meters.invocationCount.inc(isErrorAttr, isAgentErrorAttr)
+          else toolNames.traverse_(toolName => meters.invocationCount.inc(toolName, isErrorAttr, isAgentErrorAttr))
 
         def getFunctionDeclarations: F[List[FunctionDeclaration]] =
           Tracer[F].span("tool-dispatcher", "get-function-declarations").logged { logger =>
@@ -149,6 +170,8 @@ object ToolDispatcher:
       calls.traverse(prepare).traverse(_.sequence)
 
     def getFunctionDeclarations: F[List[FunctionDeclaration]] = List.empty.pure[F]
+
+    def declarationOf(component: String, method: String): Option[FunctionDeclaration] = None
 
   def combine[F[_]: MonadThrow](dispatchers: ToolDispatcher[F]*): F[ToolDispatcher[F]] =
     dispatchers.toList.traverse(d => d.getFunctionDeclarations.tupleLeft(d)).map(combineOwned[F])

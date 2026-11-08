@@ -81,6 +81,23 @@ class McpToolSpecTest extends CatsEffectSuite:
           assertEquals(content.text(), """{"value":["alpha"]}""")
   }
 
+  test("stateless tool dispatches MCP arguments through the dispatcher") {
+    Dispatcher
+      .parallel[IO]
+      .use: dispatcher =>
+        for
+          mcpToolSpec <- McpToolSpec.core[IO](dispatcher).run(McpToolSpec.defaultConfig)
+          tools       <- mcpToolSpec.fromStatelessToolDispatcher(ToolDispatcher.generate[IO](Calculator))
+          request      =
+            McpSchema.CallToolRequest("calculator_add", Map[String, Object]("a" -> Integer.valueOf(1), "b" -> Integer.valueOf(2)).asJava)
+          result      <- IO.blocking(tools.head.callHandler().apply(null, request).block())
+        yield
+          val content = result.content().get(0).asInstanceOf[McpSchema.TextContent]
+          assertEquals(tools.head.tool().name(), "calculator_add")
+          assertEquals(content.text(), """{"value":3.0}""")
+          assertEquals(result.isError().booleanValue(), false)
+  }
+
   test("generated tool dispatches MCP arguments through the dispatcher") {
     Dispatcher
       .parallel[IO]
